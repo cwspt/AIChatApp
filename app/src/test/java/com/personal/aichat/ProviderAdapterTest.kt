@@ -9,6 +9,7 @@ import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderType
+import com.personal.aichat.domain.ReasoningEffort
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
@@ -53,7 +54,8 @@ class ProviderAdapterTest {
           enabled = true,
           supportsStreaming = true,
           extraHeadersJson = "",
-          secretRef = "provider_test"
+          secretRef = "provider_test",
+          reasoningEffort = ReasoningEffort.AUTO
         ),
         apiKey = "test-key",
         messages = listOf(

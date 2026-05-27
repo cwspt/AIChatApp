@@ -8,6 +8,14 @@ enum class ProviderType {
   GEMINI_GENERATE_CONTENT
 }
 
+enum class ReasoningEffort(val apiValue: String?) {
+  AUTO(null),
+  LOW("low"),
+  MEDIUM("medium"),
+  HIGH("high"),
+  XHIGH("xhigh")
+}
+
 enum class MessageRole {
   USER,
   ASSISTANT,
@@ -29,7 +37,8 @@ data class ChatProviderConfig(
   val enabled: Boolean,
   val supportsStreaming: Boolean,
   val extraHeadersJson: String,
-  val secretRef: String?
+  val secretRef: String?,
+  val reasoningEffort: ReasoningEffort = ReasoningEffort.AUTO
 )
 
 data class ChatConversation(
@@ -37,8 +46,17 @@ data class ChatConversation(
   val title: String,
   val providerId: String,
   val model: String,
+  val groupName: String,
   val createdAt: Long,
-  val updatedAt: Long
+  val updatedAt: Long,
+  val isArchived: Boolean,
+  val isDeleted: Boolean,
+  val isPinned: Boolean
+)
+
+data class ChatConversationGroup(
+  val name: String,
+  val conversations: List<ChatConversation>
 )
 
 data class ChatMessage(

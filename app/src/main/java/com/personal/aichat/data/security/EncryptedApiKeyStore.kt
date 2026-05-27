@@ -23,6 +23,10 @@ class EncryptedApiKeyStore(context: Context) : ApiKeyStore {
     return preferences.getString(secretRef, null)?.takeIf { it.isNotBlank() }
   }
 
+  override fun exists(secretRef: String?): Boolean {
+    return !read(secretRef).isNullOrBlank()
+  }
+
   override fun write(secretRef: String, apiKey: String) {
     preferences.edit().putString(secretRef, apiKey).apply()
   }

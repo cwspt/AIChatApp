@@ -6,6 +6,7 @@ import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderType
+import com.personal.aichat.domain.ReasoningEffort
 
 fun ProviderEntity.toDomain(): ChatProviderConfig = ChatProviderConfig(
   id = id,
@@ -16,7 +17,8 @@ fun ProviderEntity.toDomain(): ChatProviderConfig = ChatProviderConfig(
   enabled = enabled,
   supportsStreaming = supportsStreaming,
   extraHeadersJson = extraHeadersJson,
-  secretRef = secretRef
+  secretRef = secretRef,
+  reasoningEffort = runCatching { ReasoningEffort.valueOf(reasoningEffort) }.getOrDefault(ReasoningEffort.AUTO)
 )
 
 fun ChatProviderConfig.toEntity(sortOrder: Int = 0): ProviderEntity = ProviderEntity(
@@ -28,6 +30,7 @@ fun ChatProviderConfig.toEntity(sortOrder: Int = 0): ProviderEntity = ProviderEn
   enabled = enabled,
   supportsStreaming = supportsStreaming,
   extraHeadersJson = extraHeadersJson,
+  reasoningEffort = reasoningEffort.name,
   secretRef = secretRef,
   sortOrder = sortOrder
 )
@@ -37,8 +40,12 @@ fun ConversationEntity.toDomain(): ChatConversation = ChatConversation(
   title = title,
   providerId = providerId,
   model = model,
+  groupName = groupName,
   createdAt = createdAt,
-  updatedAt = updatedAt
+  updatedAt = updatedAt,
+  isArchived = isArchived,
+  isDeleted = isDeleted,
+  isPinned = isPinned
 )
 
 fun ChatConversation.toEntity(): ConversationEntity = ConversationEntity(
@@ -46,8 +53,12 @@ fun ChatConversation.toEntity(): ConversationEntity = ConversationEntity(
   title = title,
   providerId = providerId,
   model = model,
+  groupName = groupName,
   createdAt = createdAt,
-  updatedAt = updatedAt
+  updatedAt = updatedAt,
+  isArchived = isArchived,
+  isDeleted = isDeleted,
+  isPinned = isPinned
 )
 
 fun MessageEntity.toDomain(): ChatMessage = ChatMessage(

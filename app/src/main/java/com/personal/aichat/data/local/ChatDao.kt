@@ -23,10 +23,13 @@ interface ChatDao {
   @Query("SELECT COUNT(*) FROM providers")
   suspend fun providerCount(): Int
 
-  @Query("SELECT * FROM conversations ORDER BY updatedAt DESC")
+  @Query("SELECT * FROM conversations WHERE isDeleted = 0 AND isArchived = 0 ORDER BY isPinned DESC, updatedAt DESC")
   fun observeConversations(): Flow<List<ConversationEntity>>
 
-  @Query("SELECT * FROM conversations ORDER BY updatedAt DESC LIMIT 1")
+  @Query("SELECT * FROM conversations WHERE isDeleted = 0 AND isArchived = 1 ORDER BY updatedAt DESC")
+  fun observeArchivedConversations(): Flow<List<ConversationEntity>>
+
+  @Query("SELECT * FROM conversations WHERE isDeleted = 0 AND isArchived = 0 ORDER BY isPinned DESC, updatedAt DESC LIMIT 1")
   suspend fun latestConversation(): ConversationEntity?
 
   @Query("SELECT * FROM conversations WHERE id = :id LIMIT 1")
@@ -37,6 +40,24 @@ interface ChatDao {
 
   @Query("UPDATE conversations SET title = :title, updatedAt = :updatedAt WHERE id = :id")
   suspend fun updateConversationTitle(id: String, title: String, updatedAt: Long)
+
+  @Query("UPDATE conversations SET providerId = :providerId, model = :model, updatedAt = :updatedAt WHERE id = :id")
+  suspend fun updateConversationProvider(id: String, providerId: String, model: String, updatedAt: Long)
+
+  @Query("UPDATE conversations SET title = :title, groupName = :groupName, updatedAt = :updatedAt WHERE id = :id")
+  suspend fun updateConversationMeta(id: String, title: String, groupName: String, updatedAt: Long)
+
+  @Query("UPDATE conversations SET isPinned = :isPinned, updatedAt = :updatedAt WHERE id = :id")
+  suspend fun setConversationPinned(id: String, isPinned: Boolean, updatedAt: Long)
+
+  @Query("UPDATE conversations SET isArchived = 1, updatedAt = :updatedAt WHERE id = :id")
+  suspend fun archiveConversation(id: String, updatedAt: Long)
+
+  @Query("UPDATE conversations SET isArchived = 0, updatedAt = :updatedAt WHERE id = :id")
+  suspend fun restoreConversation(id: String, updatedAt: Long)
+
+  @Query("UPDATE conversations SET isDeleted = 1, updatedAt = :updatedAt WHERE id = :id")
+  suspend fun deleteConversation(id: String, updatedAt: Long)
 
   @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC")
   fun observeMessages(conversationId: String): Flow<List<MessageEntity>>

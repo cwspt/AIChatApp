@@ -9,6 +9,7 @@ import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ChatStreamEvent
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.ProviderAdapter
+import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -17,7 +18,9 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.conscrypt.Conscrypt
 import java.io.IOException
+import java.security.Security
 import java.util.concurrent.TimeUnit
 
 private val JsonMediaType = "application/json; charset=utf-8".toMediaType()
@@ -33,8 +36,7 @@ class OpenAiResponsesAdapter(
     options: ChatCompletionOptions
   ): Flow<ChatStreamEvent> = flow {
     emit(ChatStreamEvent.Started)
-    val body = gson.toJson(
-      mapOf(
+    val requestBody = mutableMapOf<String, Any>(
         "model" to options.model,
         "stream" to options.stream,
         "input" to messages.map { message ->
@@ -44,7 +46,10 @@ class OpenAiResponsesAdapter(
           )
         }
       )
-    )
+    config.reasoningEffort.apiValue?.let { effort ->
+      requestBody["reasoning"] = mapOf("effort" to effort)
+    }
+    val body = gson.toJson(requestBody)
     val request = Request.Builder()
       .url(config.baseUrl.trimEnd('/') + "/responses")
       .headers(config.headersWithAuth(apiKey))
@@ -119,11 +124,21 @@ class TokenHubProxyAdapter(
   }
 }
 
-fun defaultAiHttpClient(): OkHttpClient = OkHttpClient.Builder()
-  .connectTimeout(30, TimeUnit.SECONDS)
-  .readTimeout(0, TimeUnit.SECONDS)
-  .writeTimeout(60, TimeUnit.SECONDS)
-  .build()
+fun defaultAiHttpClient(): OkHttpClient {
+  ensureConscryptProvider()
+  return OkHttpClient.Builder()
+    .connectTimeout(30, TimeUnit.SECONDS)
+    .readTimeout(0, TimeUnit.SECONDS)
+    .writeTimeout(60, TimeUnit.SECONDS)
+    .build()
+}
+
+private fun ensureConscryptProvider() {
+  if (Build.VERSION.SDK_INT <= 0) return
+  if (Security.getProvider("Conscrypt") == null) {
+    Security.insertProviderAt(Conscrypt.newProvider(), 1)
+  }
+}
 
 private val MessageRole.apiRole: String
   get() = when (this) {
@@ -161,9 +176,18 @@ private suspend fun streamJsonLines(
   onFrame: (SseFrame) -> String?,
   onText: suspend (String) -> Unit
 ) {
+  val requestHost = request.url.host
   client.newCall(request).execute().use { response ->
     if (!response.isSuccessful) {
-      throw IOException("Provider request failed with HTTP ${response.code}")
+      val errorBody = response.body?.string().orEmpty()
+      throw IOException(
+        buildString {
+          append("Provider request failed with HTTP ${response.code}")
+          append(" from ")
+          append(requestHost)
+          parseProviderErrorMessage(errorBody)?.let { append(": ").append(it) }
+        }
+      )
     }
 
     val body = response.body ?: throw IOException("Provider returned an empty response")
@@ -179,6 +203,16 @@ private suspend fun streamJsonLines(
       }
     }
   }
+}
+
+private fun parseProviderErrorMessage(body: String): String? {
+  if (body.isBlank()) return null
+  return runCatching {
+    val root = JsonParser.parseString(body).asJsonObject
+    root.getAsJsonObject("error")?.findString("message")
+      ?: root.findString("message")
+      ?: body.take(220)
+  }.getOrDefault(body.take(220))
 }
 
 fun extractString(json: String, name: String): String? {

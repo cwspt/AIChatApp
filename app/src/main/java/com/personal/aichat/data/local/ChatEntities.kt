@@ -13,6 +13,7 @@ data class ProviderEntity(
   val enabled: Boolean,
   val supportsStreaming: Boolean,
   val extraHeadersJson: String,
+  val reasoningEffort: String = "AUTO",
   val secretRef: String?,
   val sortOrder: Int
 )
@@ -23,8 +24,12 @@ data class ConversationEntity(
   val title: String,
   val providerId: String,
   val model: String,
+  val groupName: String = "",
   val createdAt: Long,
-  val updatedAt: Long
+  val updatedAt: Long,
+  val isArchived: Boolean = false,
+  val isDeleted: Boolean = false,
+  val isPinned: Boolean = false
 )
 
 @Entity(tableName = "messages")
