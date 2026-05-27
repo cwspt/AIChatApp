@@ -1,0 +1,40 @@
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Gradle / Kotlin build state
+.gradle/
+.kotlin/
+**/build/
+captures/
+*.apk
+*.aab
+
+# Local machine configuration
+local.properties
+keystore.properties
+release-signing.properties
+keystore/
+.env
+.env.*
+
+# Local Android runtime homes
+.android/
+.android-user-home/
+.gradle-home/
+.gradle-user-home/
+
+# Native build outputs
+.cxx/
+.externalNativeBuild/
+
+# Logs / temp files
+*.log
+*.tmp
+*.temp
+
+# OS-specific files
+.DS_Store
+Thumbs.db
