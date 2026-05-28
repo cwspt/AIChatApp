@@ -47,8 +47,11 @@ data class ChatUiState(
   val forkTargetMessageId: String? = null,
   val streamingConversationIds: Set<String> = emptySet(),
   val streamingGroupIds: Set<String> = emptySet(),
+  val autoPlayingGroupIds: Set<String> = emptySet(),
   val deleteConfirmOpen: Boolean = false,
   val deleteTargetConversationId: String? = null,
+  val providerRebindDeleteSourceId: String? = null,
+  val providerRebindDeleteBotIds: List<String> = emptyList(),
   val error: String? = null
 ) {
   val selectedConversation: ChatConversation?
@@ -75,4 +78,7 @@ data class ChatUiState(
   val isSelectedGroupStreaming: Boolean
     get() = selectedGroupChatId != null &&
       (selectedGroupChatId in streamingGroupIds || groupMessages.any { it.status == MessageStatus.STREAMING })
+
+  val isSelectedGroupAutoPlaying: Boolean
+    get() = selectedGroupChatId != null && selectedGroupChatId in autoPlayingGroupIds
 }

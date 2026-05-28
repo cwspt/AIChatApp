@@ -1,6 +1,6 @@
 # AIChatApp Project Tracker
 
-更新时间：2026-05-28
+更新时间：2026-05-29
 
 ## 1. 项目目标
 
@@ -11,7 +11,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 - 会话创建后固定 `providerId/model`，已有会话不通过顶部控件切换模型。
 - 模型对比通过“从某条消息分叉到其他 Provider/model”的方式完成。
 - OpenAI Responses / TokenHubProxy 可使用联网搜索和图片/文件附件。
-- DeepSeek / OpenAI-compatible Chat 当前以文本和函数式 web_search 为主，DeepSeek 官方 API 当前不支持图片/文件附件输入。
+- DeepSeek / OpenAI-compatible Chat 当前以文本、函数式 web_search 和网页抓取工具回传为主，DeepSeek 官方 API 当前不支持图片/文件附件输入。
 
 ## 2. 状态和优先级
 
@@ -36,22 +36,22 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | --- | --- | --- | --- |
 | Android 项目骨架 | Done | 100% | Kotlin + Compose + Material3 + Room + DataStore + OkHttp |
 | 本机开发环境文档 | Done | 100% | 已按本机真实路径整理本地构建说明 |
-| Provider 抽象 | Done | 90% | OpenAI Responses、OpenAI-compatible、TokenHubProxy 已接入，Anthropic/Gemini 预留 |
+| Provider 抽象 | Done | 93% | OpenAI Responses、OpenAI-compatible、TokenHubProxy 已接入，支持 Provider 删除与机器人批量改绑，Anthropic/Gemini 预留 |
 | 会话固定模型 | Done | 100% | 请求实际使用 `conversation.model`，不再临时读 provider default |
 | 会话分叉 | Done | 95% | 支持从消息气泡分叉到其他 Provider，并保存来源关系 |
-| OpenAI Responses | Done | 90% | 支持流式、reasoning effort、usage 元数据、web_search、附件输入 |
-| DeepSeek / OpenAI-compatible | Done | 85% | 支持 Chat Completions 流式、usage、函数式 web_search |
-| 联网搜索 | Done | 85% | OpenAI hosted web_search + compatible function calling + DuckDuckGo fallback |
+| OpenAI Responses | Done | 92% | 支持流式、reasoning effort、usage 元数据、web_search、附件输入，并修复群聊首轮搜索上下文兼容 |
+| DeepSeek / OpenAI-compatible | Done | 92% | 支持 Chat Completions 流式、usage、函数式 web_search、DSML open/web_fetch 工具回传 |
+| 联网搜索 | Done | 92% | OpenAI hosted web_search + compatible function calling + 官方 DeepSeek 搜索结果 + DuckDuckGo/Bing fallback |
 | 工具调用 UI | Done | 80% | 工具调用独立卡片、可折叠、显示查询词和 URL |
 | 多模态附件 | Done | 75% | Provider 级附件开关、图片/文件选择、拍照、气泡附件展示、图片 app 内预览 |
-| 设置页 | Done | 85% | 独立设置页，支持主题色、夜间模式、字体、debug log、搜索模式、配置导入导出 |
+| 设置页 | Done | 88% | 独立设置页，支持主题色、夜间模式、字体、debug log、搜索模式、配置导入导出、Provider 删除/改绑 |
 | 聊天 UI | In Progress | 85% | 顶栏压缩、输入框修复、自动追踪滚动、选择模式、Markdown 表格与分隔线已优化 |
 | 会话列表 | In Progress | 85% | 抽屉、折叠文件夹、重命名、日期分组、创建/更新时间显示已实现 |
 | 成果收藏 | Done | 85% | 支持收藏单条/多条消息为片段，保存快照、来源、标题、标签、描述，并可搜索、查看、追加、移除、分享 |
-| 多 AI 群聊 | Done | 70% | 新增常驻 AI 机器人、独立群聊表、手动点名发言、群摘要、群聊工具消息和基础 UI |
+| 多 AI 群聊 | Done | 82% | 新增常驻 AI 机器人、独立群聊表、手动点名、播放器式轮流发言、群摘要、群聊工具消息和基础 UI |
 | 后台生成 | Done | 80% | 前台服务保活，后台完成后通知 |
 | 分享导出 | In Progress | 75% | 文本、Markdown 文件、长图、单气泡分享已实现，超长内容仍需优化 |
-| 自动化测试 | In Progress | 65% | Provider adapter、fork、附件请求体、web_search、收藏片段、多 AI 群聊仓库链路已有单测 |
+| 自动化测试 | In Progress | 72% | Provider adapter、fork、附件请求体、web_search、收藏片段、多 AI 群聊仓库链路、Provider 删除/改绑和群聊播放器选择逻辑已有单测 |
 | CI / Release | Done | 90% | Jenkins 本地 release pipeline 和签名配置已接入 |
 
 ## 4. 已完成事项
@@ -68,6 +68,8 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | API-006 | DeepSeek reasoning/thinking 配置入口评估 | Done | P2 | 当前保留 provider reasoning 配置，后续按 provider 差异扩展 |
 | API-007 | raw response debug log | Done | P1 | 设置中可开启，assistant 消息保存原始 SSE frame |
 | API-008 | assistant 元数据显示 | Done | P1 | 气泡底部显示总耗时、首 token、token usage |
+| API-009 | Provider 删除与机器人依赖保护 | Done | P1 | 无机器人依赖时删除 Provider 和 Key；有依赖时提示批量改绑或取消 |
+| API-010 | 机器人批量改绑后删除 Provider | Done | P1 | 依赖源 Provider 的机器人改绑到目标 Provider 默认模型，再删除源 Provider |
 
 ### 4.2 会话固定模型与分叉
 
@@ -91,6 +93,9 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | SEARCH-006 | 搜索 URL 展示 | Done | P1 | 解析 `url_citation`、正文 URL、OpenAI `action.url` |
 | SEARCH-007 | OpenAI 多个 hosted web_search item 聚合 | Done | P1 | search/open_page 合并为一个工具卡片 |
 | SEARCH-008 | 工具调用历史参与上下文策略 | Done | P1 | TOOL 消息落库但不回传给模型上下文 |
+| SEARCH-009 | DeepSeek/OpenAI-compatible 网页抓取工具兼容 | Done | P1 | 兼容 DSML `open` / `open_page` / `web_fetch`，工具结果回传后继续生成 |
+| SEARCH-010 | DeepSeek thinking + 工具调用 reasoning 回传 | Done | P1 | 非流式和流式 DSML 工具链均回传 `reasoning_content`，避免 thinking mode 400 |
+| SEARCH-011 | 群聊 GPT 首轮 web_search 兼容 | Done | P1 | 群聊首轮无历史时合成 user task，避免 Responses web_search system-only 请求失败 |
 
 ### 4.4 多模态附件
 
@@ -116,7 +121,8 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | SETTINGS-003 | 夜间模式 | Done | P1 | 修复顶部文字、按钮、输入框图标暗色可见性 |
 | SETTINGS-004 | 字体大小调整 | Done | P1 | 设置中支持字体缩放 |
 | SETTINGS-005 | Provider 配置文本导入导出 | Done | P1 | JSON 文本包含 provider 字段和 key |
-| SETTINGS-006 | Provider 配置二维码导入导出 | Planned | P2 | 复杂度较高，第一版暂缓 |
+| SETTINGS-006 | Provider 删除和机器人改绑 | Done | P1 | 配置管理中可删除无依赖 Provider；有依赖时选择目标配置批量改绑后删除 |
+| SETTINGS-007 | Provider 配置二维码导入导出 | Planned | P2 | 复杂度较高，第一版暂缓 |
 
 ### 4.6 聊天 UI 和交互
 
@@ -174,7 +180,9 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | GROUP-009 | 群聊附件上下文 | Done | P1 | 支持附件的机器人收到附件；不支持附件的机器人收到附件元信息文本 |
 | GROUP-010 | 群聊消息收藏 | Done | P1 | 群消息可保存为收藏片段快照，来源记录为群聊标题和模型信息 |
 | GROUP-011 | 复制群聊配置 | Done | P1 | 可从当前群聊复制标题、主题和成员机器人，允许保存前修改，不复制历史消息 |
-| GROUP-012 | 群聊 UI 验证 | Watch | P1 | 已实现群聊页面、点名/总结入口和机器人气泡，仍需真机验证滚动与后台任务体验 |
+| GROUP-012 | 群聊 UI 验证 | Watch | P1 | 已实现群聊页面、点名/总结/播放器入口和机器人气泡，仍需真机验证滚动与后台任务体验 |
+| GROUP-013 | 群聊播放器式开始/暂停 | Done | P1 | 点击开始后按成员顺序循环发言；暂停后当前回复说完即停；播放中用户仍可插话 |
+| GROUP-014 | 群聊 GPT 搜索兼容 | Done | P1 | 群聊历史以 user context 回传，首轮无历史时合成 user task，首轮 GPT web_search 可正常触发 |
 
 ## 5. 已知风险
 
@@ -191,6 +199,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | RISK-009 | 收藏附件复用本机文件路径，文件被清理后只能保留元数据 | Watch | P2 | 后续增加附件复制/校验或收藏导出打包 |
 | RISK-010 | 群聊提示词和最近 20 条上下文可能不足以处理长讨论 | Watch | P1 | 后续增加自动摘要滚动更新、上下文长度设置和主持人调度 |
 | RISK-011 | 群聊消息第一版尚未完整接入长图导出 | Watch | P2 | 后续复用导出模型，补齐群聊完整导出和群消息长图分享 |
+| RISK-012 | OpenAI Responses hosted web_search 依赖上游代理稳定性 | Watch | P1 | 已优化群聊首轮请求形态和错误提示；仍需观察 502/upstream_error 是否偶发 |
 
 ## 6. 下一步计划
 
@@ -208,7 +217,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-008 | provider 错误提示进一步中文化 | Planned | 401、429、超时、DNS、SSL、Base URL 错误均有清晰提示 |
 | NEXT-P1-009 | 收藏夹标签管理 | Planned | 支持重命名、合并、删除标签 |
 | NEXT-P1-010 | 收藏导入导出 | Planned | 支持收藏片段 JSON/Markdown 导出和恢复 |
-| NEXT-P1-011 | 群聊真机回归 | Planned | 真机验证新建机器人、创建群聊、点名发言、搜索工具调用、附件上下文和切换页面不中断 |
+| NEXT-P1-011 | 群聊真机回归 | Planned | 真机验证新建机器人、创建群聊、点名/播放器发言、搜索工具调用、附件上下文和切换页面不中断 |
 | NEXT-P1-012 | 群聊导出增强 | Planned | 群聊可导出文本/Markdown/长图，群消息可生成长图分享 |
 
 ### 6.2 P2 / P3
@@ -225,7 +234,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P2-008 | 收藏搜索结果高亮 | Planned | 收藏夹搜索命中标题、描述、标签、正文时高亮显示 |
 | NEXT-P2-009 | 收藏批量管理 | Planned | 收藏夹支持批量删除、批量打标签、按时间/标签排序、批量移除消息 |
 | NEXT-P2-010 | 群聊自动主持人 | Planned | 支持由主持人机器人控制下一位发言者、暂停和总结 |
-| NEXT-P2-011 | 群聊顺序轮询 | Planned | 支持按成员顺序手动启动有限轮数讨论，不并发发言 |
+| NEXT-P2-011 | 群聊播放器增强 | Planned | 支持有限轮数、每轮间隔、按群聊保存偏好和失败后重试策略 |
 | NEXT-P2-012 | 机器人头像和颜色 | Planned | 群聊气泡按机器人显示头像、颜色和可扫描身份标记 |
 | NEXT-P2-013 | 群摘要自动滚动更新 | Planned | 长讨论自动或半自动更新摘要，避免上下文无限增长 |
 | NEXT-P3-001 | Anthropic adapter | Planned | Claude Messages API 文本流式对话 |
@@ -238,10 +247,9 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 本机 Android 环境：
 
 ```powershell
-$env:JAVA_HOME='D:\Projects\Personal\AndroidApps\.devtools\android\jdk\jdk-17.0.18+8'
-$env:ANDROID_HOME='D:\Projects\Personal\AndroidApps\.devtools\android\sdk'
+$env:JAVA_HOME='D:\Projects\Personal\.devtools\android\jdk\jdk-17.0.18+8'
+$env:ANDROID_HOME='D:\Projects\Personal\.devtools\android\sdk'
 $env:ANDROID_SDK_ROOT=$env:ANDROID_HOME
-$env:GRADLE_USER_HOME='D:\Projects\Personal\AndroidApps\.gradle-user-home'
 $env:Path="$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\cmdline-tools\latest\bin;$env:Path"
 ```
 
@@ -251,6 +259,13 @@ $env:Path="$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME
 .\gradlew.bat :app:testDebugUnitTest --console=plain --no-daemon
 .\gradlew.bat :app:compileDebugKotlin --console=plain --no-daemon
 .\gradlew.bat :app:assembleDebug --console=plain --no-daemon
+
+本次已执行：
+
+```powershell
+.\gradlew.bat --no-daemon :app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest
+.\gradlew.bat --no-daemon :app:testDebugUnitTest --tests com.personal.aichat.ProviderAdapterTest
+```
 ```
 
 提交前建议执行中文乱码扫描：

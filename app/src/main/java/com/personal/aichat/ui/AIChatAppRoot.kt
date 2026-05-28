@@ -63,7 +63,9 @@ import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Unarchive
 import androidx.compose.material.icons.outlined.KeyboardDoubleArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
@@ -285,6 +287,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onOpenAttachment = openAttachmentInApp,
         onBotTurn = { viewModel.sendGroupBotTurn(it, summarize = false) },
         onSummarize = { viewModel.sendGroupBotTurn(it, summarize = true) },
+        onToggleAutoPlay = viewModel::toggleGroupAutoPlay,
         onStop = viewModel::stopGroupGenerating,
         onFavoriteMessage = { favoriteDraftGroupMessageIds = setOf(it) },
         onCopyGroup = {
@@ -316,6 +319,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onSelectProvider = viewModel::selectProvider,
         onEditProvider = viewModel::openSettings,
         onCloneProvider = viewModel::cloneProvider,
+        onDeleteProvider = viewModel::deleteProvider,
         onCreateProvider = viewModel::createProvider
       )
     }
@@ -519,6 +523,14 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
             Text("知道了")
           }
         }
+      )
+    }
+
+    if (state.providerRebindDeleteSourceId != null) {
+      ProviderRebindDeleteDialog(
+        state = state,
+        onDismiss = viewModel::cancelProviderRebindDelete,
+        onRebindAndDelete = viewModel::rebindProviderBotsAndDelete
       )
     }
 
@@ -1906,6 +1918,7 @@ private fun GroupChatPage(
   onOpenAttachment: (ChatAttachment) -> Unit,
   onBotTurn: (String) -> Unit,
   onSummarize: (String) -> Unit,
+  onToggleAutoPlay: () -> Unit,
   onStop: () -> Unit,
   onFavoriteMessage: (String) -> Unit,
   onCopyGroup: () -> Unit
@@ -1951,6 +1964,16 @@ private fun GroupChatPage(
         }
         IconButton(onClick = onNewGroup) {
           Icon(Icons.Outlined.Add, contentDescription = "新建群聊")
+        }
+        IconButton(
+          onClick = onToggleAutoPlay,
+          enabled = selectedGroup != null && groupBots.isNotEmpty()
+        ) {
+          Icon(
+            imageVector = if (state.isSelectedGroupAutoPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+            contentDescription = if (state.isSelectedGroupAutoPlaying) "暂停轮流" else "开始轮流",
+            tint = if (state.isSelectedGroupAutoPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+          )
         }
         IconButton(onClick = onCopyGroup, enabled = selectedGroup != null) {
           Icon(Icons.Outlined.ContentCopy, contentDescription = "复制群聊")
@@ -2062,7 +2085,8 @@ private fun GroupChatPage(
           onOpenAttachment = onOpenAttachment,
           isGenerating = state.isSelectedGroupStreaming,
           onStopGenerating = onStop,
-          showRetry = false
+          showRetry = false,
+          sendWhileGenerating = true
         )
       }
     }
@@ -4496,7 +4520,8 @@ private fun Composer(
   onOpenAttachment: (ChatAttachment) -> Unit,
   isGenerating: Boolean,
   onStopGenerating: () -> Unit,
-  showRetry: Boolean = true
+  showRetry: Boolean = true,
+  sendWhileGenerating: Boolean = false
 ) {
   Column(
     modifier = Modifier
@@ -4563,7 +4588,7 @@ private fun Composer(
           Icon(Icons.Outlined.Refresh, contentDescription = "重试上一条", tint = MaterialTheme.colorScheme.primary)
         }
       }
-      if (isGenerating) {
+      if (isGenerating && !sendWhileGenerating) {
         Surface(
           shape = RoundedCornerShape(999.dp),
           color = MaterialTheme.colorScheme.primary,
@@ -4598,6 +4623,7 @@ private fun ProviderManagerDialog(
   onSelectProvider: (String) -> Unit,
   onEditProvider: (ChatProviderConfig?) -> Unit,
   onCloneProvider: (String) -> Unit,
+  onDeleteProvider: (String) -> Unit,
   onCreateProvider: (ProviderType) -> Unit
 ) {
   Dialog(
@@ -4619,7 +4645,7 @@ private fun ProviderManagerDialog(
           fontWeight = FontWeight.SemiBold
         )
         Text(
-          text = "可保存多组 GPT、DeepSeek 或代理配置，并随时切换。",
+          text = "可保存多组 GPT、DeepSeek 或代理配置，并随时切换。被 AI 机器人使用的配置需先改绑或删除机器人后再删除。",
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           style = MaterialTheme.typography.bodyMedium
         )
@@ -4636,7 +4662,8 @@ private fun ProviderManagerDialog(
               selected = provider.id == state.selectedProviderId,
               onSelect = { onSelectProvider(provider.id) },
               onEdit = { onEditProvider(provider) },
-              onClone = { onCloneProvider(provider.id) }
+              onClone = { onCloneProvider(provider.id) },
+              onDelete = { onDeleteProvider(provider.id) }
             )
           }
         }
@@ -4674,8 +4701,10 @@ private fun ProviderConfigRow(
   selected: Boolean,
   onSelect: () -> Unit,
   onEdit: () -> Unit,
-  onClone: () -> Unit
+  onClone: () -> Unit,
+  onDelete: () -> Unit
 ) {
+  var confirmDelete by remember(provider.id) { mutableStateOf(false) }
   Surface(
     shape = RoundedCornerShape(8.dp),
     color = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.background,
@@ -4709,8 +4738,103 @@ private fun ProviderConfigRow(
       IconButton(onClick = onEdit) {
         Icon(Icons.Outlined.Edit, contentDescription = "编辑配置")
       }
+      IconButton(onClick = { confirmDelete = true }) {
+        Icon(Icons.Outlined.Delete, contentDescription = "删除配置", tint = MaterialTheme.colorScheme.error)
+      }
     }
   }
+  if (confirmDelete) {
+    AlertDialog(
+      onDismissRequest = { confirmDelete = false },
+      title = { Text("删除 API 配置") },
+      text = {
+        Text("确定要删除「${provider.displayName}」吗？如果有 AI 机器人正在使用它，删除会被阻止，并提示你先删除机器人或把机器人切换到其他 API 配置。")
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            confirmDelete = false
+            onDelete()
+          }
+        ) {
+          Text("删除")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { confirmDelete = false }) {
+          Text("取消")
+        }
+      }
+    )
+  }
+}
+
+@Composable
+private fun ProviderRebindDeleteDialog(
+  state: ChatUiState,
+  onDismiss: () -> Unit,
+  onRebindAndDelete: (String) -> Unit
+) {
+  val sourceProvider = state.providers.firstOrNull { it.id == state.providerRebindDeleteSourceId }
+  val bots = state.aiBots.filter { it.id in state.providerRebindDeleteBotIds }
+  val targets = state.providers.filter { it.id != state.providerRebindDeleteSourceId }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("改绑机器人后删除") },
+    text = {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .heightIn(max = 420.dp)
+          .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+      ) {
+        Text("「${sourceProvider?.displayName ?: "此 API 配置"}」仍被以下机器人使用：")
+        bots.forEach { bot ->
+          Text("· ${bot.name} / ${bot.model}", style = MaterialTheme.typography.bodySmall)
+        }
+        Text(
+          "选择一个现有 API 配置后，这些机器人会全部改绑到目标配置，并使用目标配置的默认模型，然后删除原 API 配置。",
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          style = MaterialTheme.typography.bodySmall
+        )
+        if (targets.isEmpty()) {
+          Text(
+            "当前没有其他 API 配置可用于改绑。请先新增一个 API 配置，或删除这些机器人。",
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall
+          )
+        } else {
+          targets.forEach { provider ->
+            Surface(
+              color = MaterialTheme.colorScheme.surfaceVariant,
+              shape = RoundedCornerShape(8.dp),
+              modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onRebindAndDelete(provider.id) }
+            ) {
+              Column(modifier = Modifier.padding(10.dp)) {
+                Text(provider.displayName, fontWeight = FontWeight.SemiBold)
+                Text(
+                  "${provider.type.label} / ${provider.defaultModel}",
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  style = MaterialTheme.typography.bodySmall,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis
+                )
+              }
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {},
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("取消")
+      }
+    }
+  )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

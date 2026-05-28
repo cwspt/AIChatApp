@@ -19,12 +19,16 @@ import com.personal.aichat.domain.ChatCompletionOptions
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ChatStreamEvent
+import com.personal.aichat.domain.AiBot
+import com.personal.aichat.domain.GroupChatMessage
+import com.personal.aichat.domain.GroupMessageSenderType
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderAdapter
 import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.ReasoningEffort
 import com.personal.aichat.domain.WebSearchMode
+import com.personal.aichat.ui.nextGroupAutoPlayBotId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -128,6 +132,75 @@ class ChatRepositoryForkTest {
     val messages = dao.messagesForConversation("conv")
     assertEquals("conversation-fixed", messages[0].model)
     assertEquals("conversation-fixed", messages[1].model)
+  }
+
+  @Test
+  fun deleteProviderDeletesProviderAndApiKeyWhenNoBotsDependOnIt() = runTest {
+    val dao = FakeChatDao()
+    val keyStore = FakeApiKeyStore()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = keyStore,
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("remove-me", "old-model").copy(secretRef = "provider_remove-me"))
+    dao.upsertProvider(provider("fallback", "fallback-model"))
+
+    val result = repository.deleteProvider("remove-me")
+
+    assertEquals(true, result.deleted)
+    assertNull(dao.providerById("remove-me"))
+    assertEquals(listOf("provider_remove-me"), keyStore.deletedSecretRefs)
+  }
+
+  @Test
+  fun deleteProviderIsBlockedWhenAiBotsDependOnIt() = runTest {
+    val dao = FakeChatDao()
+    val keyStore = FakeApiKeyStore()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = keyStore,
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "model-a").copy(secretRef = "provider_provider"))
+    val bot = repository.createAiBot("Reviewer", "provider", "bot-model", "")
+
+    val result = repository.deleteProvider("provider")
+
+    assertEquals(false, result.deleted)
+    assertEquals(listOf(bot.id), result.blockingBots.map { it.id })
+    assertNotNull(dao.providerById("provider"))
+    assertEquals(emptyList<String>(), keyStore.deletedSecretRefs)
+  }
+
+  @Test
+  fun rebindProviderBotsAndDeleteMovesBotsToTargetProviderAndDeletesSource() = runTest {
+    val dao = FakeChatDao()
+    val keyStore = FakeApiKeyStore()
+    val selection = FakeSelectionStore()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = selection,
+      apiKeyStore = keyStore,
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("source", "source-model").copy(secretRef = "provider_source"))
+    dao.upsertProvider(provider("target", "target-default"))
+    val first = repository.createAiBot("Reviewer", "source", "custom-a", "")
+    val second = repository.createAiBot("Writer", "source", "custom-b", "")
+
+    val result = repository.rebindProviderBotsAndDelete("source", "target")
+
+    assertEquals(true, result.deleted)
+    assertNull(dao.providerById("source"))
+    assertEquals(listOf("provider_source"), keyStore.deletedSecretRefs)
+    assertEquals("target", selection.selectedProviderId.value)
+    assertEquals("target", dao.aiBotById(first.id)?.providerId)
+    assertEquals("target-default", dao.aiBotById(first.id)?.model)
+    assertEquals("target", dao.aiBotById(second.id)?.providerId)
+    assertEquals("target-default", dao.aiBotById(second.id)?.model)
   }
 
   @Test
@@ -336,6 +409,53 @@ class ChatRepositoryForkTest {
   }
 
   @Test
+  fun groupBotTurnSendsPriorBotMessagesAsUserContextForResponsesCompatibility() = runTest {
+    val dao = FakeChatDao()
+    val adapter = RecordingAdapter()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = mapOf(ProviderType.TOKENHUB_PROXY to adapter)
+    )
+    dao.upsertProvider(provider("provider", "provider-default"))
+    val first = repository.createAiBot("GPT", "provider", "gpt-fixed", "")
+    val second = repository.createAiBot("Deep", "provider", "deep-fixed", "")
+    val group = repository.createGroupChat("出游计划", "制定计划", listOf(first.id, second.id))
+    repository.sendGroupUserMessage(group.id, "先查天气", emptyList())
+    repository.sendGroupBotTurn(group.id, first.id)
+
+    repository.sendGroupBotTurn(group.id, second.id)
+
+    val priorBotContext = adapter.lastMessages.firstOrNull { it.content.contains("[GPT] fake response") }
+    assertNotNull(priorBotContext)
+    assertEquals(MessageRole.USER, priorBotContext?.role)
+  }
+
+  @Test
+  fun firstGroupBotTurnIncludesSyntheticUserTaskForResponsesWebSearch() = runTest {
+    val dao = FakeChatDao()
+    val adapter = RecordingAdapter()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = mapOf(ProviderType.TOKENHUB_PROXY to adapter)
+    )
+    dao.upsertProvider(provider("provider", "provider-default"))
+    val bot = repository.createAiBot("GPT", "provider", "gpt-fixed", "")
+    val group = repository.createGroupChat("带娃出游计划", "江苏苏州一岁半女童家庭，如何制定带娃出游计划", listOf(bot.id))
+
+    repository.sendGroupBotTurn(group.id, bot.id)
+
+    val task = adapter.lastMessages.firstOrNull { it.id.startsWith("group-initial-task-") }
+    assertNotNull(task)
+    assertEquals(MessageRole.USER, task?.role)
+    assertTrue(task?.content?.contains("请以「GPT」的身份开始这个群聊") == true)
+    assertTrue(task?.content?.contains("如果需要最新信息，可以先进行网页搜索") == true)
+  }
+
+  @Test
   fun groupSummaryTurnUpdatesRoomSummary() = runTest {
     val dao = FakeChatDao()
     val adapter = RecordingAdapter()
@@ -383,6 +503,33 @@ class ChatRepositoryForkTest {
     assertTrue(favorite.searchText.contains("群聊结果"))
   }
 
+  @Test
+  fun nextGroupAutoPlayBotStartsAtFirstBotWhenNoBotHasSpoken() {
+    val bots = listOf(testBot("bot-a", "A"), testBot("bot-b", "B"))
+
+    assertEquals("bot-a", nextGroupAutoPlayBotId(bots, emptyList()))
+  }
+
+  @Test
+  fun nextGroupAutoPlayBotCyclesAfterMostRecentBotMessage() {
+    val bots = listOf(testBot("bot-a", "A"), testBot("bot-b", "B"))
+    val messages = listOf(
+      testGroupMessage("m1", GroupMessageSenderType.BOT, "bot-a", "A"),
+      testGroupMessage("m2", GroupMessageSenderType.USER, null, "我"),
+      testGroupMessage("m3", GroupMessageSenderType.BOT, "bot-b", "B")
+    )
+
+    assertEquals("bot-a", nextGroupAutoPlayBotId(bots, messages))
+  }
+
+  @Test
+  fun nextGroupAutoPlayBotSkipsBotThatIsNoLongerEnabled() {
+    val bots = listOf(testBot("bot-a", "A"), testBot("bot-c", "C"))
+    val messages = listOf(testGroupMessage("m1", GroupMessageSenderType.BOT, "bot-b", "B"))
+
+    assertEquals("bot-a", nextGroupAutoPlayBotId(bots, messages))
+  }
+
   private fun provider(id: String, model: String): ProviderEntity = ProviderEntity(
     id = id,
     displayName = id,
@@ -425,6 +572,38 @@ class ChatRepositoryForkTest {
     model = model,
     createdAt = createdAt,
     updatedAt = createdAt,
+    errorMessage = null
+  )
+
+  private fun testBot(id: String, name: String): AiBot = AiBot(
+    id = id,
+    name = name,
+    providerId = "provider",
+    model = "model",
+    systemPrompt = "",
+    enabled = true,
+    createdAt = 1,
+    updatedAt = 1
+  )
+
+  private fun testGroupMessage(
+    id: String,
+    senderType: GroupMessageSenderType,
+    botId: String?,
+    senderName: String
+  ): GroupChatMessage = GroupChatMessage(
+    id = id,
+    groupId = "group",
+    senderType = senderType,
+    botId = botId,
+    senderName = senderName,
+    role = if (senderType == GroupMessageSenderType.USER) MessageRole.USER else MessageRole.ASSISTANT,
+    content = "content",
+    status = MessageStatus.COMPLETE,
+    providerId = "provider",
+    model = "model",
+    createdAt = 1,
+    updatedAt = 1,
     errorMessage = null
   )
 }
@@ -482,10 +661,13 @@ private class FakeSelectionStore : ChatSelectionStore {
 }
 
 private class FakeApiKeyStore : ApiKeyStore {
+  val deletedSecretRefs = mutableListOf<String>()
   override fun read(secretRef: String?): String? = "test-key"
   override fun exists(secretRef: String?): Boolean = true
   override fun write(secretRef: String, apiKey: String) = Unit
-  override fun delete(secretRef: String) = Unit
+  override fun delete(secretRef: String) {
+    deletedSecretRefs += secretRef
+  }
 }
 
 private class FakeChatDao : ChatDao {
@@ -511,6 +693,13 @@ private class FakeChatDao : ChatDao {
   }
 
   override suspend fun providerCount(): Int = providers.size
+
+  override suspend fun deleteProvider(id: String) {
+    providers.remove(id)
+  }
+
+  override suspend fun aiBotsByProviderId(providerId: String): List<AiBotEntity> =
+    aiBots.values.filter { it.providerId == providerId }
 
   override fun observeConversations(): Flow<List<ConversationEntity>> = flowOf(
     conversations.values.filter { !it.isDeleted && !it.isArchived }.sortedByDescending { it.updatedAt }

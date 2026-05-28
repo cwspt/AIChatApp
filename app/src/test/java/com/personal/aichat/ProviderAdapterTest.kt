@@ -4,8 +4,11 @@ import com.personal.aichat.data.remote.OpenAiCompatibleChatAdapter
 import com.personal.aichat.data.remote.OpenAiResponsesAdapter
 import com.personal.aichat.data.remote.SseParser
 import com.personal.aichat.data.remote.WebSearchClient
+import com.personal.aichat.data.remote.WebPageClient
+import com.personal.aichat.data.remote.WebPageResponse
 import com.personal.aichat.data.remote.WebSearchResponse
 import com.personal.aichat.data.remote.WebSearchResult
+import com.personal.aichat.data.remote.extractCompatibleMarkupToolCall
 import com.personal.aichat.data.remote.extractCompatibleToolCalls
 import com.personal.aichat.data.remote.extractTokenUsage
 import com.personal.aichat.domain.ChatAttachment
@@ -384,6 +387,320 @@ class ProviderAdapterTest {
     } finally {
       server.shutdown()
     }
+  }
+
+  @Test
+  fun openAiCompatibleAdapterPassesBackReasoningContentForDeepSeekThinkingToolCalls() = runTest {
+    val server = MockWebServer()
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "application/json")
+        .setBody(
+          """
+          {"choices":[{"message":{"reasoning_content":"I should search first.","tool_calls":[{"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"DeepSeek API 定价 2025\"}"}}]}}]}
+          """.trimIndent()
+        )
+    )
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+          "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n" +
+            "data: [DONE]\n\n"
+        )
+    )
+    server.start()
+    try {
+      val adapter = OpenAiCompatibleChatAdapter(
+        webSearchClient = object : WebSearchClient {
+          override suspend fun search(query: String): WebSearchResponse {
+            return WebSearchResponse(
+              query = query,
+              results = listOf(WebSearchResult("DeepSeek Pricing", "https://api-docs.deepseek.com/quick_start/pricing", "Pricing"))
+            )
+          }
+        }
+      )
+      adapter.streamChat(
+        config = providerConfig(
+          type = ProviderType.OPENAI_COMPATIBLE_CHAT,
+          baseUrl = server.url("/v1").toString().trimEnd('/')
+        ),
+        apiKey = "test-key",
+        messages = listOf(userMessage("DeepSeek pricing")),
+        options = ChatCompletionOptions(
+          model = "deepseek-test",
+          webSearchMode = WebSearchMode.AUTO
+        )
+      ).toList()
+
+      server.takeRequest()
+      val finalRequestBody = server.takeRequest().body.readUtf8()
+      assertEquals(true, finalRequestBody.contains("\"reasoning_content\":\"I should search first.\""))
+      assertEquals(true, finalRequestBody.contains("\"role\":\"tool\""))
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun openAiCompatibleAdapterExecutesMarkupOpenToolInsteadOfStreamingIt() = runTest {
+    val server = MockWebServer()
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "application/json")
+        .setBody(
+          """
+          {"choices":[{"message":{"reasoning_content":"search","tool_calls":[{"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"DeepSeek API pricing\"}"}}]}}]}
+          """.trimIndent()
+        )
+    )
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+          "data: {\"choices\":[{\"delta\":{\"content\":\"<｜｜DSML｜｜tool_calls>\\n<｜｜DSML｜｜invoke name=\\\"open\\\">\\n\"}}]}\n\n" +
+            "data: {\"choices\":[{\"delta\":{\"content\":\"<｜｜DSML｜｜parameter name=\\\"url\\\" string=\\\"true\\\">https://api-docs.deepseek.com/quick_start/pricing</｜｜DSML｜｜parameter>\\n</｜｜DSML｜｜invoke>\\n</｜｜DSML｜｜tool_calls>\"}}]}\n\n" +
+            "data: [DONE]\n\n"
+        )
+    )
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+          "data: {\"choices\":[{\"delta\":{\"content\":\"pricing answer\"}}]}\n\n" +
+            "data: [DONE]\n\n"
+        )
+    )
+    server.start()
+    try {
+      val adapter = OpenAiCompatibleChatAdapter(
+        webSearchClient = object : WebSearchClient {
+          override suspend fun search(query: String): WebSearchResponse {
+            return WebSearchResponse(
+              query = query,
+              results = listOf(WebSearchResult("Pricing", "https://api-docs.deepseek.com/quick_start/pricing", "Official pricing"))
+            )
+          }
+        },
+        webPageClient = object : WebPageClient {
+          override suspend fun open(url: String): WebPageResponse {
+            return WebPageResponse(url, "Pricing", "Official pricing details")
+          }
+        }
+      )
+      val events = adapter.streamChat(
+        config = providerConfig(
+          type = ProviderType.OPENAI_COMPATIBLE_CHAT,
+          baseUrl = server.url("/v1").toString().trimEnd('/')
+        ),
+        apiKey = "test-key",
+        messages = listOf(userMessage("DeepSeek pricing")),
+        options = ChatCompletionOptions(
+          model = "deepseek-test",
+          webSearchMode = WebSearchMode.AUTO
+        )
+      ).toList()
+
+      val text = events.filterIsInstance<ChatStreamEvent.TextDelta>().joinToString("") { it.text }
+      val toolEvents = events.filterIsInstance<ChatStreamEvent.ToolCall>()
+      assertEquals("pricing answer", text)
+      assertEquals(true, toolEvents.any { it.name == "open" && it.output?.contains("Official pricing details") == true })
+      assertEquals(3, server.requestCount)
+      server.takeRequest()
+      server.takeRequest()
+      val finalRequestBody = server.takeRequest().body.readUtf8()
+      assertEquals(true, finalRequestBody.contains("\"tool_calls\""))
+      assertEquals(true, finalRequestBody.contains("\"tool_call_id\""))
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun openAiCompatibleAdapterExecutesMultipleMarkupOpenTools() = runTest {
+    val server = MockWebServer()
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "application/json")
+        .setBody(
+          """
+          {"choices":[{"message":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"DeepSeek API pricing\"}"}}]}}]}
+          """.trimIndent()
+        )
+    )
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+          "data: {\"choices\":[{\"delta\":{\"content\":\"<\"}}]}\n\n" +
+            "data: {\"choices\":[{\"delta\":{\"content\":\"锝滐綔DSML锝滐綔tool_calls>\\n<锝滐綔DSML锝滐綔invoke name=\\\"open\\\">\\n<锝滐綔DSML锝滐綔parameter name=\\\"url\\\" string=\\\"true\\\">https://api-docs.deepseek.com/quick_start/pricing</锝滐綔DSML锝滐綔parameter>\\n</锝滐綔DSML锝滐綔invoke>\\n\"}}]}\n\n" +
+            "data: {\"choices\":[{\"delta\":{\"content\":\"<锝滐綔DSML锝滐綔invoke name=\\\"open\\\">\\n<锝滐綔DSML锝滐綔parameter name=\\\"url\\\" string=\\\"true\\\">https://api-docs.deepseek.com/zh-cn/quick_start/pricing</锝滐綔DSML锝滐綔parameter>\\n</锝滐綔DSML锝滐綔invoke>\\n</锝滐綔DSML锝滐綔tool_calls>\"}}]}\n\n" +
+            "data: [DONE]\n\n"
+        )
+    )
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+          "data: {\"choices\":[{\"delta\":{\"content\":\"final\"}}]}\n\n" +
+            "data: [DONE]\n\n"
+        )
+    )
+    server.start()
+    try {
+      val openedUrls = mutableListOf<String>()
+      val adapter = OpenAiCompatibleChatAdapter(
+        webSearchClient = object : WebSearchClient {
+          override suspend fun search(query: String): WebSearchResponse {
+            return WebSearchResponse(query, listOf(WebSearchResult("Pricing", "https://api-docs.deepseek.com/quick_start/pricing", "")))
+          }
+        },
+        webPageClient = object : WebPageClient {
+          override suspend fun open(url: String): WebPageResponse {
+            openedUrls += url
+            return WebPageResponse(url, "Page", "Page text for $url")
+          }
+        }
+      )
+
+      val events = adapter.streamChat(
+        config = providerConfig(
+          type = ProviderType.OPENAI_COMPATIBLE_CHAT,
+          baseUrl = server.url("/v1").toString().trimEnd('/')
+        ),
+        apiKey = "test-key",
+        messages = listOf(userMessage("DeepSeek pricing")),
+        options = ChatCompletionOptions(model = "deepseek-test", webSearchMode = WebSearchMode.AUTO)
+      ).toList()
+
+      val text = events.filterIsInstance<ChatStreamEvent.TextDelta>().joinToString("") { it.text }
+      assertEquals("final", text)
+      assertEquals(
+        listOf(
+          "https://api-docs.deepseek.com/quick_start/pricing",
+          "https://api-docs.deepseek.com/zh-cn/quick_start/pricing"
+        ),
+        openedUrls
+      )
+      assertEquals(3, server.requestCount)
+      server.takeRequest()
+      server.takeRequest()
+      val finalRequestBody = server.takeRequest().body.readUtf8()
+      assertEquals(true, finalRequestBody.contains("\"tool_calls\""))
+      assertEquals(true, finalRequestBody.contains("https://api-docs.deepseek.com/zh-cn/quick_start/pricing"))
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun openAiCompatibleAdapterExecutesMarkupWebFetchToolInsteadOfStreamingIt() = runTest {
+    val server = MockWebServer()
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "application/json")
+        .setBody(
+          """
+          {"choices":[{"message":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"DeepSeek API pricing\"}"}}]}}]}
+          """.trimIndent()
+        )
+    )
+    val marker = "\uFF5C\uFF5CDSML\uFF5C\uFF5C"
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+          "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"I should fetch \"}}]}\n\n" +
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"the official page.\"}}]}\n\n" +
+            "data: {\"choices\":[{\"delta\":{\"content\":\"<$marker" +
+            "tool_calls>\\n<$marker" +
+            "invoke name=\\\"web_fetch\\\">\\n<$marker" +
+            "parameter name=\\\"url\\\" string=\\\"true\\\">https://api-docs.deepseek.com/zh-cn/quick_start/pricing-details-cny/</$marker" +
+            "parameter>\\n</$marker" +
+            "invoke>\\n</$marker" +
+            "tool_calls>\"}}]}\n\n" +
+            "data: [DONE]\n\n"
+        )
+    )
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+          "data: {\"choices\":[{\"delta\":{\"content\":\"fetched answer\"}}]}\n\n" +
+            "data: [DONE]\n\n"
+        )
+    )
+    server.start()
+    try {
+      val openedUrls = mutableListOf<String>()
+      val adapter = OpenAiCompatibleChatAdapter(
+        webSearchClient = object : WebSearchClient {
+          override suspend fun search(query: String): WebSearchResponse {
+            return WebSearchResponse(query, listOf(WebSearchResult("Pricing", "https://api-docs.deepseek.com/quick_start/pricing", "")))
+          }
+        },
+        webPageClient = object : WebPageClient {
+          override suspend fun open(url: String): WebPageResponse {
+            openedUrls += url
+            return WebPageResponse(url, "CNY pricing", "CNY pricing details")
+          }
+        }
+      )
+
+      val events = adapter.streamChat(
+        config = providerConfig(
+          type = ProviderType.OPENAI_COMPATIBLE_CHAT,
+          baseUrl = server.url("/v1").toString().trimEnd('/')
+        ),
+        apiKey = "test-key",
+        messages = listOf(userMessage("DeepSeek pricing")),
+        options = ChatCompletionOptions(model = "deepseek-test", webSearchMode = WebSearchMode.AUTO)
+      ).toList()
+
+      val text = events.filterIsInstance<ChatStreamEvent.TextDelta>().joinToString("") { it.text }
+      val toolEvents = events.filterIsInstance<ChatStreamEvent.ToolCall>()
+      assertEquals("fetched answer", text)
+      assertEquals(listOf("https://api-docs.deepseek.com/zh-cn/quick_start/pricing-details-cny/"), openedUrls)
+      assertEquals(true, toolEvents.any { it.name == "web_fetch" && it.output?.contains("CNY pricing details") == true })
+      assertEquals(3, server.requestCount)
+      server.takeRequest()
+      server.takeRequest()
+      val finalRequestBody = server.takeRequest().body.readUtf8()
+      assertEquals(true, finalRequestBody.contains("\"tool_calls\""))
+      assertEquals(true, finalRequestBody.contains("\"tool_call_id\""))
+      assertEquals(true, finalRequestBody.contains("\"web_fetch\""))
+      assertEquals(true, finalRequestBody.contains("\"reasoning_content\":\"I should fetch the official page.\""))
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun extractsCompatibleMarkupToolCall() {
+    val call = extractCompatibleMarkupToolCall(
+      """
+      <｜｜DSML｜｜tool_calls>
+      <｜｜DSML｜｜invoke name="open">
+      <｜｜DSML｜｜parameter name="url" string="true">https://api-docs.deepseek.com/quick_start/pricing</｜｜DSML｜｜parameter>
+      </｜｜DSML｜｜invoke>
+      </｜｜DSML｜｜tool_calls>
+      """.trimIndent()
+    )
+
+    assertEquals("open", call?.name)
+    assertEquals(true, call?.arguments?.contains("https://api-docs.deepseek.com/quick_start/pricing") == true)
   }
 
   @Test

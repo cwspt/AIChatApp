@@ -23,6 +23,12 @@ interface ChatDao {
   @Query("SELECT COUNT(*) FROM providers")
   suspend fun providerCount(): Int
 
+  @Query("DELETE FROM providers WHERE id = :id")
+  suspend fun deleteProvider(id: String)
+
+  @Query("SELECT * FROM ai_bots WHERE providerId = :providerId ORDER BY enabled DESC, updatedAt DESC, name ASC")
+  suspend fun aiBotsByProviderId(providerId: String): List<AiBotEntity>
+
   @Query("SELECT * FROM conversations WHERE isDeleted = 0 AND isArchived = 0 ORDER BY isPinned DESC, updatedAt DESC")
   fun observeConversations(): Flow<List<ConversationEntity>>
 

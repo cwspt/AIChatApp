@@ -66,6 +66,11 @@ private data class ProviderConfigExportItem(
   val apiKey: String? = null
 )
 
+data class DeleteProviderResult(
+  val deleted: Boolean,
+  val blockingBots: List<AiBot> = emptyList()
+)
+
 class ChatRepository(
   private val dao: ChatDao,
   private val preferencesRepository: ChatSelectionStore,
@@ -454,10 +459,10 @@ class ChatRepository(
     dao.touchGroupChatRoom(room.id, now)
   }
 
-  suspend fun sendGroupBotTurn(groupId: String, botId: String, summarize: Boolean = false) {
-    val room = dao.groupChatRoomById(groupId) ?: return
-    val bot = dao.aiBotById(botId) ?: return
-    val provider = dao.providerById(bot.providerId)?.toDomain() ?: return
+  suspend fun sendGroupBotTurn(groupId: String, botId: String, summarize: Boolean = false): MessageStatus {
+    val room = dao.groupChatRoomById(groupId) ?: return MessageStatus.FAILED
+    val bot = dao.aiBotById(botId) ?: return MessageStatus.FAILED
+    val provider = dao.providerById(bot.providerId)?.toDomain() ?: return MessageStatus.FAILED
     val now = System.currentTimeMillis()
     val message = GroupMessageEntity(
       id = newId("gmsg"),
@@ -475,7 +480,7 @@ class ChatRepository(
       errorMessage = null
     )
     dao.upsertGroupMessage(message)
-    streamGroupBot(room, bot.toDomain(), provider, message.id, summarize)
+    return streamGroupBot(room, bot.toDomain(), provider, message.id, summarize)
   }
 
   suspend fun bootstrapDefaults() {
@@ -566,6 +571,42 @@ class ChatRepository(
     )
     saveProvider(clone, apiKey = null)
     return clone
+  }
+
+  suspend fun deleteProvider(providerId: String): DeleteProviderResult {
+    val provider = dao.providerById(providerId) ?: return DeleteProviderResult(deleted = true)
+    val blockingBots = dao.aiBotsByProviderId(providerId).map { it.toDomain() }
+    if (blockingBots.isNotEmpty()) {
+      return DeleteProviderResult(deleted = false, blockingBots = blockingBots)
+    }
+    dao.deleteProvider(providerId)
+    provider.secretRef?.let { apiKeyStore.delete(it) }
+    val remainingProviders = dao.observeProviders().first()
+    val nextProvider = remainingProviders.firstOrNull()?.toDomain()
+      ?: defaultProviders().first().also { dao.upsertProvider(it) }.toDomain()
+    preferencesRepository.setSelectedProvider(nextProvider.id)
+    return DeleteProviderResult(deleted = true)
+  }
+
+  suspend fun rebindProviderBotsAndDelete(providerId: String, targetProviderId: String): DeleteProviderResult {
+    require(providerId != targetProviderId) { "请选择另一个 API 配置作为机器人新绑定。" }
+    val provider = dao.providerById(providerId) ?: return DeleteProviderResult(deleted = true)
+    val targetProvider = dao.providerById(targetProviderId) ?: error("请选择有效的目标 API 配置")
+    val blockingBots = dao.aiBotsByProviderId(providerId)
+    val now = System.currentTimeMillis()
+    blockingBots.forEach { bot ->
+      dao.upsertAiBot(
+        bot.copy(
+          providerId = targetProvider.id,
+          model = targetProvider.defaultModel,
+          updatedAt = now
+        )
+      )
+    }
+    dao.deleteProvider(providerId)
+    provider.secretRef?.let { apiKeyStore.delete(it) }
+    preferencesRepository.setSelectedProvider(targetProvider.id)
+    return DeleteProviderResult(deleted = true)
   }
 
   fun hasApiKey(provider: ChatProviderConfig?): Boolean {
@@ -1147,7 +1188,7 @@ class ChatRepository(
     provider: ChatProviderConfig,
     botMessageId: String,
     summarize: Boolean
-  ) {
+  ): MessageStatus {
     val adapter = adapters[provider.type]
     if (adapter == null) {
       dao.updateGroupMessageWithMetadata(
@@ -1162,7 +1203,7 @@ class ChatRepository(
         completionTokens = null,
         totalTokens = null
       )
-      return
+      return MessageStatus.FAILED
     }
     val apiKey = apiKeyStore.read(provider.secretRef)
     if (apiKey.isNullOrBlank() && provider.type != ProviderType.TOKENHUB_PROXY) {
@@ -1178,7 +1219,7 @@ class ChatRepository(
         completionTokens = null,
         totalTokens = null
       )
-      return
+      return MessageStatus.FAILED
     }
     val members = dao.groupChatMembers(room.id).mapNotNull { dao.aiBotById(it.botId)?.toDomain() }
     val groupMessages = dao.groupMessages(room.id).filter { it.id != botMessageId }.map { it.toDomain() }
@@ -1258,6 +1299,7 @@ class ChatRepository(
       }
     }
 
+    var finalStatus = MessageStatus.FAILED
     try {
       adapter.streamChat(
         config = provider,
@@ -1286,11 +1328,15 @@ class ChatRepository(
           is ChatStreamEvent.ToolCall -> upsertGroupToolMessage(event)
           ChatStreamEvent.Completed -> {
             updateBotMessage(MessageStatus.COMPLETE, null)
+            finalStatus = MessageStatus.COMPLETE
             if (summarize && output.isNotBlank()) {
               dao.updateGroupChatSummary(room.id, output.trim(), System.currentTimeMillis())
             }
           }
-          is ChatStreamEvent.Failed -> updateBotMessage(MessageStatus.FAILED, event.message)
+          is ChatStreamEvent.Failed -> {
+            finalStatus = MessageStatus.FAILED
+            updateBotMessage(MessageStatus.FAILED, event.message)
+          }
         }
       }
     } catch (error: CancellationException) {
@@ -1298,7 +1344,9 @@ class ChatRepository(
       throw error
     } catch (error: Exception) {
       updateBotMessage(MessageStatus.FAILED, friendlyNetworkErrorMessage(error))
+      finalStatus = MessageStatus.FAILED
     }
+    return finalStatus
   }
 
   private fun buildGroupContextMessages(
@@ -1348,16 +1396,26 @@ class ChatRepository(
         errorMessage = null
       )
     )
-    messages.takeLast(GroupRecentMessageLimit).forEach { message ->
+    val recentMessages = messages.takeLast(GroupRecentMessageLimit)
+    if (recentMessages.isEmpty()) {
+      result += ChatMessage(
+        id = "group-initial-task-${room.id}-${bot.id}",
+        conversationId = room.id,
+        role = MessageRole.USER,
+        content = buildInitialGroupTaskContent(room, bot, summarize),
+        status = MessageStatus.COMPLETE,
+        providerId = null,
+        model = null,
+        createdAt = room.createdAt,
+        updatedAt = room.updatedAt,
+        errorMessage = null
+      )
+    }
+    recentMessages.forEach { message ->
       result += ChatMessage(
         id = message.id,
         conversationId = room.id,
-        role = when (message.senderType) {
-          GroupMessageSenderType.USER -> MessageRole.USER
-          GroupMessageSenderType.BOT -> MessageRole.ASSISTANT
-          GroupMessageSenderType.SYSTEM -> MessageRole.SYSTEM
-          GroupMessageSenderType.TOOL -> MessageRole.SYSTEM
-        },
+        role = MessageRole.USER,
         content = formatGroupContextContent(message, providerSupportsAttachments),
         status = message.status,
         providerId = message.providerId,
@@ -1369,6 +1427,18 @@ class ChatRepository(
       )
     }
     return result
+  }
+
+  private fun buildInitialGroupTaskContent(room: GroupChatRoom, bot: AiBot, summarize: Boolean): String {
+    return buildString {
+      append("请以「${bot.name}」的身份开始这个群聊。")
+      append("围绕群主题「${room.topic.ifBlank { room.title }}」给出第一轮发言。")
+      if (summarize) {
+        append("如果当前还没有讨论内容，请说明暂无可总结内容，并提出建议的讨论起点。")
+      } else {
+        append("如果需要最新信息，可以先进行网页搜索。")
+      }
+    }
   }
 
   private fun formatGroupContextContent(message: GroupChatMessage, providerSupportsAttachments: Boolean): String {
@@ -1613,6 +1683,8 @@ class ChatRepository(
         "请求超时。请检查网络连接或增大请求超时时间。"
       raw.contains("failed to connect", ignoreCase = true) ->
         "无法连接到服务器。请检查 Base URL、网络和代理设置。"
+      raw.contains("response.failed", ignoreCase = true) && raw.contains("Upstream request failed", ignoreCase = true) ->
+        "上游模型请求失败。若本轮开启了网页搜索，通常是搜索工具或代理服务临时失败；请稍后重试，或暂时关闭网页搜索后再让群聊继续。"
       else -> error.message ?: "Provider request failed"
     }
   }

@@ -21,7 +21,11 @@ import com.personal.aichat.domain.ChatConversation
 import com.personal.aichat.domain.ChatConversationGroup
 import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.FavoriteSnippet
+import com.personal.aichat.domain.GroupChatMember
+import com.personal.aichat.domain.GroupChatMessage
 import com.personal.aichat.domain.GroupChatRoom
+import com.personal.aichat.domain.GroupMessageSenderType
+import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.WebSearchMode
 import androidx.compose.ui.text.TextRange
@@ -48,6 +52,7 @@ class ChatViewModel(
   private val localState = MutableStateFlow(ChatUiState())
   private val sendJobsByConversationId = mutableMapOf<String, Job>()
   private val groupJobsByGroupId = mutableMapOf<String, Job>()
+  private val lastGroupTurnCompletedByGroupId = mutableMapOf<String, Boolean>()
   private var pendingDeleteConversationId: String? = null
 
   private val conversationLists = combine(
@@ -219,6 +224,33 @@ class ChatViewModel(
     groupJobsByGroupId[groupId]?.cancel()
   }
 
+  fun toggleGroupAutoPlay() {
+    val state = uiState.value
+    val groupId = state.selectedGroupChatId ?: return
+    if (groupId in state.autoPlayingGroupIds) {
+      pauseGroupAutoPlay(groupId)
+    } else {
+      startGroupAutoPlay(groupId)
+    }
+  }
+
+  fun startGroupAutoPlay(groupId: String? = null) {
+    val targetGroupId = groupId ?: uiState.value.selectedGroupChatId ?: return
+    localState.update { it.copy(autoPlayingGroupIds = it.autoPlayingGroupIds + targetGroupId) }
+    if (groupJobsByGroupId[targetGroupId]?.isActive == true) return
+    val nextBotId = nextAutoPlayBotId(targetGroupId)
+    if (nextBotId == null) {
+      pauseGroupAutoPlay(targetGroupId)
+      return
+    }
+    launchGroupBotTurn(targetGroupId, nextBotId, summarize = false, continueAutoPlay = true)
+  }
+
+  fun pauseGroupAutoPlay(groupId: String? = null) {
+    val targetGroupId = groupId ?: uiState.value.selectedGroupChatId ?: return
+    localState.update { it.copy(autoPlayingGroupIds = it.autoPlayingGroupIds - targetGroupId) }
+  }
+
   private fun importAttachment(context: Context, uri: Uri): ChatAttachment? {
     return runCatching {
       val resolver = context.contentResolver
@@ -285,7 +317,11 @@ class ChatViewModel(
     sendJobsByConversationId[conversationId] = job
   }
 
-  private fun launchGroupStreamingJob(groupId: String, block: suspend () -> Unit) {
+  private fun launchGroupStreamingJob(
+    groupId: String,
+    onCompleted: suspend (Boolean) -> Unit = {},
+    block: suspend () -> Unit
+  ) {
     val wasIdle = groupJobsByGroupId.isEmpty() && sendJobsByConversationId.isEmpty()
     if (wasIdle) {
       appContext?.let { context -> runCatching { ChatGenerationService.start(context) } }
@@ -301,6 +337,7 @@ class ChatViewModel(
       } finally {
         groupJobsByGroupId.remove(groupId)
         localState.update { it.copy(streamingGroupIds = it.streamingGroupIds - groupId) }
+        onCompleted(completed)
         if (groupJobsByGroupId.isEmpty() && sendJobsByConversationId.isEmpty()) {
           appContext?.let { context ->
             if (completed && !AppForegroundTracker.isForeground) {
@@ -520,7 +557,15 @@ class ChatViewModel(
   }
 
   fun closeGroupChatPage() {
-    localState.update { it.copy(groupChatPageOpen = false, selectedGroupChatId = null, groupInput = TextFieldValue("")) }
+    val groupId = uiState.value.selectedGroupChatId
+    localState.update {
+      it.copy(
+        groupChatPageOpen = false,
+        selectedGroupChatId = null,
+        groupInput = TextFieldValue(""),
+        autoPlayingGroupIds = groupId?.let { selected -> it.autoPlayingGroupIds - selected } ?: it.autoPlayingGroupIds
+      )
+    }
   }
 
   fun selectGroupChat(groupId: String) {
@@ -568,9 +613,70 @@ class ChatViewModel(
   fun sendGroupBotTurn(botId: String, summarize: Boolean = false) {
     val groupId = uiState.value.selectedGroupChatId ?: return
     if (groupJobsByGroupId[groupId]?.isActive == true) return
-    launchGroupStreamingJob(groupId) {
-      repository.sendGroupBotTurn(groupId, botId, summarize)
+    launchGroupBotTurn(groupId, botId, summarize, continueAutoPlay = false)
+  }
+
+  private fun launchGroupBotTurn(
+    groupId: String,
+    botId: String,
+    summarize: Boolean,
+    continueAutoPlay: Boolean
+  ) {
+    if (groupJobsByGroupId[groupId]?.isActive == true) return
+    launchGroupStreamingJob(
+      groupId = groupId,
+      onCompleted = { completed ->
+        if (continueAutoPlay) {
+          val turnCompleted = completed && lastGroupTurnCompletedByGroupId.remove(groupId) == true
+          continueGroupAutoPlayIfNeeded(groupId, turnCompleted, botId)
+        } else {
+          lastGroupTurnCompletedByGroupId.remove(groupId)
+        }
+      }
+    ) {
+      lastGroupTurnCompletedByGroupId[groupId] =
+        repository.sendGroupBotTurn(groupId, botId, summarize) == MessageStatus.COMPLETE
     }
+  }
+
+  private fun continueGroupAutoPlayIfNeeded(groupId: String, completed: Boolean, lastBotId: String) {
+    if (!completed) {
+      pauseGroupAutoPlay(groupId)
+      return
+    }
+    val state = uiState.value
+    if (groupId !in state.autoPlayingGroupIds) return
+    val nextBotId = nextAutoPlayBotIdAfter(groupId, lastBotId)
+    if (nextBotId == null) {
+      pauseGroupAutoPlay(groupId)
+      return
+    }
+    launchGroupBotTurn(groupId, nextBotId, summarize = false, continueAutoPlay = true)
+  }
+
+  private fun enabledGroupBotsForCurrentState(groupId: String): List<AiBot> {
+    val state = uiState.value
+    val memberOrder = state.groupMembers
+      .filter { it.groupId == groupId && it.enabled }
+      .associate { it.botId to it.sortOrder }
+    if (memberOrder.isEmpty()) return emptyList()
+    return state.aiBots
+      .filter { it.enabled && it.id in memberOrder }
+      .sortedWith(compareBy<AiBot> { bot -> memberOrder[bot.id] ?: Int.MAX_VALUE }.thenBy { it.name })
+  }
+
+  private fun nextAutoPlayBotId(groupId: String): String? {
+    return nextGroupAutoPlayBotId(
+      bots = enabledGroupBotsForCurrentState(groupId),
+      messages = uiState.value.groupMessages.filter { it.groupId == groupId }
+    )
+  }
+
+  private fun nextAutoPlayBotIdAfter(groupId: String, lastBotId: String): String? {
+    val bots = enabledGroupBotsForCurrentState(groupId)
+    if (bots.isEmpty()) return null
+    val lastIndex = bots.indexOfFirst { it.id == lastBotId }
+    return bots[((lastIndex + 1).coerceAtLeast(0)) % bots.size].id
   }
 
   fun openBotManager() {
@@ -918,6 +1024,52 @@ class ChatViewModel(
     }
   }
 
+  fun deleteProvider(providerId: String) {
+    viewModelScope.launch {
+      val result = repository.deleteProvider(providerId)
+      if (!result.deleted) {
+        val botNames = result.blockingBots.joinToString("、") { it.name }
+        localState.update {
+          it.copy(
+            providerRebindDeleteSourceId = providerId,
+            providerRebindDeleteBotIds = result.blockingBots.map { bot -> bot.id },
+            error = "无法直接删除这个 API 配置，因为机器人「$botNames」正在使用它。你可以先删除这些机器人，或选择一个现有 API 配置并批量改绑后删除。"
+          )
+        }
+        return@launch
+      }
+      localState.update { it.copy(error = "API 配置已删除") }
+    }
+  }
+
+  fun cancelProviderRebindDelete() {
+    localState.update {
+      it.copy(
+        providerRebindDeleteSourceId = null,
+        providerRebindDeleteBotIds = emptyList()
+      )
+    }
+  }
+
+  fun rebindProviderBotsAndDelete(targetProviderId: String) {
+    val sourceProviderId = uiState.value.providerRebindDeleteSourceId ?: return
+    viewModelScope.launch {
+      runCatching {
+        repository.rebindProviderBotsAndDelete(sourceProviderId, targetProviderId)
+      }.onSuccess {
+        localState.update {
+          it.copy(
+            providerRebindDeleteSourceId = null,
+            providerRebindDeleteBotIds = emptyList(),
+            error = "已改绑机器人并删除 API 配置"
+          )
+        }
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "改绑并删除 API 配置失败") }
+      }
+    }
+  }
+
   fun saveProvider(provider: ChatProviderConfig, apiKey: String?) {
     viewModelScope.launch {
       repository.saveProvider(provider, apiKey)
@@ -961,3 +1113,15 @@ private data class ConversationLists(
   val groupChats: List<GroupChatRoom>
 )
 
+internal fun nextGroupAutoPlayBotId(
+  bots: List<AiBot>,
+  messages: List<GroupChatMessage>
+): String? {
+  if (bots.isEmpty()) return null
+  val lastBotId = messages
+    .asReversed()
+    .firstOrNull { it.senderType == GroupMessageSenderType.BOT && it.botId != null }
+    ?.botId
+  val lastIndex = bots.indexOfFirst { it.id == lastBotId }
+  return bots[((lastIndex + 1).coerceAtLeast(0)) % bots.size].id
+}

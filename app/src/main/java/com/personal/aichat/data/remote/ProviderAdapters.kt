@@ -181,7 +181,8 @@ class OpenAiResponsesAdapter(
 class OpenAiCompatibleChatAdapter(
   private val client: OkHttpClient = defaultAiHttpClient(),
   private val gson: Gson = Gson(),
-  private val webSearchClient: WebSearchClient = DuckDuckGoWebSearchClient()
+  private val webSearchClient: WebSearchClient = CompositeWebSearchClient(),
+  private val webPageClient: WebPageClient = SimpleWebPageClient()
 ) : ProviderAdapter {
   override fun streamChat(
     config: ChatProviderConfig,
@@ -267,12 +268,18 @@ class OpenAiCompatibleChatAdapter(
       }
       return
     }
-    toolMessages += mutableMapOf(
+    toolMessages += mutableMapOf<String, Any>(
       "role" to "assistant",
       "content" to "",
       "tool_calls" to decision.toolCalls.map { it.toRequestMap() }
-    )
+    ).apply {
+      decision.reasoningContent?.takeIf { it.isNotBlank() }?.let { reasoning ->
+        put("reasoning_content", reasoning)
+      }
+    }
     decision.toolCalls.forEach { call ->
+      executeCompatibleToolCall(call, toolMessages, emitEvent)
+      /*
       emitEvent(ChatStreamEvent.ToolCall(id = call.id, name = call.name, input = call.arguments))
       val query = parseToolQuery(call.arguments)
       val output = if (query.isNullOrBlank()) {
@@ -286,21 +293,55 @@ class OpenAiCompatibleChatAdapter(
         "tool_call_id" to call.id,
         "content" to output
       )
+      */
     }
     streamFinalChat(config, apiKey, toolMessages, options, emitEvent)
+  }
+
+  private suspend fun executeCompatibleToolCall(
+    call: CompatibleToolCall,
+    toolMessages: MutableList<MutableMap<String, Any>>,
+    emitEvent: suspend (ChatStreamEvent) -> Unit
+  ) {
+    emitEvent(ChatStreamEvent.ToolCall(id = call.id, name = call.name, input = call.arguments))
+    val output = when (call.name) {
+      "web_search" -> {
+        val query = parseToolQuery(call.arguments)
+        if (query.isNullOrBlank()) {
+          "工具调用缺少 query 参数。"
+        } else {
+          webSearchClient.search(query).toToolOutput()
+        }
+      }
+      "open", "open_page", "web_fetch" -> {
+        val url = parseToolUrl(call.arguments)
+        if (url.isNullOrBlank()) {
+          "工具调用缺少 url 参数。"
+        } else {
+          webPageClient.open(url).toToolOutput()
+        }
+      }
+      else -> "不支持的工具：${call.name}"
+    }
+    emitEvent(ChatStreamEvent.ToolCall(id = call.id, name = call.name, input = call.arguments, output = output))
+    toolMessages += mutableMapOf(
+      "role" to "tool",
+      "tool_call_id" to call.id,
+      "content" to output
+    )
   }
 
   private fun requestToolDecision(
     config: ChatProviderConfig,
     apiKey: String?,
-    messages: List<Map<String, Any>>,
+    messages: MutableList<MutableMap<String, Any>>,
     options: ChatCompletionOptions
   ): CompatibleToolDecision {
     val requestBody = mutableMapOf<String, Any>(
       "model" to options.model,
       "stream" to false,
       "messages" to messages,
-      "tools" to listOf(webSearchToolDefinition())
+      "tools" to compatibleToolDefinitions()
     )
     requestBody["tool_choice"] = if (options.webSearchMode == WebSearchMode.REQUIRED) {
       mapOf("type" to "function", "function" to mapOf("name" to "web_search"))
@@ -324,7 +365,7 @@ class OpenAiCompatibleChatAdapter(
   private suspend fun streamFinalChat(
     config: ChatProviderConfig,
     apiKey: String?,
-    messages: List<Map<String, Any>>,
+    messages: MutableList<MutableMap<String, Any>>,
     options: ChatCompletionOptions,
     emitEvent: suspend (ChatStreamEvent) -> Unit
   ) {
@@ -336,6 +377,8 @@ class OpenAiCompatibleChatAdapter(
     if (options.stream) {
       requestBody["stream_options"] = mapOf("include_usage" to true)
     }
+    var bufferedText = StringBuilder()
+    val bufferedReasoning = StringBuilder()
     val request = Request.Builder()
       .url(config.baseUrl.trimEnd('/') + "/chat/completions")
       .headers(config.headersWithAuth(apiKey))
@@ -348,7 +391,16 @@ class OpenAiCompatibleChatAdapter(
       onFrame = { frame ->
         if (options.captureRawResponseLog) emitEvent(ChatStreamEvent.RawFrame(frame.event, frame.data))
         if (frame.data != "[DONE]") {
-          extractChatDelta(frame.data)?.let { emitEvent(ChatStreamEvent.TextDelta(it)) }
+          extractChatReasoningDelta(frame.data)?.let { reasoning ->
+            bufferedReasoning.append(reasoning)
+          }
+          extractChatDelta(frame.data)?.let { delta ->
+            bufferedText.append(delta)
+            if (!looksLikeCompatibleToolMarkup(bufferedText.toString())) {
+              emitEvent(ChatStreamEvent.TextDelta(bufferedText.toString()))
+              bufferedText = StringBuilder()
+            }
+          }
           extractTokenUsage(frame.data)?.let {
             emitEvent(
               ChatStreamEvent.Usage(
@@ -362,6 +414,27 @@ class OpenAiCompatibleChatAdapter(
         }
       }
     )
+    val trailingText = bufferedText.toString()
+    val markupCalls = extractCompatibleMarkupToolCalls(trailingText)
+    if (markupCalls.isNotEmpty()) {
+      messages.add(mutableMapOf<String, Any>(
+        "role" to "assistant",
+        "content" to "",
+        "tool_calls" to markupCalls.map { it.toRequestMap() }
+      ).apply {
+        bufferedReasoning.toString().takeIf { it.isNotBlank() }?.let { reasoning ->
+          put("reasoning_content", reasoning)
+        }
+      })
+      markupCalls.forEach { call ->
+        executeCompatibleToolCall(call, messages, emitEvent)
+      }
+      streamFinalChat(config, apiKey, messages, options, emitEvent)
+      return
+    }
+    if (trailingText.isNotBlank()) {
+      emitEvent(ChatStreamEvent.TextDelta(trailingText))
+    }
     emitEvent(ChatStreamEvent.Completed)
   }
 }
@@ -536,6 +609,20 @@ fun extractChatDelta(json: String): String? {
   }.getOrNull()
 }
 
+fun extractChatReasoningDelta(json: String): String? {
+  return runCatching {
+    val root = JsonParser.parseString(json).asJsonObject
+    root.getAsJsonArray("choices")
+      ?.firstOrNull()
+      ?.asJsonObject
+      ?.getAsJsonObject("delta")
+      ?.let { delta ->
+        delta.directString("reasoning_content")
+          ?: delta.directString("reasoning")
+      }
+  }.getOrNull()
+}
+
 data class TokenUsage(
   val promptTokens: Int?,
   val completionTokens: Int?,
@@ -561,7 +648,8 @@ data class CompatibleToolCall(
 data class CompatibleToolDecision(
   val toolCalls: List<CompatibleToolCall>,
   val content: String?,
-  val usage: TokenUsage?
+  val usage: TokenUsage?,
+  val reasoningContent: String? = null
 )
 
 fun extractTokenUsage(json: String): TokenUsage? {
@@ -643,21 +731,61 @@ private fun findUsageObject(element: JsonElement): JsonObject? {
   return null
 }
 
-private fun webSearchToolDefinition(): Map<String, Any> {
+private fun compatibleToolDefinitions(): List<Map<String, Any>> {
+  return listOf(webSearchToolDefinition(), openPageToolDefinition(), webFetchToolDefinition())
+}
+
+private fun webSearchToolDefinition(): Map<String, Any> = functionToolDefinition(
+  name = "web_search",
+  description = "Search the web for current information relevant to the user's question.",
+  properties = mapOf(
+    "query" to mapOf(
+      "type" to "string",
+      "description" to "A concise search query."
+    )
+  ),
+  required = listOf("query")
+)
+
+private fun openPageToolDefinition(): Map<String, Any> = functionToolDefinition(
+  name = "open",
+  description = "Open a specific web page URL returned by web_search and extract readable page text.",
+  properties = mapOf(
+    "url" to mapOf(
+      "type" to "string",
+      "description" to "The absolute http or https URL to open."
+    )
+  ),
+  required = listOf("url")
+)
+
+private fun webFetchToolDefinition(): Map<String, Any> = functionToolDefinition(
+  name = "web_fetch",
+  description = "Fetch a specific web page URL returned by web_search and extract readable page text.",
+  properties = mapOf(
+    "url" to mapOf(
+      "type" to "string",
+      "description" to "The absolute http or https URL to fetch."
+    )
+  ),
+  required = listOf("url")
+)
+
+private fun functionToolDefinition(
+  name: String,
+  description: String,
+  properties: Map<String, Any>,
+  required: List<String>
+): Map<String, Any> {
   return mapOf(
     "type" to "function",
     "function" to mapOf(
-      "name" to "web_search",
-      "description" to "Search the web for current information relevant to the user's question.",
+      "name" to name,
+      "description" to description,
       "parameters" to mapOf(
         "type" to "object",
-        "properties" to mapOf(
-          "query" to mapOf(
-            "type" to "string",
-            "description" to "A concise search query."
-          )
-        ),
-        "required" to listOf("query")
+        "properties" to properties,
+        "required" to required
       )
     )
   )
@@ -688,11 +816,13 @@ fun extractCompatibleToolDecision(json: String): CompatibleToolDecision {
         } ?: emptyList()
       }
       .orEmpty()
-      .filter { it.name == "web_search" }
+      .filter { it.name in CompatibleToolNames }
     CompatibleToolDecision(
       toolCalls = calls,
       content = firstMessage?.findString("content"),
-      usage = extractTokenUsage(json)
+      usage = extractTokenUsage(json),
+      reasoningContent = firstMessage?.directString("reasoning_content")
+        ?: firstMessage?.directString("reasoning")
     )
   }.getOrDefault(CompatibleToolDecision(emptyList(), null, null))
 }
@@ -702,6 +832,106 @@ fun parseToolQuery(arguments: String): String? {
     JsonParser.parseString(arguments).asJsonObject.findString("query")
   }.getOrNull()?.trim()
 }
+
+fun parseToolUrl(arguments: String): String? {
+  return runCatching {
+    JsonParser.parseString(arguments).asJsonObject.findString("url")
+  }.getOrNull()?.trim()
+}
+
+fun extractCompatibleMarkupToolCall(text: String): CompatibleToolCall? {
+  return extractCompatibleMarkupToolCalls(text).firstOrNull()
+}
+
+fun extractCompatibleMarkupToolCalls(text: String): List<CompatibleToolCall> {
+  val normalized = normalizeCompatibleMarkup(text)
+  return Regex(
+    """(?is)<\s*invoke\s+name\s*=\s*["']([^"']+)["']\s*>(.*?)</\s*invoke\s*>"""
+  ).findAll(normalized).mapIndexedNotNull { index, match ->
+    val name = match.groupValues[1].trim()
+    if (name !in CompatibleToolNames) return@mapIndexedNotNull null
+    val body = match.groupValues[2]
+    val args = mutableMapOf<String, String>()
+    Regex(
+      """(?is)<\s*parameter\s+name\s*=\s*["']([^"']+)["'][^>]*>(.*?)</\s*parameter\s*>"""
+    ).findAll(body).forEach { parameterMatch ->
+      args[parameterMatch.groupValues[1].trim()] = decodeXmlText(parameterMatch.groupValues[2].trim())
+    }
+    if (args.isEmpty()) return@mapIndexedNotNull null
+    CompatibleToolCall(
+      id = "markup_${System.nanoTime()}_$index",
+      name = name,
+      arguments = Gson().toJson(args)
+    )
+  }.toList()
+}
+
+private fun normalizeCompatibleMarkup(text: String): String {
+  return text
+    .replace("｜｜DSML｜｜", "")
+    .replace("锝滐綔DSML锝滐綔", "")
+    .trim()
+}
+
+private val CompatibleToolNames = setOf("web_search", "open", "open_page", "web_fetch")
+
+private fun looksLikeCompatibleToolMarkup(text: String): Boolean {
+  val normalized = normalizeCompatibleMarkup(text)
+  return normalized.startsWith("<")
+}
+
+private fun decodeXmlText(value: String): String {
+  return value
+    .replace("&amp;", "&")
+    .replace("&quot;", "\"")
+    .replace("&#39;", "'")
+    .replace("&lt;", "<")
+    .replace("&gt;", ">")
+}
+
+/*
+fun extractCompatibleMarkupToolCall(text: String): CompatibleToolCall? {
+  val normalized = normalizeCompatibleMarkup(text)
+  val invoke = Regex("""<\s*invoke\s+name\s*=\s*["']([^"']+)["']\s*>""", RegexOption.IGNORE_CASE)
+    .find(normalized) ?: return null
+  val name = invoke.groupValues[1].trim()
+  if (name !in CompatibleToolNames) return null
+  val body = normalized.substring(invoke.range.last + 1)
+  val args = mutableMapOf<String, String>()
+  Regex(
+    """(?is)<\s*parameter\s+name\s*=\s*["']([^"']+)["'][^>]*>(.*?)</\s*parameter\s*>"""
+  ).findAll(body).forEach { match ->
+    args[match.groupValues[1].trim()] = decodeXmlText(match.groupValues[2].trim())
+  }
+  if (args.isEmpty()) return null
+  return CompatibleToolCall(
+    id = "markup_${System.nanoTime()}",
+    name = name,
+    arguments = Gson().toJson(args)
+  )
+}
+
+private val CompatibleToolNames = setOf("web_search", "open", "open_page")
+
+private fun looksLikeCompatibleToolMarkup(text: String): Boolean {
+  val normalized = normalizeCompatibleMarkup(text)
+  return normalized.startsWith("<") &&
+    ("<tool_calls" in normalized || "<invoke" in normalized || "<parameter" in normalized)
+}
+
+private fun normalizeCompatibleMarkup(text: String): String {
+  return text.replace("｜｜DSML｜｜", "").trim()
+}
+
+private fun decodeXmlText(value: String): String {
+  return value
+    .replace("&amp;", "&")
+    .replace("&quot;", "\"")
+    .replace("&#39;", "'")
+    .replace("&lt;", "<")
+    .replace("&gt;", ">")
+}
+*/
 
 fun extractResponseToolCall(event: String?, json: String): ChatStreamEvent.ToolCall? {
   return runCatching {
