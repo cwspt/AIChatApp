@@ -5,6 +5,11 @@ import com.personal.aichat.domain.ChatAttachment
 import com.personal.aichat.domain.ChatConversationGroup
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
+import com.personal.aichat.domain.FavoriteSnippet
+import com.personal.aichat.domain.AiBot
+import com.personal.aichat.domain.GroupChatMember
+import com.personal.aichat.domain.GroupChatMessage
+import com.personal.aichat.domain.GroupChatRoom
 import com.personal.aichat.domain.AppSettings
 import com.personal.aichat.domain.MessageStatus
 import androidx.compose.ui.text.input.TextFieldValue
@@ -14,15 +19,26 @@ data class ChatUiState(
   val conversations: List<ChatConversation> = emptyList(),
   val archivedConversations: List<ChatConversation> = emptyList(),
   val conversationGroups: List<ChatConversationGroup> = emptyList(),
+  val favoriteSnippets: List<FavoriteSnippet> = emptyList(),
+  val aiBots: List<AiBot> = emptyList(),
+  val groupChats: List<GroupChatRoom> = emptyList(),
+  val groupMembers: List<GroupChatMember> = emptyList(),
+  val groupMessages: List<GroupChatMessage> = emptyList(),
   val messages: List<ChatMessage> = emptyList(),
   val selectedConversationId: String? = null,
+  val selectedGroupChatId: String? = null,
   val selectedProviderId: String? = null,
   val input: TextFieldValue = TextFieldValue(""),
+  val groupInput: TextFieldValue = TextFieldValue(""),
   val pendingAttachments: List<ChatAttachment> = emptyList(),
   val appSettings: AppSettings = AppSettings(),
   val selectedMessageIds: Set<String> = emptySet(),
   val messageSelectionMode: Boolean = false,
   val settingsPageOpen: Boolean = false,
+  val favoritePageOpen: Boolean = false,
+  val groupChatPageOpen: Boolean = false,
+  val botManagerOpen: Boolean = false,
+  val newGroupChatDialogOpen: Boolean = false,
   val providerManagerOpen: Boolean = false,
   val newConversationPickerOpen: Boolean = false,
   val settingsOpen: Boolean = false,
@@ -30,12 +46,16 @@ data class ChatUiState(
   val editingProviderHasApiKey: Boolean = false,
   val forkTargetMessageId: String? = null,
   val streamingConversationIds: Set<String> = emptySet(),
+  val streamingGroupIds: Set<String> = emptySet(),
   val deleteConfirmOpen: Boolean = false,
   val deleteTargetConversationId: String? = null,
   val error: String? = null
 ) {
   val selectedConversation: ChatConversation?
     get() = conversations.firstOrNull { it.id == selectedConversationId }
+
+  val selectedGroupChat: GroupChatRoom?
+    get() = groupChats.firstOrNull { it.id == selectedGroupChatId }
 
   val selectedProvider: ChatProviderConfig?
     get() {
@@ -51,4 +71,8 @@ data class ChatUiState(
   val isSelectedConversationStreaming: Boolean
     get() = selectedConversationId != null &&
       (selectedConversationId in streamingConversationIds || messages.any { it.status == MessageStatus.STREAMING })
+
+  val isSelectedGroupStreaming: Boolean
+    get() = selectedGroupChatId != null &&
+      (selectedGroupChatId in streamingGroupIds || groupMessages.any { it.status == MessageStatus.STREAMING })
 }

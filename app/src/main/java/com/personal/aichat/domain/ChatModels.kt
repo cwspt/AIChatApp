@@ -94,6 +94,104 @@ data class ChatAttachment(
     get() = mimeType.startsWith("image/")
 }
 
+data class FavoriteSnippet(
+  val id: String,
+  val title: String,
+  val description: String,
+  val tags: List<String>,
+  val messages: List<FavoriteSnippetMessage>,
+  val searchText: String,
+  val sourceConversationId: String,
+  val sourceConversationTitle: String,
+  val sourceProviderId: String?,
+  val sourceProviderName: String?,
+  val sourceModel: String?,
+  val sourceGroupName: String?,
+  val sourceFirstMessageId: String?,
+  val sourceLastMessageId: String?,
+  val messageCount: Int,
+  val createdAt: Long,
+  val updatedAt: Long
+)
+
+data class FavoriteSnippetMessage(
+  val id: String,
+  val role: MessageRole,
+  val content: String,
+  val status: MessageStatus,
+  val providerId: String?,
+  val model: String?,
+  val createdAt: Long,
+  val updatedAt: Long,
+  val errorMessage: String?,
+  val totalDurationMs: Long? = null,
+  val firstTokenDurationMs: Long? = null,
+  val promptTokens: Int? = null,
+  val completionTokens: Int? = null,
+  val totalTokens: Int? = null,
+  val attachments: List<ChatAttachment> = emptyList()
+)
+
+enum class GroupMessageSenderType {
+  USER,
+  BOT,
+  SYSTEM,
+  TOOL
+}
+
+data class AiBot(
+  val id: String,
+  val name: String,
+  val providerId: String,
+  val model: String,
+  val systemPrompt: String,
+  val enabled: Boolean,
+  val createdAt: Long,
+  val updatedAt: Long
+)
+
+data class GroupChatRoom(
+  val id: String,
+  val title: String,
+  val topic: String,
+  val summary: String,
+  val createdAt: Long,
+  val updatedAt: Long,
+  val isArchived: Boolean,
+  val isDeleted: Boolean
+)
+
+data class GroupChatMember(
+  val groupId: String,
+  val botId: String,
+  val sortOrder: Int,
+  val enabled: Boolean,
+  val createdAt: Long,
+  val updatedAt: Long
+)
+
+data class GroupChatMessage(
+  val id: String,
+  val groupId: String,
+  val senderType: GroupMessageSenderType,
+  val botId: String?,
+  val senderName: String,
+  val role: MessageRole,
+  val content: String,
+  val status: MessageStatus,
+  val providerId: String?,
+  val model: String?,
+  val createdAt: Long,
+  val updatedAt: Long,
+  val errorMessage: String?,
+  val totalDurationMs: Long? = null,
+  val firstTokenDurationMs: Long? = null,
+  val promptTokens: Int? = null,
+  val completionTokens: Int? = null,
+  val totalTokens: Int? = null,
+  val attachments: List<ChatAttachment> = emptyList()
+)
+
 data class ChatCompletionOptions(
   val model: String,
   val stream: Boolean = true,

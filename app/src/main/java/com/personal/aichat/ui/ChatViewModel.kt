@@ -1,4 +1,4 @@
-package com.personal.aichat.ui
+﻿package com.personal.aichat.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -14,11 +14,14 @@ import com.personal.aichat.ChatGenerationService
 import com.personal.aichat.data.ChatRepository
 import com.personal.aichat.data.ChatSelectionStore
 import com.personal.aichat.domain.ChatAttachment
+import com.personal.aichat.domain.AiBot
 import com.personal.aichat.domain.AppThemeMode
 import com.personal.aichat.domain.AppThemePalette
 import com.personal.aichat.domain.ChatConversation
 import com.personal.aichat.domain.ChatConversationGroup
 import com.personal.aichat.domain.ChatProviderConfig
+import com.personal.aichat.domain.FavoriteSnippet
+import com.personal.aichat.domain.GroupChatRoom
 import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.WebSearchMode
 import androidx.compose.ui.text.TextRange
@@ -44,13 +47,17 @@ class ChatViewModel(
 ) : ViewModel() {
   private val localState = MutableStateFlow(ChatUiState())
   private val sendJobsByConversationId = mutableMapOf<String, Job>()
+  private val groupJobsByGroupId = mutableMapOf<String, Job>()
   private var pendingDeleteConversationId: String? = null
 
   private val conversationLists = combine(
     repository.conversations,
-    repository.archivedConversations
-  ) { conversations, archivedConversations ->
-    ConversationLists(conversations, archivedConversations)
+    repository.archivedConversations,
+    repository.favoriteSnippets,
+    repository.aiBots,
+    repository.groupChatRooms
+  ) { conversations, archivedConversations, favoriteSnippets, aiBots, groupChats ->
+    ConversationLists(conversations, archivedConversations, favoriteSnippets, aiBots, groupChats)
   }
 
   @OptIn(ExperimentalCoroutinesApi::class)
@@ -71,6 +78,9 @@ class ChatViewModel(
       conversations = conversations,
       archivedConversations = lists.archived,
       conversationGroups = conversations.toConversationGroups(),
+      favoriteSnippets = lists.favorites,
+      aiBots = lists.aiBots,
+      groupChats = lists.groupChats,
       selectedConversationId = effectiveConversationId,
       selectedProviderId = effectiveProviderId
     )
@@ -80,12 +90,17 @@ class ChatViewModel(
   val uiState = baseUiState.combine(preferencesRepository.appSettings) { state, appSettings ->
     state.copy(appSettings = appSettings)
   }.flatMapLatest { state ->
+    val groupId = state.selectedGroupChatId.takeIf { state.groupChatPageOpen }
     val conversationId = state.selectedConversationId
-    if (conversationId == null) {
-      flowOf(state)
+    if (groupId != null) {
+      repository.observeGroupMessages(groupId).combine(repository.observeGroupMembers(groupId)) { groupMessages, members ->
+        state.copy(groupMessages = groupMessages, groupMembers = members)
+      }
+    } else if (conversationId == null) {
+      flowOf(state.copy(groupMessages = emptyList(), groupMembers = emptyList()))
     } else {
       repository.observeMessages(conversationId).combine(flowOf(state)) { messages, current ->
-        current.copy(messages = messages)
+        current.copy(messages = messages, groupMessages = emptyList(), groupMembers = emptyList())
       }
     }
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
@@ -103,9 +118,13 @@ class ChatViewModel(
     localState.update { it.copy(input = value) }
   }
 
+  fun updateGroupInput(value: TextFieldValue) {
+    localState.update { it.copy(groupInput = value) }
+  }
+
   fun addAttachments(uris: List<Uri>) {
     val context = appContext ?: return
-    if (uiState.value.selectedProvider?.supportsAttachments != true) return
+    if (!uiState.value.groupChatPageOpen && uiState.value.selectedProvider?.supportsAttachments != true) return
     viewModelScope.launch {
       val imported = uris.mapNotNull { uri -> importAttachment(context, uri) }
       if (imported.isNotEmpty()) {
@@ -195,6 +214,11 @@ class ChatViewModel(
     sendJobsByConversationId[conversationId]?.cancel()
   }
 
+  fun stopGroupGenerating() {
+    val groupId = uiState.value.selectedGroupChatId ?: return
+    groupJobsByGroupId[groupId]?.cancel()
+  }
+
   private fun importAttachment(context: Context, uri: Uri): ChatAttachment? {
     return runCatching {
       val resolver = context.contentResolver
@@ -259,6 +283,36 @@ class ChatViewModel(
       }
     }
     sendJobsByConversationId[conversationId] = job
+  }
+
+  private fun launchGroupStreamingJob(groupId: String, block: suspend () -> Unit) {
+    val wasIdle = groupJobsByGroupId.isEmpty() && sendJobsByConversationId.isEmpty()
+    if (wasIdle) {
+      appContext?.let { context -> runCatching { ChatGenerationService.start(context) } }
+    }
+    localState.update { it.copy(streamingGroupIds = it.streamingGroupIds + groupId) }
+    val job = viewModelScope.launch {
+      var completed = false
+      try {
+        block()
+        completed = true
+      } catch (error: CancellationException) {
+        throw error
+      } finally {
+        groupJobsByGroupId.remove(groupId)
+        localState.update { it.copy(streamingGroupIds = it.streamingGroupIds - groupId) }
+        if (groupJobsByGroupId.isEmpty() && sendJobsByConversationId.isEmpty()) {
+          appContext?.let { context ->
+            if (completed && !AppForegroundTracker.isForeground) {
+              runCatching { ChatGenerationService.complete(context) }
+            } else {
+              runCatching { ChatGenerationService.stop(context) }
+            }
+          }
+        }
+      }
+    }
+    groupJobsByGroupId[groupId] = job
   }
 
   private data class AttachmentImportInfo(
@@ -444,6 +498,244 @@ class ChatViewModel(
     viewModelScope.launch {
       repository.forkConversationAtMessage(conversationId, messageId, providerId)
     }
+  }
+
+  fun openFavoritePage() {
+    localState.update { it.copy(favoritePageOpen = true) }
+  }
+
+  fun closeFavoritePage() {
+    localState.update { it.copy(favoritePageOpen = false) }
+  }
+
+  fun openGroupChatPage(groupId: String? = uiState.value.groupChats.firstOrNull()?.id) {
+    localState.update {
+      it.copy(
+        groupChatPageOpen = true,
+        selectedGroupChatId = groupId,
+        favoritePageOpen = false,
+        settingsPageOpen = false
+      )
+    }
+  }
+
+  fun closeGroupChatPage() {
+    localState.update { it.copy(groupChatPageOpen = false, selectedGroupChatId = null, groupInput = TextFieldValue("")) }
+  }
+
+  fun selectGroupChat(groupId: String) {
+    localState.update { it.copy(selectedGroupChatId = groupId, groupChatPageOpen = true) }
+  }
+
+  fun openNewGroupChatDialog() {
+    localState.update { it.copy(newGroupChatDialogOpen = true) }
+  }
+
+  fun closeNewGroupChatDialog() {
+    localState.update { it.copy(newGroupChatDialogOpen = false) }
+  }
+
+  fun createGroupChat(title: String, topic: String, botIds: List<String>) {
+    viewModelScope.launch {
+      runCatching {
+        repository.createGroupChat(title, topic, botIds)
+      }.onSuccess { group ->
+        localState.update {
+          it.copy(
+            newGroupChatDialogOpen = false,
+            groupChatPageOpen = true,
+            selectedGroupChatId = group.id
+          )
+        }
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "创建群聊失败") }
+      }
+    }
+  }
+
+  fun sendGroupUserMessage() {
+    val state = uiState.value
+    val groupId = state.selectedGroupChatId ?: return
+    val text = state.groupInput.text
+    val attachments = state.pendingAttachments
+    if (text.isBlank() && attachments.isEmpty()) return
+    localState.update { it.copy(groupInput = TextFieldValue(""), pendingAttachments = emptyList()) }
+    viewModelScope.launch {
+      repository.sendGroupUserMessage(groupId, text, attachments)
+    }
+  }
+
+  fun sendGroupBotTurn(botId: String, summarize: Boolean = false) {
+    val groupId = uiState.value.selectedGroupChatId ?: return
+    if (groupJobsByGroupId[groupId]?.isActive == true) return
+    launchGroupStreamingJob(groupId) {
+      repository.sendGroupBotTurn(groupId, botId, summarize)
+    }
+  }
+
+  fun openBotManager() {
+    localState.update { it.copy(botManagerOpen = true, settingsPageOpen = false) }
+  }
+
+  fun closeBotManager() {
+    localState.update { it.copy(botManagerOpen = false) }
+  }
+
+  fun createAiBot(name: String, providerId: String, model: String, systemPrompt: String) {
+    viewModelScope.launch {
+      runCatching {
+        repository.createAiBot(name, providerId, model, systemPrompt)
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "创建机器人失败") }
+      }
+    }
+  }
+
+  fun updateAiBot(botId: String, name: String, providerId: String, model: String, systemPrompt: String) {
+    viewModelScope.launch {
+      runCatching {
+        repository.updateAiBot(botId, name, providerId, model, systemPrompt)
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "更新机器人失败") }
+      }
+    }
+  }
+
+  fun setAiBotEnabled(botId: String, enabled: Boolean) {
+    viewModelScope.launch { repository.setAiBotEnabled(botId, enabled) }
+  }
+
+  fun deleteAiBot(botId: String) {
+    viewModelScope.launch { repository.deleteAiBot(botId) }
+  }
+
+  fun saveFavoriteSnippet(messageIds: Set<String>, title: String, description: String, tags: String) {
+    val conversationId = uiState.value.selectedConversationId ?: return
+    viewModelScope.launch {
+      runCatching {
+        repository.createFavoriteSnippet(conversationId, messageIds, title, description, tags)
+      }.onSuccess {
+        localState.update { state -> state.copy(error = "已收藏到收藏夹") }
+      }.onFailure { error ->
+        localState.update { state -> state.copy(error = error.message ?: "收藏失败") }
+      }
+    }
+  }
+
+  fun saveGroupFavoriteSnippet(messageIds: Set<String>, title: String, description: String, tags: String) {
+    val groupId = uiState.value.selectedGroupChatId ?: return
+    viewModelScope.launch {
+      runCatching {
+        repository.createFavoriteSnippetFromGroupMessages(groupId, messageIds, title, description, tags)
+      }.onSuccess {
+        localState.update { state -> state.copy(error = "已收藏到收藏夹") }
+      }.onFailure { error ->
+        localState.update { state -> state.copy(error = error.message ?: "收藏失败") }
+      }
+    }
+  }
+
+  fun updateFavoriteSnippet(favoriteId: String, title: String, description: String, tags: String) {
+    viewModelScope.launch {
+      runCatching {
+        repository.updateFavoriteSnippetMetadata(favoriteId, title, description, tags)
+      }.onSuccess {
+        localState.update { state -> state.copy(error = "收藏已更新") }
+      }.onFailure { error ->
+        localState.update { state -> state.copy(error = error.message ?: "更新收藏失败") }
+      }
+    }
+  }
+
+  fun appendSelectedMessagesToFavorite(favoriteId: String) {
+    val state = uiState.value
+    val conversationId = state.selectedConversationId ?: return
+    val selectedIds = state.selectedMessageIds
+    viewModelScope.launch {
+      runCatching {
+        repository.appendMessagesToFavoriteSnippet(favoriteId, conversationId, selectedIds)
+      }.onSuccess {
+        localState.update { current -> current.copy(error = "已追加到收藏") }
+      }.onFailure { error ->
+        localState.update { current -> current.copy(error = error.message ?: "追加收藏失败") }
+      }
+    }
+  }
+
+  fun removeMessageFromFavorite(favoriteId: String, messageId: String) {
+    viewModelScope.launch {
+      runCatching {
+        repository.removeMessagesFromFavoriteSnippet(favoriteId, setOf(messageId))
+      }.onSuccess {
+        localState.update { current -> current.copy(error = "已从收藏移除") }
+      }.onFailure { error ->
+        localState.update { current -> current.copy(error = error.message ?: "移除收藏消息失败") }
+      }
+    }
+  }
+
+  fun deleteFavoriteSnippet(favoriteId: String) {
+    viewModelScope.launch {
+      repository.deleteFavoriteSnippet(favoriteId)
+    }
+  }
+
+  fun copyFavoriteSnippetText(favoriteId: String, context: Context) {
+    viewModelScope.launch {
+      val text = repository.favoriteSnippetShareText(favoriteId)
+      if (text.isBlank()) return@launch
+      val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+      clipboard.setPrimaryClip(ClipData.newPlainText("AIChat 收藏", text))
+      localState.update { it.copy(error = "收藏内容已复制") }
+    }
+  }
+
+  fun shareFavoriteSnippetText(favoriteId: String, context: Context) {
+    viewModelScope.launch {
+      val shareText = repository.favoriteSnippetShareText(favoriteId)
+      if (shareText.isBlank()) return@launch
+      val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, shareText)
+      }
+      context.startActivity(Intent.createChooser(sendIntent, "分享收藏文本"))
+    }
+  }
+
+  fun shareFavoriteSnippetLongImage(favoriteId: String, context: Context) {
+    viewModelScope.launch {
+      val export = repository.favoriteSnippetExport(favoriteId) ?: return@launch
+      val uri = ConversationShareRenderer.saveImageToGallery(context, export)
+        ?: ConversationShareRenderer.writeImageExport(context, export)
+      val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "image/png"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+      context.startActivity(Intent.createChooser(sendIntent, "分享收藏长图"))
+    }
+  }
+
+  fun jumpToFavoriteSource(favorite: FavoriteSnippet) {
+    viewModelScope.launch {
+      val source = repository.conversationById(favorite.sourceConversationId)
+      if (source == null || source.isDeleted) {
+        localState.update { it.copy(error = "来源对话不可用") }
+        return@launch
+      }
+      val activeSource = if (source.isArchived) {
+        repository.restoreConversation(source.id)
+      } else {
+        source
+      }
+      preferencesRepository.setSelectedConversation(activeSource.id)
+      preferencesRepository.setSelectedProvider(activeSource.providerId)
+      localState.update { it.copy(favoritePageOpen = false) }
+    }
+  }
+
+  fun clearError() {
+    localState.update { it.copy(error = null) }
   }
 
   private suspend fun shareTextInternal(conversationId: String, selectedIds: Set<String>, context: Context) {
@@ -663,5 +955,9 @@ private fun List<ChatConversation>.toConversationGroups(): List<ChatConversation
 
 private data class ConversationLists(
   val active: List<ChatConversation>,
-  val archived: List<ChatConversation>
+  val archived: List<ChatConversation>,
+  val favorites: List<FavoriteSnippet>,
+  val aiBots: List<AiBot>,
+  val groupChats: List<GroupChatRoom>
 )
+

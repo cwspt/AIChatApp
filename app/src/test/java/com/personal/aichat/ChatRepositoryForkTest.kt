@@ -2,8 +2,13 @@ package com.personal.aichat
 
 import com.personal.aichat.data.ChatRepository
 import com.personal.aichat.data.ChatSelectionStore
+import com.personal.aichat.data.local.AiBotEntity
 import com.personal.aichat.data.local.ChatDao
 import com.personal.aichat.data.local.ConversationEntity
+import com.personal.aichat.data.local.FavoriteSnippetEntity
+import com.personal.aichat.data.local.GroupChatMemberEntity
+import com.personal.aichat.data.local.GroupChatRoomEntity
+import com.personal.aichat.data.local.GroupMessageEntity
 import com.personal.aichat.data.local.MessageEntity
 import com.personal.aichat.data.local.ProviderEntity
 import com.personal.aichat.data.security.ApiKeyStore
@@ -22,6 +27,7 @@ import com.personal.aichat.domain.ReasoningEffort
 import com.personal.aichat.domain.WebSearchMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -29,6 +35,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatRepositoryForkTest {
@@ -121,6 +128,259 @@ class ChatRepositoryForkTest {
     val messages = dao.messagesForConversation("conv")
     assertEquals("conversation-fixed", messages[0].model)
     assertEquals("conversation-fixed", messages[1].model)
+  }
+
+  @Test
+  fun createFavoriteSnippetStoresSnapshotSourceAndNormalizedTags() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "model-a"))
+    dao.upsertConversation(conversation("conv", providerId = "provider", model = "model-a"))
+    dao.upsertMessage(message("u1", "conv", MessageRole.USER, "question", "provider", "model-a", 1))
+    dao.upsertMessage(message("a1", "conv", MessageRole.ASSISTANT, "valuable answer", "provider", "model-a", 2))
+
+    val favorite = repository.createFavoriteSnippet(
+      conversationId = "conv",
+      messageIds = setOf("a1", "u1"),
+      title = "",
+      description = "useful result",
+      tagsInput = "#Work， kotlin,Work"
+    )
+
+    assertEquals("valuable answer", favorite.title)
+    assertEquals(listOf("Work", "kotlin"), favorite.tags)
+    assertEquals("conv", favorite.sourceConversationId)
+    assertEquals("u1", favorite.sourceFirstMessageId)
+    assertEquals("a1", favorite.sourceLastMessageId)
+    assertEquals(2, favorite.messageCount)
+    assertEquals(listOf("question", "valuable answer"), favorite.messages.map { it.content })
+    assertTrue(favorite.searchText.contains("useful result"))
+    assertTrue(favorite.searchText.contains("valuable answer"))
+  }
+
+  @Test
+  fun favoriteSnippetExportKeepsSnapshotAfterSourceChanges() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "model-a"))
+    dao.upsertConversation(conversation("conv", providerId = "provider", model = "model-a"))
+    dao.upsertMessage(message("a1", "conv", MessageRole.ASSISTANT, "original answer", "provider", "model-a", 1))
+
+    val favorite = repository.createFavoriteSnippet("conv", setOf("a1"), "Saved", "", "")
+    dao.upsertMessage(message("a1", "conv", MessageRole.ASSISTANT, "changed answer", "provider", "model-a", 1))
+
+    val shareText = repository.favoriteSnippetShareText(favorite.id)
+
+    assertTrue(shareText.contains("original answer"))
+    assertTrue(!shareText.contains("changed answer"))
+  }
+
+  @Test
+  fun createFavoriteSnippetRejectsStreamingMessages() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "model-a"))
+    dao.upsertConversation(conversation("conv", providerId = "provider", model = "model-a"))
+    dao.upsertMessage(
+      message("a1", "conv", MessageRole.ASSISTANT, "partial", "provider", "model-a", 1)
+        .copy(status = MessageStatus.STREAMING.name)
+    )
+
+    val result = runCatching {
+      repository.createFavoriteSnippet("conv", setOf("a1"), "Saved", "", "")
+    }
+
+    assertTrue(result.isFailure)
+    assertEquals(0, dao.observeFavoriteSnippets().first().size)
+  }
+
+  @Test
+  fun appendMessagesToFavoriteMergesSortsAndDeduplicatesSnapshots() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "model-a"))
+    dao.upsertConversation(conversation("conv", providerId = "provider", model = "model-a"))
+    dao.upsertMessage(message("u1", "conv", MessageRole.USER, "question", "provider", "model-a", 1))
+    dao.upsertMessage(message("a1", "conv", MessageRole.ASSISTANT, "answer", "provider", "model-a", 2))
+    dao.upsertMessage(message("u2", "conv", MessageRole.USER, "follow up", "provider", "model-a", 3))
+    val favorite = repository.createFavoriteSnippet("conv", setOf("a1"), "Saved", "desc", "tag")
+
+    val updated = repository.appendMessagesToFavoriteSnippet(favorite.id, "conv", setOf("u2", "u1", "a1"))
+
+    assertNotNull(updated)
+    assertEquals(listOf("u1", "a1", "u2"), updated!!.messages.map { it.id })
+    assertEquals(3, updated.messageCount)
+    assertEquals("u1", updated.sourceFirstMessageId)
+    assertEquals("u2", updated.sourceLastMessageId)
+    assertTrue(updated.searchText.contains("follow up"))
+  }
+
+  @Test
+  fun appendMessagesToFavoriteRejectsDifferentSourceConversation() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "model-a"))
+    dao.upsertConversation(conversation("conv-a", providerId = "provider", model = "model-a"))
+    dao.upsertConversation(conversation("conv-b", providerId = "provider", model = "model-a"))
+    dao.upsertMessage(message("a1", "conv-a", MessageRole.ASSISTANT, "answer", "provider", "model-a", 1))
+    dao.upsertMessage(message("b1", "conv-b", MessageRole.USER, "other", "provider", "model-a", 1))
+    val favorite = repository.createFavoriteSnippet("conv-a", setOf("a1"), "Saved", "", "")
+
+    val result = runCatching {
+      repository.appendMessagesToFavoriteSnippet(favorite.id, "conv-b", setOf("b1"))
+    }
+
+    assertTrue(result.isFailure)
+    assertEquals(listOf("a1"), repository.favoriteSnippetById(favorite.id)!!.messages.map { it.id })
+  }
+
+  @Test
+  fun removeMessagesFromFavoriteUpdatesSnapshotButDoesNotAllowEmptyFavorite() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "model-a"))
+    dao.upsertConversation(conversation("conv", providerId = "provider", model = "model-a"))
+    dao.upsertMessage(message("u1", "conv", MessageRole.USER, "question", "provider", "model-a", 1))
+    dao.upsertMessage(message("a1", "conv", MessageRole.ASSISTANT, "answer", "provider", "model-a", 2))
+    val favorite = repository.createFavoriteSnippet("conv", setOf("u1", "a1"), "Saved", "", "")
+
+    val updated = repository.removeMessagesFromFavoriteSnippet(favorite.id, setOf("u1"))
+    val emptyResult = runCatching {
+      repository.removeMessagesFromFavoriteSnippet(favorite.id, setOf("a1"))
+    }
+
+    assertNotNull(updated)
+    assertEquals(listOf("a1"), updated!!.messages.map { it.id })
+    assertEquals(1, updated.messageCount)
+    assertEquals("a1", updated.sourceFirstMessageId)
+    assertEquals("a1", updated.sourceLastMessageId)
+    assertTrue(emptyResult.isFailure)
+    assertEquals(listOf("a1"), repository.favoriteSnippetById(favorite.id)!!.messages.map { it.id })
+  }
+
+  @Test
+  fun createGroupChatStoresBotsAndUserMessageDoesNotAutoTriggerAi() = runTest {
+    val dao = FakeChatDao()
+    val adapter = RecordingAdapter()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = mapOf(ProviderType.TOKENHUB_PROXY to adapter)
+    )
+    dao.upsertProvider(provider("provider", "provider-default"))
+    val bot = repository.createAiBot("GPT 研究员", "provider", "bot-fixed-model", "优先给出事实依据")
+
+    val group = repository.createGroupChat("选型讨论", "比较两个方案", listOf(bot.id))
+    repository.sendGroupUserMessage(group.id, "先看方案 A", emptyList())
+
+    assertEquals("选型讨论", group.title)
+    assertEquals(listOf(bot.id), dao.groupChatMembers(group.id).map { it.botId })
+    assertEquals(listOf("先看方案 A"), dao.groupMessages(group.id).map { it.content })
+    assertNull(adapter.lastOptions)
+  }
+
+  @Test
+  fun groupBotTurnUsesBotModelAndBuildsGroupContext() = runTest {
+    val dao = FakeChatDao()
+    val adapter = RecordingAdapter()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = mapOf(ProviderType.TOKENHUB_PROXY to adapter)
+    )
+    dao.upsertProvider(provider("provider", "provider-default"))
+    val bot = repository.createAiBot("DeepSeek 审稿人", "provider", "deepseek-fixed", "专注审阅风险")
+    val group = repository.createGroupChat("架构评审", "评审离线缓存方案", listOf(bot.id))
+    repository.sendGroupUserMessage(group.id, "请先提出风险点", emptyList())
+
+    repository.sendGroupBotTurn(group.id, bot.id)
+
+    assertEquals("deepseek-fixed", adapter.lastOptions?.model)
+    assertTrue(adapter.lastMessages.first().content.contains("多 AI 回合制群聊"))
+    assertTrue(adapter.lastMessages.first().content.contains("DeepSeek 审稿人"))
+    assertTrue(adapter.lastMessages.first().content.contains("评审离线缓存方案"))
+    assertTrue(adapter.lastMessages.any { it.content.contains("[用户] 请先提出风险点") })
+    assertEquals(listOf("请先提出风险点", "fake response"), dao.groupMessages(group.id).map { it.content })
+  }
+
+  @Test
+  fun groupSummaryTurnUpdatesRoomSummary() = runTest {
+    val dao = FakeChatDao()
+    val adapter = RecordingAdapter()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = mapOf(ProviderType.TOKENHUB_PROXY to adapter)
+    )
+    dao.upsertProvider(provider("provider", "provider-default"))
+    val bot = repository.createAiBot("总结员", "provider", "summary-model", "")
+    val group = repository.createGroupChat("复盘", "整理结论", listOf(bot.id))
+    repository.sendGroupUserMessage(group.id, "结论一", emptyList())
+
+    repository.sendGroupBotTurn(group.id, bot.id, summarize = true)
+
+    assertEquals("fake response", dao.groupChatRoomById(group.id)?.summary)
+    assertTrue(adapter.lastMessages.first().content.contains("本轮任务是总结当前讨论"))
+  }
+
+  @Test
+  fun createFavoriteSnippetFromGroupMessageStoresGroupSnapshot() = runTest {
+    val dao = FakeChatDao()
+    val adapter = RecordingAdapter()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = mapOf(ProviderType.TOKENHUB_PROXY to adapter)
+    )
+    dao.upsertProvider(provider("provider", "provider-default"))
+    val bot = repository.createAiBot("GPT 研究员", "provider", "gpt-fixed", "")
+    val group = repository.createGroupChat("资料评审", "讨论资料", listOf(bot.id))
+    repository.sendGroupUserMessage(group.id, "用户观点", emptyList())
+    repository.sendGroupBotTurn(group.id, bot.id)
+    val botMessage = dao.groupMessages(group.id).last()
+
+    val favorite = repository.createFavoriteSnippetFromGroupMessages(group.id, setOf(botMessage.id), "", "群聊结果", "group")
+
+    assertEquals("资料评审", favorite.sourceConversationTitle)
+    assertEquals("AI 群聊", favorite.sourceGroupName)
+    assertEquals("gpt-fixed", favorite.sourceModel)
+    assertEquals(1, favorite.messageCount)
+    assertTrue(favorite.messages.first().content.contains("GPT 研究员"))
+    assertTrue(favorite.searchText.contains("群聊结果"))
   }
 
   private fun provider(id: String, model: String): ProviderEntity = ProviderEntity(
@@ -232,6 +492,11 @@ private class FakeChatDao : ChatDao {
   private val providers = linkedMapOf<String, ProviderEntity>()
   private val conversations = linkedMapOf<String, ConversationEntity>()
   private val messages = linkedMapOf<String, MessageEntity>()
+  private val favorites = linkedMapOf<String, FavoriteSnippetEntity>()
+  private val aiBots = linkedMapOf<String, AiBotEntity>()
+  private val groupRooms = linkedMapOf<String, GroupChatRoomEntity>()
+  private val groupMembers = linkedMapOf<Pair<String, String>, GroupChatMemberEntity>()
+  private val groupMessages = linkedMapOf<String, GroupMessageEntity>()
 
   override fun observeProviders(): Flow<List<ProviderEntity>> = flowOf(providers.values.toList())
 
@@ -355,6 +620,127 @@ private class FakeChatDao : ChatDao {
   override suspend fun lastUserMessage(conversationId: String): MessageEntity? =
     messagesForConversationInternal(conversationId).lastOrNull { it.role == MessageRole.USER.name }
 
+  override fun observeFavoriteSnippets(): Flow<List<FavoriteSnippetEntity>> = flowOf(
+    favorites.values.sortedByDescending { it.updatedAt }
+  )
+
+  override suspend fun favoriteSnippetById(id: String): FavoriteSnippetEntity? = favorites[id]
+
+  override suspend fun upsertFavoriteSnippet(favorite: FavoriteSnippetEntity) {
+    favorites[favorite.id] = favorite
+  }
+
+  override suspend fun deleteFavoriteSnippet(id: String) {
+    favorites.remove(id)
+  }
+
+  override fun observeAiBots(): Flow<List<AiBotEntity>> = flowOf(
+    aiBots.values.sortedWith(compareByDescending<AiBotEntity> { it.enabled }.thenByDescending { it.updatedAt }.thenBy { it.name })
+  )
+
+  override suspend fun aiBotById(id: String): AiBotEntity? = aiBots[id]
+
+  override suspend fun upsertAiBot(bot: AiBotEntity) {
+    aiBots[bot.id] = bot
+  }
+
+  override suspend fun setAiBotEnabled(id: String, enabled: Boolean, updatedAt: Long) {
+    aiBots[id]?.let { aiBots[id] = it.copy(enabled = enabled, updatedAt = updatedAt) }
+  }
+
+  override suspend fun deleteAiBot(id: String) {
+    aiBots.remove(id)
+  }
+
+  override fun observeGroupChatRooms(): Flow<List<GroupChatRoomEntity>> = flowOf(
+    groupRooms.values.filter { !it.isDeleted && !it.isArchived }.sortedByDescending { it.updatedAt }
+  )
+
+  override suspend fun groupChatRoomById(id: String): GroupChatRoomEntity? = groupRooms[id]
+
+  override suspend fun upsertGroupChatRoom(room: GroupChatRoomEntity) {
+    groupRooms[room.id] = room
+  }
+
+  override suspend fun updateGroupChatRoomMeta(id: String, title: String, topic: String, updatedAt: Long) {
+    groupRooms[id]?.let { groupRooms[id] = it.copy(title = title, topic = topic, updatedAt = updatedAt) }
+  }
+
+  override suspend fun updateGroupChatSummary(id: String, summary: String, updatedAt: Long) {
+    groupRooms[id]?.let { groupRooms[id] = it.copy(summary = summary, updatedAt = updatedAt) }
+  }
+
+  override suspend fun touchGroupChatRoom(id: String, updatedAt: Long) {
+    groupRooms[id]?.let { groupRooms[id] = it.copy(updatedAt = updatedAt) }
+  }
+
+  override suspend fun archiveGroupChatRoom(id: String, updatedAt: Long) {
+    groupRooms[id]?.let { groupRooms[id] = it.copy(isArchived = true, updatedAt = updatedAt) }
+  }
+
+  override suspend fun deleteGroupChatRoom(id: String, updatedAt: Long) {
+    groupRooms[id]?.let { groupRooms[id] = it.copy(isDeleted = true, updatedAt = updatedAt) }
+  }
+
+  override fun observeGroupChatMembers(groupId: String): Flow<List<GroupChatMemberEntity>> = flowOf(
+    groupChatMembersInternal(groupId)
+  )
+
+  override suspend fun groupChatMembers(groupId: String): List<GroupChatMemberEntity> =
+    groupChatMembersInternal(groupId)
+
+  override suspend fun upsertGroupChatMember(member: GroupChatMemberEntity) {
+    groupMembers[member.groupId to member.botId] = member
+  }
+
+  override suspend fun removeGroupChatMember(groupId: String, botId: String, updatedAt: Long) {
+    groupMembers[groupId to botId]?.let { groupMembers[groupId to botId] = it.copy(enabled = false, updatedAt = updatedAt) }
+  }
+
+  override fun observeGroupMessages(groupId: String): Flow<List<GroupMessageEntity>> = flowOf(
+    groupMessagesInternal(groupId)
+  )
+
+  override suspend fun groupMessages(groupId: String): List<GroupMessageEntity> =
+    groupMessagesInternal(groupId)
+
+  override suspend fun upsertGroupMessage(message: GroupMessageEntity) {
+    groupMessages[message.id] = message
+  }
+
+  override suspend fun updateGroupMessageWithMetadata(
+    id: String,
+    content: String,
+    status: String,
+    updatedAt: Long,
+    errorMessage: String?,
+    totalDurationMs: Long?,
+    firstTokenDurationMs: Long?,
+    promptTokens: Int?,
+    completionTokens: Int?,
+    totalTokens: Int?
+  ) {
+    groupMessages[id]?.let {
+      groupMessages[id] = it.copy(
+        content = content,
+        status = status,
+        updatedAt = updatedAt,
+        errorMessage = errorMessage,
+        totalDurationMs = totalDurationMs,
+        firstTokenDurationMs = firstTokenDurationMs,
+        promptTokens = promptTokens,
+        completionTokens = completionTokens,
+        totalTokens = totalTokens
+      )
+    }
+  }
+
   private fun messagesForConversationInternal(conversationId: String): List<MessageEntity> =
     messages.values.filter { it.conversationId == conversationId }.sortedBy { it.createdAt }
+
+  private fun groupChatMembersInternal(groupId: String): List<GroupChatMemberEntity> =
+    groupMembers.values.filter { it.groupId == groupId && it.enabled }.sortedBy { it.sortOrder }
+
+  private fun groupMessagesInternal(groupId: String): List<GroupMessageEntity> =
+    groupMessages.values.filter { it.groupId == groupId }.sortedBy { it.createdAt }
 }

@@ -4,7 +4,7 @@
 
 ## 1. 项目目标
 
-AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在移动端统一管理多组 AI API 配置、固定会话模型、保存本地聊天历史，并逐步支持工具调用、联网搜索、多模态附件、分享导出和后台生成。
+AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在移动端统一管理多组 AI API 配置、固定会话模型、保存本地聊天历史，并逐步支持工具调用、联网搜索、多模态附件、成果收藏、分享导出和后台生成。
 
 当前产品规则：
 
@@ -47,9 +47,11 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | 设置页 | Done | 85% | 独立设置页，支持主题色、夜间模式、字体、debug log、搜索模式、配置导入导出 |
 | 聊天 UI | In Progress | 85% | 顶栏压缩、输入框修复、自动追踪滚动、选择模式、Markdown 表格与分隔线已优化 |
 | 会话列表 | In Progress | 85% | 抽屉、折叠文件夹、重命名、日期分组、创建/更新时间显示已实现 |
+| 成果收藏 | Done | 85% | 支持收藏单条/多条消息为片段，保存快照、来源、标题、标签、描述，并可搜索、查看、追加、移除、分享 |
+| 多 AI 群聊 | Done | 70% | 新增常驻 AI 机器人、独立群聊表、手动点名发言、群摘要、群聊工具消息和基础 UI |
 | 后台生成 | Done | 80% | 前台服务保活，后台完成后通知 |
 | 分享导出 | In Progress | 75% | 文本、Markdown 文件、长图、单气泡分享已实现，超长内容仍需优化 |
-| 自动化测试 | In Progress | 55% | Provider adapter、fork、附件请求体、web_search 解析已有单测 |
+| 自动化测试 | In Progress | 65% | Provider adapter、fork、附件请求体、web_search、收藏片段、多 AI 群聊仓库链路已有单测 |
 | CI / Release | Done | 90% | Jenkins 本地 release pipeline 和签名配置已接入 |
 
 ## 4. 已完成事项
@@ -142,6 +144,38 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | BG-003 | 后台完成通知 | Done | P1 | app 在后台且生成完成时发通知 |
 | BG-004 | Android 13+ 通知权限请求 | Done | P1 | MainActivity 请求 `POST_NOTIFICATIONS` |
 
+### 4.8 成果收藏
+
+| ID | 任务 | 状态 | 优先级 | 验收 |
+| --- | --- | --- | --- | --- |
+| FAV-001 | 收藏片段 Room v9 数据模型 | Done | P1 | 新增 `favorite_snippets`，保存快照、来源、标签、描述和搜索文本 |
+| FAV-002 | 单气泡收藏入口 | Done | P1 | 消息气泡操作区可收藏当前消息 |
+| FAV-003 | 多选收藏入口 | Done | P1 | 顶部三点菜单可收藏选中消息，沿用范围选择 |
+| FAV-004 | 收藏编辑弹窗 | Done | P1 | 保存时可填写标题、标签和描述 |
+| FAV-005 | 收藏夹页面 | Done | P1 | 抽屉顶部进入，支持关键词搜索和标签筛选 |
+| FAV-006 | 收藏详情查看 | Done | P1 | 使用现有 Markdown、附件和元数据展示消息快照 |
+| FAV-007 | 收藏分享与跳回来源 | Done | P1 | 支持文本、长图、复制、编辑、删除、跳回来源对话 |
+| FAV-008 | 收藏仓库测试 | Done | P1 | 覆盖快照保存、标签规范化、源消息变更后快照不变、拒绝流式消息 |
+| FAV-009 | 追加消息到已有收藏 | Done | P1 | 多选当前对话消息后可追加到同来源收藏，自动去重并按时间排序 |
+| FAV-010 | 从收藏移除消息 | Done | P1 | 收藏详情可移除单条快照消息，并保留至少一条消息 |
+
+### 4.9 多 AI 群聊
+
+| ID | 任务 | 状态 | 优先级 | 验收 |
+| --- | --- | --- | --- | --- |
+| GROUP-001 | 群聊 Room v10 数据模型 | Done | P1 | 新增 `ai_bots`、`group_chat_rooms`、`group_chat_members`、`group_messages` 并导出 schema 10 |
+| GROUP-002 | 常驻 AI 机器人管理 | Done | P1 | 设置页进入机器人管理，可从 Provider 创建/编辑/启停/删除机器人 |
+| GROUP-003 | 群聊创建与成员选择 | Done | P1 | 抽屉和群聊页可新建群聊，选择启用机器人加入 |
+| GROUP-004 | 用户群消息落库 | Done | P1 | 用户在群聊发言只保存消息，不自动触发 AI |
+| GROUP-005 | 手动点名机器人发言 | Done | P1 | 按群成员选择机器人回复，单群同一时间只允许一个机器人流式任务 |
+| GROUP-006 | 群聊上下文构造 | Done | P1 | 注入群聊系统提示、机器人角色提示、主题、成员、摘要和最近 20 条消息 |
+| GROUP-007 | 群摘要生成 | Done | P1 | 可选择机器人总结当前讨论，完成后写入群 `summary` |
+| GROUP-008 | 群聊工具调用显示 | Done | P1 | TOOL 群消息落库并复用可折叠工具卡片 UI |
+| GROUP-009 | 群聊附件上下文 | Done | P1 | 支持附件的机器人收到附件；不支持附件的机器人收到附件元信息文本 |
+| GROUP-010 | 群聊消息收藏 | Done | P1 | 群消息可保存为收藏片段快照，来源记录为群聊标题和模型信息 |
+| GROUP-011 | 复制群聊配置 | Done | P1 | 可从当前群聊复制标题、主题和成员机器人，允许保存前修改，不复制历史消息 |
+| GROUP-012 | 群聊 UI 验证 | Watch | P1 | 已实现群聊页面、点名/总结入口和机器人气泡，仍需真机验证滚动与后台任务体验 |
+
 ## 5. 已知风险
 
 | ID | 风险 | 状态 | 优先级 | 处理建议 |
@@ -154,6 +188,9 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | RISK-006 | 中文乱码可能仍残留在旧代码或历史 tracker 文本里 | Watch | P1 | 每次提交前执行 mojibake 扫描 |
 | RISK-007 | Room migration 版本增长较快 | Watch | P2 | 增加 migration 自动化测试 |
 | RISK-008 | release keystore 丢失会导致同包名无法升级 | Watch | P0 | 需要安全备份 JKS 和密码文件 |
+| RISK-009 | 收藏附件复用本机文件路径，文件被清理后只能保留元数据 | Watch | P2 | 后续增加附件复制/校验或收藏导出打包 |
+| RISK-010 | 群聊提示词和最近 20 条上下文可能不足以处理长讨论 | Watch | P1 | 后续增加自动摘要滚动更新、上下文长度设置和主持人调度 |
+| RISK-011 | 群聊消息第一版尚未完整接入长图导出 | Watch | P2 | 后续复用导出模型，补齐群聊完整导出和群消息长图分享 |
 
 ## 6. 下一步计划
 
@@ -169,6 +206,10 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-006 | 真实 DeepSeek Key 回归验证附件按钮隐藏 | Planned | DeepSeek 对话无附件按钮，纯文本/搜索功能正常 |
 | NEXT-P1-007 | 滚动卡顿专项优化 | Planned | 排查长气泡交界处滚动卡顿和自绘滚动条影响 |
 | NEXT-P1-008 | provider 错误提示进一步中文化 | Planned | 401、429、超时、DNS、SSL、Base URL 错误均有清晰提示 |
+| NEXT-P1-009 | 收藏夹标签管理 | Planned | 支持重命名、合并、删除标签 |
+| NEXT-P1-010 | 收藏导入导出 | Planned | 支持收藏片段 JSON/Markdown 导出和恢复 |
+| NEXT-P1-011 | 群聊真机回归 | Planned | 真机验证新建机器人、创建群聊、点名发言、搜索工具调用、附件上下文和切换页面不中断 |
+| NEXT-P1-012 | 群聊导出增强 | Planned | 群聊可导出文本/Markdown/长图，群消息可生成长图分享 |
 
 ### 6.2 P2 / P3
 
@@ -180,6 +221,13 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P2-004 | UI 文件拆分 | Planned | `AIChatAppRoot.kt` 拆分为 chat/settings/drawer/markdown/components |
 | NEXT-P2-005 | Room migration 测试 | Planned | 从 schema 1 到最新 schema 自动迁移验证 |
 | NEXT-P2-006 | 导出内容包含附件索引 | Planned | Markdown/长图导出能列出用户上传附件名称 |
+| NEXT-P2-007 | 文本级选区收藏 | Planned | 支持收藏气泡内选中的一段文字 |
+| NEXT-P2-008 | 收藏搜索结果高亮 | Planned | 收藏夹搜索命中标题、描述、标签、正文时高亮显示 |
+| NEXT-P2-009 | 收藏批量管理 | Planned | 收藏夹支持批量删除、批量打标签、按时间/标签排序、批量移除消息 |
+| NEXT-P2-010 | 群聊自动主持人 | Planned | 支持由主持人机器人控制下一位发言者、暂停和总结 |
+| NEXT-P2-011 | 群聊顺序轮询 | Planned | 支持按成员顺序手动启动有限轮数讨论，不并发发言 |
+| NEXT-P2-012 | 机器人头像和颜色 | Planned | 群聊气泡按机器人显示头像、颜色和可扫描身份标记 |
+| NEXT-P2-013 | 群摘要自动滚动更新 | Planned | 长讨论自动或半自动更新摘要，避免上下文无限增长 |
 | NEXT-P3-001 | Anthropic adapter | Planned | Claude Messages API 文本流式对话 |
 | NEXT-P3-002 | Gemini adapter | Planned | Gemini GenerateContent 文本和多模态对话 |
 | NEXT-P3-003 | 对话 PDF 导出 | Planned | 支持完整对话导出 PDF |

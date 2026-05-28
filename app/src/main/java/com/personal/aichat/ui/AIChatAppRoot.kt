@@ -46,16 +46,20 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
+import androidx.compose.material.icons.automirrored.outlined.Label
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Close
@@ -127,10 +131,16 @@ import androidx.core.content.FileProvider
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import com.personal.aichat.domain.ChatAttachment
+import com.personal.aichat.domain.AiBot
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatConversation
 import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ChatConversationGroup
+import com.personal.aichat.domain.FavoriteSnippet
+import com.personal.aichat.domain.FavoriteSnippetMessage
+import com.personal.aichat.domain.GroupChatMessage
+import com.personal.aichat.domain.GroupChatRoom
+import com.personal.aichat.domain.GroupMessageSenderType
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderType
@@ -144,6 +154,13 @@ import java.io.File
 import java.util.Locale
 import java.util.TimeZone
 
+private data class GroupChatDialogDraft(
+  val title: String,
+  val topic: String,
+  val selectedBotIds: Set<String>,
+  val copyMode: Boolean
+)
+
 @Composable
 fun AIChatAppRoot(viewModel: ChatViewModel) {
   val state by viewModel.uiState.collectAsState()
@@ -151,6 +168,11 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
   val context = LocalContext.current
   var drawerOpen by remember { mutableStateOf(false) }
   var previewImage by remember { mutableStateOf<ChatAttachment?>(null) }
+  var favoriteDraftMessageIds by remember { mutableStateOf<Set<String>?>(null) }
+  var favoriteDraftGroupMessageIds by remember { mutableStateOf<Set<String>?>(null) }
+  var editingFavorite by remember { mutableStateOf<FavoriteSnippet?>(null) }
+  var appendFavoritePickerOpen by remember { mutableStateOf(false) }
+  var groupChatDialogDraft by remember { mutableStateOf<GroupChatDialogDraft?>(null) }
   val openAttachmentInApp: (ChatAttachment) -> Unit = { attachment ->
     if (attachment.isImage) {
       previewImage = attachment
@@ -194,7 +216,17 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onShareSelected = { viewModel.shareSelectedMessagesText(context) },
         onShareImage = { viewModel.shareConversationLongImage(context) },
         onShareSelectedImage = { viewModel.shareSelectedMessagesLongImage(context) },
-        onShareMarkdown = { viewModel.shareConversationMarkdownFile(context) }
+        onShareMarkdown = { viewModel.shareConversationMarkdownFile(context) },
+        onFavoriteSelected = {
+          if (state.selectedMessageIds.isNotEmpty()) {
+            favoriteDraftMessageIds = state.selectedMessageIds
+          }
+        },
+        onAppendSelectedToFavorite = {
+          if (state.selectedMessageIds.isNotEmpty()) {
+            appendFavoritePickerOpen = true
+          }
+        }
       )
       MessageList(
         state = state,
@@ -206,6 +238,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onEditResend = viewModel::editAndResend,
         onShareMessageText = { viewModel.shareMessageText(it, context) },
         onShareMessageImage = { viewModel.shareMessageImage(it, context) },
+        onFavoriteMessage = { favoriteDraftMessageIds = setOf(it) },
         onForkMessage = viewModel::openForkProviderPicker,
         onOpenAttachment = openAttachmentInApp,
         modifier = Modifier
@@ -230,6 +263,40 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onOpenAttachment = openAttachmentInApp,
         isGenerating = state.isSelectedConversationStreaming,
         onStopGenerating = viewModel::stopGenerating
+      )
+    }
+
+    if (state.groupChatPageOpen) {
+      GroupChatPage(
+        state = state,
+        onOpenDrawer = { drawerOpen = true },
+        onClose = viewModel::closeGroupChatPage,
+        onNewGroup = viewModel::openNewGroupChatDialog,
+        onInput = viewModel::updateGroupInput,
+        onSendUser = viewModel::sendGroupUserMessage,
+        onPickImages = { imagePickerLauncher.launch("image/*") },
+        onPickFiles = { filePickerLauncher.launch(arrayOf("*/*")) },
+        onTakePhoto = {
+          val uri = createCameraCaptureUri(context)
+          pendingCameraUri = uri
+          cameraLauncher.launch(uri)
+        },
+        onRemoveAttachment = viewModel::removePendingAttachment,
+        onOpenAttachment = openAttachmentInApp,
+        onBotTurn = { viewModel.sendGroupBotTurn(it, summarize = false) },
+        onSummarize = { viewModel.sendGroupBotTurn(it, summarize = true) },
+        onStop = viewModel::stopGroupGenerating,
+        onFavoriteMessage = { favoriteDraftGroupMessageIds = setOf(it) },
+        onCopyGroup = {
+          state.selectedGroupChat?.let { group ->
+            groupChatDialogDraft = GroupChatDialogDraft(
+              title = "${group.title.ifBlank { "AI 群聊" }} 副本",
+              topic = group.topic,
+              selectedBotIds = state.groupMembers.map { it.botId }.toSet(),
+              copyMode = true
+            )
+          }
+        }
       )
     }
 
@@ -264,7 +331,35 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onDebugResponseLogging = viewModel::setDebugResponseLogging,
         onWebSearchMode = viewModel::setWebSearchMode,
         onExportProviderConfigs = { viewModel.exportProviderConfigsText(context) },
-        onImportProviderConfigs = viewModel::importProviderConfigsText
+        onImportProviderConfigs = viewModel::importProviderConfigsText,
+        onOpenBotManager = viewModel::openBotManager
+      )
+    }
+
+    if (state.favoritePageOpen) {
+      FavoriteSnippetsPage(
+        favorites = state.favoriteSnippets,
+        onDismiss = viewModel::closeFavoritePage,
+        onOpenAttachment = openAttachmentInApp,
+        onShareText = { viewModel.shareFavoriteSnippetText(it, context) },
+        onShareImage = { viewModel.shareFavoriteSnippetLongImage(it, context) },
+        onCopyText = { viewModel.copyFavoriteSnippetText(it, context) },
+        onEdit = { editingFavorite = it },
+        onDelete = viewModel::deleteFavoriteSnippet,
+        onRemoveMessage = viewModel::removeMessageFromFavorite,
+        onJumpToSource = viewModel::jumpToFavoriteSource
+      )
+    }
+
+    if (state.botManagerOpen) {
+      BotManagerPage(
+        providers = state.providers,
+        bots = state.aiBots,
+        onDismiss = viewModel::closeBotManager,
+        onCreate = viewModel::createAiBot,
+        onUpdate = viewModel::updateAiBot,
+        onToggleEnabled = viewModel::setAiBotEnabled,
+        onDelete = viewModel::deleteAiBot
       )
     }
 
@@ -290,6 +385,22 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
       ConversationDrawer(
         state = state,
         onDismiss = { drawerOpen = false },
+        onOpenFavorites = {
+          drawerOpen = false
+          viewModel.openFavoritePage()
+        },
+        onOpenGroups = {
+          drawerOpen = false
+          viewModel.openGroupChatPage()
+        },
+        onNewGroup = {
+          drawerOpen = false
+          viewModel.openNewGroupChatDialog()
+        },
+        onSelectGroup = {
+          viewModel.selectGroupChat(it)
+          drawerOpen = false
+        },
         onSelectConversation = {
           viewModel.selectConversation(it)
           drawerOpen = false
@@ -300,6 +411,83 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onDelete = viewModel::deleteConversation,
         onRename = viewModel::updateConversationMeta,
         onRenameGroup = viewModel::renameConversationGroup
+      )
+    }
+
+    if (state.newGroupChatDialogOpen || groupChatDialogDraft != null) {
+      val draft = groupChatDialogDraft
+      NewGroupChatDialog(
+        bots = state.aiBots.filter { it.enabled },
+        title = if (draft?.copyMode == true) "复制 AI 群聊" else "新建 AI 群聊",
+        confirmText = if (draft?.copyMode == true) "创建副本" else "创建",
+        initialTitle = draft?.title.orEmpty(),
+        initialTopic = draft?.topic.orEmpty(),
+        initialSelectedBotIds = draft?.selectedBotIds.orEmpty(),
+        onDismiss = {
+          groupChatDialogDraft = null
+          viewModel.closeNewGroupChatDialog()
+        },
+        onCreate = { title, topic, botIds ->
+          groupChatDialogDraft = null
+          viewModel.createGroupChat(title, topic, botIds)
+        }
+      )
+    }
+
+    favoriteDraftMessageIds?.let { messageIds ->
+      FavoriteSnippetDialog(
+        title = "收藏片段",
+        messageCount = messageIds.size,
+        initialTitle = defaultFavoriteTitle(state, messageIds),
+        initialDescription = "",
+        initialTags = "",
+        onDismiss = { favoriteDraftMessageIds = null },
+        onSave = { title, description, tags ->
+          viewModel.saveFavoriteSnippet(messageIds, title, description, tags)
+          favoriteDraftMessageIds = null
+        }
+      )
+    }
+
+    favoriteDraftGroupMessageIds?.let { messageIds ->
+      FavoriteSnippetDialog(
+        title = "收藏群聊片段",
+        messageCount = messageIds.size,
+        initialTitle = defaultGroupFavoriteTitle(state, messageIds),
+        initialDescription = "",
+        initialTags = "",
+        onDismiss = { favoriteDraftGroupMessageIds = null },
+        onSave = { title, description, tags ->
+          viewModel.saveGroupFavoriteSnippet(messageIds, title, description, tags)
+          favoriteDraftGroupMessageIds = null
+        }
+      )
+    }
+
+    editingFavorite?.let { favorite ->
+      FavoriteSnippetDialog(
+        title = "编辑收藏",
+        messageCount = favorite.messageCount,
+        initialTitle = favorite.title,
+        initialDescription = favorite.description,
+        initialTags = favorite.tags.joinToString("，"),
+        onDismiss = { editingFavorite = null },
+        onSave = { title, description, tags ->
+          viewModel.updateFavoriteSnippet(favorite.id, title, description, tags)
+          editingFavorite = null
+        }
+      )
+    }
+
+    if (appendFavoritePickerOpen) {
+      AppendToFavoriteDialog(
+        favorites = state.favoriteSnippets.filter { it.sourceConversationId == state.selectedConversationId },
+        selectedCount = state.selectedMessageIds.size,
+        onDismiss = { appendFavoritePickerOpen = false },
+        onSelectFavorite = { favoriteId ->
+          viewModel.appendSelectedMessagesToFavorite(favoriteId)
+          appendFavoritePickerOpen = false
+        }
       )
     }
 
@@ -316,6 +504,19 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         dismissButton = {
           TextButton(onClick = viewModel::cancelDeleteConversation) {
             Text("取消")
+          }
+        }
+      )
+    }
+
+    state.error?.let { message ->
+      AlertDialog(
+        onDismissRequest = viewModel::clearError,
+        title = { Text("提示") },
+        text = { Text(message) },
+        confirmButton = {
+          TextButton(onClick = viewModel::clearError) {
+            Text("知道了")
           }
         }
       )
@@ -465,6 +666,10 @@ private fun ConversationShareMenu(
 private fun ConversationDrawer(
   state: ChatUiState,
   onDismiss: () -> Unit,
+  onOpenFavorites: () -> Unit,
+  onOpenGroups: () -> Unit,
+  onNewGroup: () -> Unit,
+  onSelectGroup: (String) -> Unit,
   onSelectConversation: (String) -> Unit,
   onTogglePin: (String, Boolean) -> Unit,
   onArchive: (String) -> Unit,
@@ -500,6 +705,78 @@ private fun ConversationDrawer(
           }
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          item(key = "favorites-entry") {
+            Surface(
+              color = MaterialTheme.colorScheme.primaryContainer,
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpenFavorites)
+            ) {
+              Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Icon(Icons.Outlined.Bookmark, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                  Text("收藏夹", fontWeight = FontWeight.SemiBold)
+                  Text(
+                    "${state.favoriteSnippets.size} 个收藏片段",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                  )
+                }
+              }
+            }
+          }
+          item(key = "groups-entry") {
+            Surface(
+              color = MaterialTheme.colorScheme.surfaceVariant,
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpenGroups)
+            ) {
+              Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Icon(Icons.Outlined.Groups, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                  Text("AI 群聊", fontWeight = FontWeight.SemiBold)
+                  Text(
+                    "${state.groupChats.size} 个群聊 · ${state.aiBots.size} 个机器人",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                  )
+                }
+                TextButton(onClick = onNewGroup) {
+                  Text("新建")
+                }
+              }
+            }
+          }
+          if (state.groupChats.isNotEmpty()) {
+            item(key = "section-groups") {
+              Text("群聊", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
+            }
+            items(state.groupChats, key = { "group-${it.id}" }) { group ->
+              Surface(
+                color = if (group.id == state.selectedGroupChatId && state.groupChatPageOpen) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.background,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .clickable { onSelectGroup(group.id) }
+              ) {
+                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                  Text(group.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                  Text(group.topic.ifBlank { "未填写主题" }, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+              }
+            }
+          }
           val pinnedConversations = state.conversations.filter { it.isPinned }
           val normalConversations = state.conversations.filterNot { it.isPinned }
           val pinnedFolders = state.conversationGroups.filter { group -> group.conversations.any { it.isPinned } }
@@ -791,7 +1068,9 @@ private fun TopBar(
   onShareSelected: () -> Unit,
   onShareImage: () -> Unit,
   onShareSelectedImage: () -> Unit,
-  onShareMarkdown: () -> Unit
+  onShareMarkdown: () -> Unit,
+  onFavoriteSelected: () -> Unit,
+  onAppendSelectedToFavorite: () -> Unit
 ) {
   val selectedConversation = state.selectedConversation
   Row(
@@ -844,7 +1123,9 @@ private fun TopBar(
         onShareSelected = onShareSelected,
         onShareImage = onShareImage,
         onShareSelectedImage = onShareSelectedImage,
-        onShareMarkdown = onShareMarkdown
+        onShareMarkdown = onShareMarkdown,
+        onFavoriteSelected = onFavoriteSelected,
+        onAppendSelectedToFavorite = onAppendSelectedToFavorite
       )
     }
   }
@@ -864,7 +1145,9 @@ private fun ConversationOverflowMenu(
   onShareSelected: () -> Unit,
   onShareImage: () -> Unit,
   onShareSelectedImage: () -> Unit,
-  onShareMarkdown: () -> Unit
+  onShareMarkdown: () -> Unit,
+  onFavoriteSelected: () -> Unit,
+  onAppendSelectedToFavorite: () -> Unit
 ) {
   var menuOpen by remember { mutableStateOf(false) }
   var editing by remember(conversation.id) { mutableStateOf(false) }
@@ -900,6 +1183,24 @@ private fun ConversationOverflowMenu(
         onClick = {
           menuOpen = false
           onShareSelected()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("收藏选中消息") },
+        leadingIcon = { Icon(Icons.Outlined.Bookmark, contentDescription = null) },
+        enabled = selectedCount > 0,
+        onClick = {
+          menuOpen = false
+          onFavoriteSelected()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("追加到已有收藏") },
+        leadingIcon = { Icon(Icons.Outlined.Bookmark, contentDescription = null) },
+        enabled = selectedCount > 0,
+        onClick = {
+          menuOpen = false
+          onAppendSelectedToFavorite()
         }
       )
       DropdownMenuItem(
@@ -1019,6 +1320,1275 @@ private fun ConversationOverflowMenu(
 }
 
 @Composable
+private fun FavoriteSnippetDialog(
+  title: String,
+  messageCount: Int,
+  initialTitle: String,
+  initialDescription: String,
+  initialTags: String,
+  onDismiss: () -> Unit,
+  onSave: (String, String, String) -> Unit
+) {
+  var snippetTitle by remember(initialTitle) { mutableStateOf(initialTitle) }
+  var description by remember(initialDescription) { mutableStateOf(initialDescription) }
+  var tags by remember(initialTags) { mutableStateOf(initialTags) }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text(title) },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("将保存 $messageCount 条消息为一个收藏片段。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedTextField(
+          value = snippetTitle,
+          onValueChange = { snippetTitle = it },
+          label = { Text("标题") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+          value = tags,
+          onValueChange = { tags = it },
+          label = { Text("标签，用逗号分隔") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+          value = description,
+          onValueChange = { description = it },
+          label = { Text("描述") },
+          minLines = 3,
+          modifier = Modifier.fillMaxWidth()
+        )
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = { onSave(snippetTitle, description, tags) },
+        enabled = snippetTitle.isNotBlank()
+      ) {
+        Text("保存")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("取消")
+      }
+    }
+  )
+}
+
+@Composable
+private fun AppendToFavoriteDialog(
+  favorites: List<FavoriteSnippet>,
+  selectedCount: Int,
+  onDismiss: () -> Unit,
+  onSelectFavorite: (String) -> Unit
+) {
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("追加到已有收藏") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+          "将 $selectedCount 条选中消息追加到同一来源对话的收藏片段。",
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (favorites.isEmpty()) {
+          Text("当前对话还没有可追加的收藏。请先创建一个收藏片段。")
+        } else {
+          Column(
+            modifier = Modifier
+              .fillMaxWidth()
+              .heightIn(max = 360.dp)
+              .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+          ) {
+            favorites.forEach { favorite ->
+              Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .clickable { onSelectFavorite(favorite.id) }
+              ) {
+                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                  Text(favorite.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                  Text(
+                    "${favorite.messageCount} 条消息 · ${favorite.tags.joinToString("、")}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {},
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("取消")
+      }
+    }
+  )
+}
+
+@Composable
+private fun FavoriteSnippetsPage(
+  favorites: List<FavoriteSnippet>,
+  onDismiss: () -> Unit,
+  onOpenAttachment: (ChatAttachment) -> Unit,
+  onShareText: (String) -> Unit,
+  onShareImage: (String) -> Unit,
+  onCopyText: (String) -> Unit,
+  onEdit: (FavoriteSnippet) -> Unit,
+  onDelete: (String) -> Unit,
+  onRemoveMessage: (String, String) -> Unit,
+  onJumpToSource: (FavoriteSnippet) -> Unit
+) {
+  var query by remember { mutableStateOf("") }
+  var tagFilter by remember { mutableStateOf<String?>(null) }
+  var selectedFavoriteId by remember { mutableStateOf<String?>(null) }
+  val selectedFavorite = favorites.firstOrNull { it.id == selectedFavoriteId }
+  val allTags = remember(favorites) {
+    favorites.flatMap { it.tags }.distinctBy { it.lowercase() }.sorted()
+  }
+  val normalizedQuery = query.trim().lowercase()
+  val filtered = favorites.filter { favorite ->
+    val matchesQuery = normalizedQuery.isBlank() || favorite.searchText.contains(normalizedQuery)
+    val matchesTag = tagFilter == null || favorite.tags.any { it.equals(tagFilter, ignoreCase = true) }
+    matchesQuery && matchesTag
+  }
+
+  Surface(
+    color = MaterialTheme.colorScheme.background,
+    modifier = Modifier
+      .fillMaxSize()
+      .windowInsetsPadding(WindowInsets.safeDrawing)
+  ) {
+    if (selectedFavorite != null) {
+      FavoriteSnippetDetail(
+        favorite = selectedFavorite,
+        onBack = { selectedFavoriteId = null },
+        onDismiss = onDismiss,
+        onOpenAttachment = onOpenAttachment,
+        onShareText = { onShareText(selectedFavorite.id) },
+        onShareImage = { onShareImage(selectedFavorite.id) },
+        onCopyText = { onCopyText(selectedFavorite.id) },
+        onEdit = { onEdit(selectedFavorite) },
+        onDelete = {
+          onDelete(selectedFavorite.id)
+          selectedFavoriteId = null
+        },
+        onRemoveMessage = { messageId -> onRemoveMessage(selectedFavorite.id, messageId) },
+        onJumpToSource = { onJumpToSource(selectedFavorite) }
+      )
+    } else {
+      Column(
+        modifier = Modifier
+          .fillMaxSize()
+          .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+      ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Icon(Icons.Outlined.Bookmark, contentDescription = null)
+          Spacer(Modifier.width(8.dp))
+          Text("收藏夹", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+          IconButton(onClick = onDismiss) {
+            Icon(Icons.Outlined.Close, contentDescription = "关闭收藏夹")
+          }
+        }
+        OutlinedTextField(
+          value = query,
+          onValueChange = { query = it },
+          label = { Text("搜索标题、描述、标签、来源或正文") },
+          leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth()
+        )
+        if (allTags.isNotEmpty()) {
+          LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item {
+              FilterChip(
+                selected = tagFilter == null,
+                onClick = { tagFilter = null },
+                label = { Text("全部") }
+              )
+            }
+            items(allTags, key = { it }) { tag ->
+              FilterChip(
+                selected = tagFilter.equals(tag, ignoreCase = true),
+                onClick = { tagFilter = if (tagFilter.equals(tag, ignoreCase = true)) null else tag },
+                label = { Text(tag) },
+                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null, modifier = Modifier.size(16.dp)) }
+              )
+            }
+          }
+        }
+        if (filtered.isEmpty()) {
+          Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Text(
+              text = if (favorites.isEmpty()) "还没有收藏片段。可以在消息气泡或多选菜单里收藏。" else "没有匹配的收藏。",
+              modifier = Modifier.padding(16.dp),
+              color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+          }
+        } else {
+          LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
+            items(filtered, key = { it.id }) { favorite ->
+              FavoriteSnippetCard(
+                favorite = favorite,
+                onClick = { selectedFavoriteId = favorite.id }
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun FavoriteSnippetCard(favorite: FavoriteSnippet, onClick: () -> Unit) {
+  Surface(
+    color = MaterialTheme.colorScheme.surface,
+    shape = RoundedCornerShape(8.dp),
+    tonalElevation = 1.dp,
+    modifier = Modifier
+      .fillMaxWidth()
+      .clickable(onClick = onClick)
+  ) {
+    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Text(favorite.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      if (favorite.description.isNotBlank()) {
+        Text(
+          favorite.description,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis
+        )
+      }
+      if (favorite.tags.isNotEmpty()) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          items(favorite.tags, key = { it }) { tag ->
+            AssistChip(onClick = {}, label = { Text(tag) }, leadingIcon = {
+              Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null, modifier = Modifier.size(14.dp))
+            })
+          }
+        }
+      }
+      Text(
+        "${favorite.messageCount} 条消息 · ${favorite.sourceConversationTitle} · ${favorite.sourceModel.orEmpty()}",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+      )
+      Text(
+        "收藏于 ${formatMessageTime(favorite.createdAt)}",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+      )
+    }
+  }
+}
+
+@Composable
+private fun FavoriteSnippetDetail(
+  favorite: FavoriteSnippet,
+  onBack: () -> Unit,
+  onDismiss: () -> Unit,
+  onOpenAttachment: (ChatAttachment) -> Unit,
+  onShareText: () -> Unit,
+  onShareImage: () -> Unit,
+  onCopyText: () -> Unit,
+  onEdit: () -> Unit,
+  onDelete: () -> Unit,
+  onRemoveMessage: (String) -> Unit,
+  onJumpToSource: () -> Unit
+) {
+  var deleteConfirmOpen by remember(favorite.id) { mutableStateOf(false) }
+  Column(
+    modifier = Modifier
+      .fillMaxSize()
+      .padding(horizontal = 16.dp, vertical = 10.dp),
+    verticalArrangement = Arrangement.spacedBy(8.dp)
+  ) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      IconButton(onClick = onBack) {
+        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "返回收藏列表")
+      }
+      Column(modifier = Modifier.weight(1f)) {
+        Text(favorite.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+          "${favorite.sourceConversationTitle} / ${favorite.sourceProviderName ?: favorite.sourceProviderId.orEmpty()} / ${favorite.sourceModel.orEmpty()}",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+        )
+      }
+      IconButton(onClick = onDismiss) {
+        Icon(Icons.Outlined.Close, contentDescription = "关闭收藏夹")
+      }
+    }
+    FavoriteDetailActions(
+      onShareText = onShareText,
+      onShareImage = onShareImage,
+      onCopyText = onCopyText,
+      onEdit = onEdit,
+      onJumpToSource = onJumpToSource,
+      onDelete = { deleteConfirmOpen = true }
+    )
+    FavoriteDetailMeta(favorite = favorite)
+    Column(
+      modifier = Modifier
+        .weight(1f)
+        .verticalScroll(rememberScrollState()),
+      verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+      favorite.messages.forEach { message ->
+        FavoriteMessageBubble(
+          message = message,
+          canRemove = favorite.messages.size > 1,
+          onRemove = { onRemoveMessage(message.id) },
+          onOpenAttachment = onOpenAttachment
+        )
+      }
+    }
+  }
+  if (deleteConfirmOpen) {
+    AlertDialog(
+      onDismissRequest = { deleteConfirmOpen = false },
+      title = { Text("删除收藏") },
+      text = { Text("确定要删除这个收藏片段吗？原对话内容不会被删除。") },
+      confirmButton = {
+        Button(onClick = {
+          deleteConfirmOpen = false
+          onDelete()
+        }) {
+          Text("删除")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { deleteConfirmOpen = false }) {
+          Text("取消")
+        }
+      }
+    )
+  }
+}
+
+@Composable
+private fun FavoriteDetailActions(
+  onShareText: () -> Unit,
+  onShareImage: () -> Unit,
+  onCopyText: () -> Unit,
+  onEdit: () -> Unit,
+  onJumpToSource: () -> Unit,
+  onDelete: () -> Unit
+) {
+  LazyRow(
+    horizontalArrangement = Arrangement.spacedBy(6.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    modifier = Modifier.fillMaxWidth()
+  ) {
+    item {
+      CompactFavoriteAction("文本", Icons.Outlined.Share, onShareText)
+    }
+    item {
+      CompactFavoriteAction("长图", Icons.Outlined.Image, onShareImage)
+    }
+    item {
+      CompactFavoriteAction("复制", Icons.Outlined.ContentCopy, onCopyText)
+    }
+    item {
+      CompactFavoriteAction("编辑", Icons.Outlined.Edit, onEdit)
+    }
+    item {
+      CompactFavoriteAction("来源", Icons.AutoMirrored.Outlined.OpenInNew, onJumpToSource)
+    }
+    item {
+      CompactFavoriteAction("删除", Icons.Outlined.Delete, onDelete)
+    }
+  }
+}
+
+@Composable
+private fun CompactFavoriteAction(
+  label: String,
+  icon: androidx.compose.ui.graphics.vector.ImageVector,
+  onClick: () -> Unit
+) {
+  AssistChip(
+    onClick = onClick,
+    label = { Text(label, style = MaterialTheme.typography.bodySmall) },
+    leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp)) }
+  )
+}
+
+@Composable
+private fun FavoriteDetailMeta(favorite: FavoriteSnippet) {
+  val parts = buildList {
+    if (favorite.description.isNotBlank()) add(favorite.description)
+    if (favorite.tags.isNotEmpty()) add(favorite.tags.joinToString("  ") { "#$it" })
+  }
+  if (parts.isEmpty()) return
+  Text(
+    text = parts.joinToString(" · "),
+    style = MaterialTheme.typography.bodySmall,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    maxLines = 1,
+    overflow = TextOverflow.Ellipsis,
+    modifier = Modifier.fillMaxWidth()
+  )
+}
+
+@Composable
+private fun FavoriteMessageBubble(
+  message: FavoriteSnippetMessage,
+  canRemove: Boolean,
+  onRemove: () -> Unit,
+  onOpenAttachment: (ChatAttachment) -> Unit
+) {
+  val isUser = message.role == MessageRole.USER
+  var removeConfirmOpen by remember(message.id) { mutableStateOf(false) }
+  Row(
+    modifier = Modifier.fillMaxWidth(),
+    horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+  ) {
+    Surface(
+      color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+      contentColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+      shape = RoundedCornerShape(8.dp),
+      modifier = Modifier.fillMaxWidth(if (isUser) 0.84f else 0.92f)
+    ) {
+      Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+          "${favoriteRoleLabel(message.role)} · ${formatMessageTime(message.createdAt)}",
+          style = MaterialTheme.typography.bodySmall,
+          color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f) else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (isUser) {
+          Text(message.content)
+        } else {
+          MarkdownPreview(message.content)
+        }
+        if (message.attachments.isNotEmpty()) {
+          AttachmentStrip(
+            attachments = message.attachments,
+            onOpenAttachment = onOpenAttachment,
+            onRemoveAttachment = null,
+            compact = false
+          )
+        }
+        if (message.status == MessageStatus.FAILED) {
+          Text(
+            text = message.errorMessage ?: "Request failed",
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall
+          )
+        }
+        formatFavoriteMessageMetadata(message)?.let { metadata ->
+          Text(
+            text = metadata,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f) else MaterialTheme.colorScheme.onSurfaceVariant
+          )
+        }
+        TextButton(
+          onClick = { removeConfirmOpen = true },
+          enabled = canRemove
+        ) {
+          Icon(Icons.Outlined.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+          Spacer(Modifier.width(4.dp))
+          Text(if (canRemove) "从收藏移除" else "至少保留一条消息")
+        }
+      }
+    }
+  }
+  if (removeConfirmOpen) {
+    AlertDialog(
+      onDismissRequest = { removeConfirmOpen = false },
+      title = { Text("移除消息") },
+      text = { Text("确定要从这个收藏片段中移除这条消息吗？原对话内容不会被删除。") },
+      confirmButton = {
+        Button(onClick = {
+          removeConfirmOpen = false
+          onRemove()
+        }) {
+          Text("移除")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { removeConfirmOpen = false }) {
+          Text("取消")
+        }
+      }
+    )
+  }
+}
+
+private fun favoriteRoleLabel(role: MessageRole): String = when (role) {
+  MessageRole.USER -> "我"
+  MessageRole.ASSISTANT -> "AI"
+  MessageRole.SYSTEM -> "系统"
+  MessageRole.TOOL -> "工具"
+}
+
+private fun formatFavoriteMessageMetadata(message: FavoriteSnippetMessage): String? {
+  if (message.role != MessageRole.ASSISTANT) return null
+  val parts = mutableListOf<String>()
+  message.firstTokenDurationMs?.let { parts += "首 token ${formatDuration(it)}" }
+  message.totalDurationMs?.let { parts += "总耗时 ${formatDuration(it)}" }
+  if (message.totalTokens != null) {
+    val detail = when {
+      message.promptTokens != null && message.completionTokens != null ->
+        "输入 ${message.promptTokens} / 输出 ${message.completionTokens}"
+      message.promptTokens != null -> "输入 ${message.promptTokens}"
+      message.completionTokens != null -> "输出 ${message.completionTokens}"
+      else -> null
+    }
+    parts += if (detail == null) {
+      "${message.totalTokens} tokens"
+    } else {
+      "$detail / 总 ${message.totalTokens} tokens"
+    }
+  }
+  return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+}
+
+private fun defaultFavoriteTitle(state: ChatUiState, messageIds: Set<String>): String {
+  val selectedMessages = state.messages.filter { it.id in messageIds }.sortedBy { it.createdAt }
+  return selectedMessages
+    .firstOrNull { it.role == MessageRole.ASSISTANT && it.content.isNotBlank() }
+    ?.content
+    ?.lineSequence()
+    ?.firstOrNull { it.isNotBlank() }
+    ?.trim()
+    ?.take(40)
+    ?: "${state.selectedConversation?.title?.ifBlank { "对话" } ?: "对话"}（节选）"
+}
+
+private fun defaultGroupFavoriteTitle(state: ChatUiState, messageIds: Set<String>): String {
+  val selectedMessages = state.groupMessages.filter { it.id in messageIds }.sortedBy { it.createdAt }
+  return selectedMessages
+    .firstOrNull { it.senderType == GroupMessageSenderType.BOT && it.content.isNotBlank() }
+    ?.content
+    ?.lineSequence()
+    ?.firstOrNull { it.isNotBlank() }
+    ?.trim()
+    ?.take(40)
+    ?: "${state.selectedGroupChat?.title?.ifBlank { "群聊" } ?: "群聊"}（节选）"
+}
+
+private enum class GroupBotPickerMode {
+  SPEAK,
+  SUMMARIZE
+}
+
+@Composable
+private fun GroupChatPage(
+  state: ChatUiState,
+  onOpenDrawer: () -> Unit,
+  onClose: () -> Unit,
+  onNewGroup: () -> Unit,
+  onInput: (TextFieldValue) -> Unit,
+  onSendUser: () -> Unit,
+  onPickImages: () -> Unit,
+  onPickFiles: () -> Unit,
+  onTakePhoto: () -> Unit,
+  onRemoveAttachment: (String) -> Unit,
+  onOpenAttachment: (ChatAttachment) -> Unit,
+  onBotTurn: (String) -> Unit,
+  onSummarize: (String) -> Unit,
+  onStop: () -> Unit,
+  onFavoriteMessage: (String) -> Unit,
+  onCopyGroup: () -> Unit
+) {
+  var pickerMode by remember { mutableStateOf<GroupBotPickerMode?>(null) }
+  val selectedGroup = state.selectedGroupChat
+  val memberBotIds = state.groupMembers.map { it.botId }.toSet()
+  val groupBots = state.aiBots
+    .filter { it.enabled && (memberBotIds.isEmpty() || it.id in memberBotIds) }
+    .sortedWith(compareBy<AiBot> { bot -> state.groupMembers.firstOrNull { it.botId == bot.id }?.sortOrder ?: Int.MAX_VALUE }.thenBy { it.name })
+
+  Surface(
+    color = MaterialTheme.colorScheme.background,
+    modifier = Modifier
+      .fillMaxSize()
+      .windowInsetsPadding(WindowInsets.safeDrawing)
+  ) {
+    Column(modifier = Modifier.fillMaxSize()) {
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        IconButton(onClick = onOpenDrawer) {
+          Icon(Icons.Outlined.Menu, contentDescription = "打开聊天列表")
+        }
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = selectedGroup?.title?.ifBlank { "AI 群聊" } ?: "AI 群聊",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+          )
+          Text(
+            text = selectedGroup?.topic?.ifBlank { "手动点名机器人轮流发言" } ?: "选择或新建一个群聊",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+          )
+        }
+        IconButton(onClick = onNewGroup) {
+          Icon(Icons.Outlined.Add, contentDescription = "新建群聊")
+        }
+        IconButton(onClick = onCopyGroup, enabled = selectedGroup != null) {
+          Icon(Icons.Outlined.ContentCopy, contentDescription = "复制群聊")
+        }
+        IconButton(onClick = onClose) {
+          Icon(Icons.Outlined.Close, contentDescription = "关闭群聊")
+        }
+      }
+
+      if (selectedGroup == null) {
+        Column(
+          modifier = Modifier
+            .weight(1f)
+            .fillMaxWidth()
+            .padding(18.dp),
+          verticalArrangement = Arrangement.Center,
+          horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+          Text("还没有选择群聊", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+          Spacer(Modifier.height(10.dp))
+          Button(onClick = onNewGroup) {
+            Icon(Icons.Outlined.Groups, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("新建 AI 群聊")
+          }
+        }
+      } else {
+        if (selectedGroup.summary.isNotBlank() || groupBots.isNotEmpty()) {
+          Column(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 12.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+          ) {
+            if (selectedGroup.summary.isNotBlank()) {
+              Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+              ) {
+                Text(
+                  text = "摘要：${selectedGroup.summary}",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  maxLines = 2,
+                  overflow = TextOverflow.Ellipsis,
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                )
+              }
+            }
+            if (groupBots.isNotEmpty()) {
+              LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(groupBots, key = { it.id }) { bot ->
+                  AssistChip(
+                    onClick = { onBotTurn(bot.id) },
+                    enabled = !state.isSelectedGroupStreaming,
+                    label = { Text("${bot.name} · ${bot.model}", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                  )
+                }
+              }
+            }
+          }
+        }
+
+        GroupMessageList(
+          messages = state.groupMessages,
+          onOpenAttachment = onOpenAttachment,
+          onFavoriteMessage = onFavoriteMessage,
+          modifier = Modifier
+            .weight(1f)
+            .fillMaxWidth()
+        )
+
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Button(
+            onClick = { pickerMode = GroupBotPickerMode.SPEAK },
+            enabled = groupBots.isNotEmpty() && !state.isSelectedGroupStreaming,
+            modifier = Modifier.weight(1f)
+          ) {
+            Icon(Icons.Outlined.Groups, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text("点名发言")
+          }
+          TextButton(
+            onClick = { pickerMode = GroupBotPickerMode.SUMMARIZE },
+            enabled = groupBots.isNotEmpty() && state.groupMessages.isNotEmpty() && !state.isSelectedGroupStreaming
+          ) {
+            Text("总结讨论")
+          }
+        }
+
+        Composer(
+          input = state.groupInput,
+          attachments = state.pendingAttachments,
+          attachmentsEnabled = true,
+          onInput = onInput,
+          onSend = onSendUser,
+          onRetry = {},
+          onPickImages = onPickImages,
+          onPickFiles = onPickFiles,
+          onTakePhoto = onTakePhoto,
+          onRemoveAttachment = onRemoveAttachment,
+          onOpenAttachment = onOpenAttachment,
+          isGenerating = state.isSelectedGroupStreaming,
+          onStopGenerating = onStop,
+          showRetry = false
+        )
+      }
+    }
+  }
+
+  pickerMode?.let { mode ->
+    GroupBotPickerDialog(
+      title = if (mode == GroupBotPickerMode.SPEAK) "选择发言机器人" else "选择总结机器人",
+      bots = groupBots,
+      onDismiss = { pickerMode = null },
+      onSelect = { botId ->
+        pickerMode = null
+        if (mode == GroupBotPickerMode.SPEAK) {
+          onBotTurn(botId)
+        } else {
+          onSummarize(botId)
+        }
+      }
+    )
+  }
+}
+
+@Composable
+private fun GroupMessageList(
+  messages: List<GroupChatMessage>,
+  onOpenAttachment: (ChatAttachment) -> Unit,
+  onFavoriteMessage: (String) -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val listState = rememberLazyListState()
+  LaunchedEffect(messages.size, messages.lastOrNull()?.content, messages.lastOrNull()?.status) {
+    if (messages.isNotEmpty()) {
+      listState.animateScrollToItem(messages.lastIndex)
+    }
+  }
+  LazyColumn(
+    state = listState,
+    modifier = modifier
+      .padding(horizontal = 12.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    items(messages, key = { it.id }) { message ->
+      GroupMessageBubble(
+        message = message,
+        onOpenAttachment = onOpenAttachment,
+        onFavorite = { onFavoriteMessage(message.id) }
+      )
+    }
+  }
+}
+
+@Composable
+private fun GroupMessageBubble(
+  message: GroupChatMessage,
+  onOpenAttachment: (ChatAttachment) -> Unit,
+  onFavorite: () -> Unit
+) {
+  val context = LocalContext.current
+  if (message.senderType == GroupMessageSenderType.TOOL) {
+    ToolCallItem(
+      message = message.toChatMessage(),
+      selected = false,
+      selectionMode = false,
+      canSelectRangeTo = false,
+      onToggleSelected = {},
+      onSelectRangeTo = {},
+      onCopy = { copyToClipboard(context, message.content) },
+      onFavorite = onFavorite
+    )
+    return
+  }
+  val isUser = message.senderType == GroupMessageSenderType.USER
+  Row(
+    modifier = Modifier.fillMaxWidth(),
+    horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+  ) {
+    Surface(
+      color = when {
+        isUser -> MaterialTheme.colorScheme.primary
+        message.status == MessageStatus.FAILED -> MaterialTheme.colorScheme.errorContainer
+        else -> MaterialTheme.colorScheme.surface
+      },
+      contentColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+      shape = RoundedCornerShape(8.dp),
+      modifier = Modifier.fillMaxWidth(if (isUser) 0.84f else 0.92f)
+    ) {
+      Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = message.senderName.ifBlank { if (isUser) "用户" else "AI" },
+              fontWeight = FontWeight.SemiBold,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
+            )
+            Text(
+              text = listOfNotNull(message.model, formatMessageTime(message.createdAt)).joinToString(" · "),
+              style = MaterialTheme.typography.bodySmall,
+              color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f) else MaterialTheme.colorScheme.onSurfaceVariant,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
+            )
+          }
+          IconButton(onClick = { copyToClipboard(context, message.content) }, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Outlined.ContentCopy, contentDescription = "复制群消息")
+          }
+          IconButton(onClick = { shareText(context, message.content, "分享群消息") }, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Outlined.Share, contentDescription = "分享群消息")
+          }
+          IconButton(onClick = onFavorite, enabled = message.status != MessageStatus.STREAMING, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Outlined.Bookmark, contentDescription = "收藏群消息")
+          }
+        }
+        if (isUser) {
+          Text(message.content)
+        } else {
+          SelectionContainer {
+            MarkdownPreview(message.content.ifBlank { if (message.status == MessageStatus.STREAMING) "..." else "" })
+          }
+        }
+        if (message.attachments.isNotEmpty()) {
+          AttachmentStrip(
+            attachments = message.attachments,
+            onOpenAttachment = onOpenAttachment,
+            onRemoveAttachment = null,
+            compact = false
+          )
+        }
+        if (message.status == MessageStatus.FAILED) {
+          Text(
+            text = message.errorMessage ?: "请求失败",
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall
+          )
+        }
+        formatGroupMessageMetadata(message)?.let { metadata ->
+          Text(
+            text = metadata,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f) else MaterialTheme.colorScheme.onSurfaceVariant
+          )
+        }
+      }
+    }
+  }
+}
+
+private fun GroupChatMessage.toChatMessage(): ChatMessage {
+  return ChatMessage(
+    id = id,
+    conversationId = groupId,
+    role = role,
+    content = content,
+    status = status,
+    providerId = providerId,
+    model = model,
+    createdAt = createdAt,
+    updatedAt = updatedAt,
+    errorMessage = errorMessage,
+    totalDurationMs = totalDurationMs,
+    firstTokenDurationMs = firstTokenDurationMs,
+    promptTokens = promptTokens,
+    completionTokens = completionTokens,
+    totalTokens = totalTokens,
+    attachments = attachments
+  )
+}
+
+private fun formatGroupMessageMetadata(message: GroupChatMessage): String? {
+  val parts = mutableListOf<String>()
+  if (message.status == MessageStatus.STREAMING) parts += "输出中"
+  message.firstTokenDurationMs?.let { parts += "首 token ${formatDuration(it)}" }
+  message.totalDurationMs?.let { parts += "耗时 ${formatDuration(it)}" }
+  if (message.totalTokens != null) {
+    val detail = when {
+      message.promptTokens != null && message.completionTokens != null ->
+        "输入 ${message.promptTokens} / 输出 ${message.completionTokens}"
+      message.promptTokens != null -> "输入 ${message.promptTokens}"
+      message.completionTokens != null -> "输出 ${message.completionTokens}"
+      else -> null
+    }
+    parts += if (detail == null) "${message.totalTokens} tokens" else "$detail / 总 ${message.totalTokens} tokens"
+  }
+  return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+}
+
+@Composable
+private fun GroupBotPickerDialog(
+  title: String,
+  bots: List<AiBot>,
+  onDismiss: () -> Unit,
+  onSelect: (String) -> Unit
+) {
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text(title) },
+    text = {
+      if (bots.isEmpty()) {
+        Text("当前群聊没有可用机器人。")
+      } else {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          bots.forEach { bot ->
+            Surface(
+              color = MaterialTheme.colorScheme.surfaceVariant,
+              shape = RoundedCornerShape(8.dp),
+              modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSelect(bot.id) }
+            ) {
+              Column(modifier = Modifier.padding(10.dp)) {
+                Text(bot.name, fontWeight = FontWeight.SemiBold)
+                Text(bot.model, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              }
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {},
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("取消")
+      }
+    }
+  )
+}
+
+@Composable
+private fun BotManagerPage(
+  providers: List<ChatProviderConfig>,
+  bots: List<AiBot>,
+  onDismiss: () -> Unit,
+  onCreate: (String, String, String, String) -> Unit,
+  onUpdate: (String, String, String, String, String) -> Unit,
+  onToggleEnabled: (String, Boolean) -> Unit,
+  onDelete: (String) -> Unit
+) {
+  var editingBot by remember { mutableStateOf<AiBot?>(null) }
+  var creating by remember { mutableStateOf(false) }
+  Surface(
+    color = MaterialTheme.colorScheme.background,
+    modifier = Modifier
+      .fillMaxSize()
+      .windowInsetsPadding(WindowInsets.safeDrawing)
+  ) {
+    Column(modifier = Modifier.fillMaxSize()) {
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        IconButton(onClick = onDismiss) {
+          Icon(Icons.Outlined.Close, contentDescription = "关闭机器人管理")
+        }
+        Column(modifier = Modifier.weight(1f)) {
+          Text("AI 机器人", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+          Text("常驻群聊成员，绑定固定 Provider/model", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Button(onClick = { creating = true }, enabled = providers.isNotEmpty()) {
+          Icon(Icons.Outlined.Add, contentDescription = null)
+          Spacer(Modifier.width(6.dp))
+          Text("新建")
+        }
+      }
+      LazyColumn(
+        modifier = Modifier
+          .fillMaxSize()
+          .padding(horizontal = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+      ) {
+        if (bots.isEmpty()) {
+          item {
+            Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+              Text("还没有机器人。先从已有 API 配置创建一个机器人，再把它加入群聊。", modifier = Modifier.padding(14.dp))
+            }
+          }
+        }
+        items(bots, key = { it.id }) { bot ->
+          val providerName = providers.firstOrNull { it.id == bot.providerId }?.displayName ?: bot.providerId
+          Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                  Text(bot.name, fontWeight = FontWeight.SemiBold)
+                  Text("$providerName · ${bot.model}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = bot.enabled, onCheckedChange = { onToggleEnabled(bot.id, it) })
+              }
+              if (bot.systemPrompt.isNotBlank()) {
+                Text(bot.systemPrompt, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+              }
+              Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { editingBot = bot }) {
+                  Icon(Icons.Outlined.Edit, contentDescription = null)
+                  Spacer(Modifier.width(4.dp))
+                  Text("编辑")
+                }
+                TextButton(onClick = { onDelete(bot.id) }) {
+                  Icon(Icons.Outlined.Delete, contentDescription = null)
+                  Spacer(Modifier.width(4.dp))
+                  Text("删除")
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  if (creating) {
+    BotEditorDialog(
+      title = "新建机器人",
+      providers = providers,
+      bot = null,
+      onDismiss = { creating = false },
+      onSave = { name, providerId, model, prompt ->
+        onCreate(name, providerId, model, prompt)
+        creating = false
+      }
+    )
+  }
+  editingBot?.let { bot ->
+    BotEditorDialog(
+      title = "编辑机器人",
+      providers = providers,
+      bot = bot,
+      onDismiss = { editingBot = null },
+      onSave = { name, providerId, model, prompt ->
+        onUpdate(bot.id, name, providerId, model, prompt)
+        editingBot = null
+      }
+    )
+  }
+}
+
+@Composable
+private fun BotEditorDialog(
+  title: String,
+  providers: List<ChatProviderConfig>,
+  bot: AiBot?,
+  onDismiss: () -> Unit,
+  onSave: (String, String, String, String) -> Unit
+) {
+  val initialProvider = providers.firstOrNull { it.id == bot?.providerId } ?: providers.firstOrNull()
+  var name by remember(bot?.id) { mutableStateOf(bot?.name ?: "") }
+  var providerId by remember(bot?.id, providers) { mutableStateOf(initialProvider?.id.orEmpty()) }
+  var model by remember(bot?.id, providers) { mutableStateOf(bot?.model ?: initialProvider?.defaultModel.orEmpty()) }
+  var prompt by remember(bot?.id) { mutableStateOf(bot?.systemPrompt ?: "") }
+  val selectedProvider = providers.firstOrNull { it.id == providerId }
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text(title) },
+    text = {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .heightIn(max = 520.dp)
+          .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+      ) {
+        OutlinedTextField(
+          value = name,
+          onValueChange = { name = it },
+          label = { Text("机器人名称") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth()
+        )
+        Text("绑定 Provider", fontWeight = FontWeight.SemiBold)
+        providers.forEach { provider ->
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable {
+                providerId = provider.id
+                if (model.isBlank() || model == selectedProvider?.defaultModel) {
+                  model = provider.defaultModel
+                }
+              }
+              .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            RadioButton(selected = provider.id == providerId, onClick = {
+              providerId = provider.id
+              if (model.isBlank() || model == selectedProvider?.defaultModel) {
+                model = provider.defaultModel
+              }
+            })
+            Column(modifier = Modifier.weight(1f)) {
+              Text(provider.displayName)
+              Text(provider.defaultModel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+          }
+        }
+        OutlinedTextField(
+          value = model,
+          onValueChange = { model = it },
+          label = { Text("模型名") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+          value = prompt,
+          onValueChange = { prompt = it },
+          label = { Text("角色提示词") },
+          minLines = 4,
+          maxLines = 8,
+          modifier = Modifier.fillMaxWidth()
+        )
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = { onSave(name.trim(), providerId, model.trim(), prompt.trim()) },
+        enabled = name.isNotBlank() && providerId.isNotBlank() && model.isNotBlank()
+      ) {
+        Text("保存")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("取消")
+      }
+    }
+  )
+}
+
+@Composable
+private fun NewGroupChatDialog(
+  bots: List<AiBot>,
+  title: String = "新建 AI 群聊",
+  confirmText: String = "创建",
+  initialTitle: String = "",
+  initialTopic: String = "",
+  initialSelectedBotIds: Set<String> = emptySet(),
+  onDismiss: () -> Unit,
+  onCreate: (String, String, List<String>) -> Unit
+) {
+  var groupTitle by remember(initialTitle) { mutableStateOf(initialTitle) }
+  var topic by remember(initialTopic) { mutableStateOf(initialTopic) }
+  var selectedBotIds by remember(initialSelectedBotIds) { mutableStateOf(initialSelectedBotIds) }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text(title) },
+    text = {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .heightIn(max = 520.dp)
+          .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+      ) {
+        OutlinedTextField(
+          value = groupTitle,
+          onValueChange = { groupTitle = it },
+          label = { Text("群聊标题") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+          value = topic,
+          onValueChange = { topic = it },
+          label = { Text("讨论主题") },
+          minLines = 3,
+          maxLines = 6,
+          modifier = Modifier.fillMaxWidth()
+        )
+        Text("选择机器人", fontWeight = FontWeight.SemiBold)
+        if (bots.isEmpty()) {
+          Text("还没有启用的机器人，请先到设置里创建。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+          bots.forEach { bot ->
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                  selectedBotIds = if (bot.id in selectedBotIds) selectedBotIds - bot.id else selectedBotIds + bot.id
+                }
+                .padding(vertical = 4.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Checkbox(
+                checked = bot.id in selectedBotIds,
+                onCheckedChange = { checked ->
+                  selectedBotIds = if (checked) selectedBotIds + bot.id else selectedBotIds - bot.id
+                }
+              )
+              Column(modifier = Modifier.weight(1f)) {
+                Text(bot.name)
+                Text(bot.model, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              }
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = {
+          val finalTitle = groupTitle.trim().ifBlank { topic.trim().lineSequence().firstOrNull()?.take(24) ?: "AI 群聊" }
+          onCreate(finalTitle, topic.trim(), selectedBotIds.toList())
+        },
+        enabled = selectedBotIds.isNotEmpty()
+      ) {
+        Text(confirmText)
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("取消")
+      }
+    }
+  )
+}
+
+private fun shareText(context: Context, text: String, title: String) {
+  if (text.isBlank()) return
+  val intent = Intent(Intent.ACTION_SEND).apply {
+    type = "text/plain"
+    putExtra(Intent.EXTRA_TEXT, text)
+  }
+  context.startActivity(Intent.createChooser(intent, title))
+}
+
+@Composable
 private fun AppSettingsPage(
   state: ChatUiState,
   onDismiss: () -> Unit,
@@ -1029,7 +2599,8 @@ private fun AppSettingsPage(
   onDebugResponseLogging: (Boolean) -> Unit,
   onWebSearchMode: (WebSearchMode) -> Unit,
   onExportProviderConfigs: () -> Unit,
-  onImportProviderConfigs: (String) -> Unit
+  onImportProviderConfigs: (String) -> Unit,
+  onOpenBotManager: () -> Unit
 ) {
   var importDialogOpen by remember { mutableStateOf(false) }
   Surface(
@@ -1132,6 +2703,11 @@ private fun AppSettingsPage(
             Icon(Icons.Outlined.Settings, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text("管理 API 配置")
+          }
+          Button(onClick = onOpenBotManager) {
+            Icon(Icons.Outlined.Groups, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("管理 AI 机器人")
           }
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = onExportProviderConfigs) {
@@ -1732,6 +3308,7 @@ private fun MessageList(
   onEditResend: (String) -> Unit,
   onShareMessageText: (String) -> Unit,
   onShareMessageImage: (String) -> Unit,
+  onFavoriteMessage: (String) -> Unit,
   onForkMessage: (String) -> Unit,
   onOpenAttachment: (ChatAttachment) -> Unit,
   modifier: Modifier = Modifier
@@ -1802,7 +3379,8 @@ private fun MessageList(
             canSelectRangeTo = selectionMode && selectedMessageIds.isNotEmpty() && message.id !in selectedMessageIds,
             onToggleSelected = { onToggleMessageSelected(message.id) },
             onSelectRangeTo = { onSelectRangeTo(message.id) },
-            onCopy = { copyToClipboard(context, message.content) }
+            onCopy = { copyToClipboard(context, message.content) },
+            onFavorite = { onFavoriteMessage(message.id) }
           )
         } else {
           MessageBubble(
@@ -1816,6 +3394,7 @@ private fun MessageList(
             onCopyRawLog = { message.rawResponseLog?.let { copyToClipboard(context, it) } },
             onShareText = { onShareMessageText(message.id) },
             onShareImage = { onShareMessageImage(message.id) },
+            onFavorite = { onFavoriteMessage(message.id) },
             onEditResend = { onEditResend(message.content) },
             onOpenAttachment = onOpenAttachment,
             onFork = { onForkMessage(message.id) }
@@ -2075,7 +3654,8 @@ private fun ToolCallItem(
   canSelectRangeTo: Boolean,
   onToggleSelected: () -> Unit,
   onSelectRangeTo: () -> Unit,
-  onCopy: () -> Unit
+  onCopy: () -> Unit,
+  onFavorite: () -> Unit
 ) {
   val details = remember(message.content) { parseToolCallDetails(message.content) }
   var expanded by remember(message.id) { mutableStateOf(false) }
@@ -2160,6 +3740,9 @@ private fun ToolCallItem(
             IconButton(onClick = onCopy, modifier = Modifier.size(32.dp)) {
               Icon(Icons.Outlined.ContentCopy, contentDescription = "复制工具调用")
             }
+            IconButton(onClick = onFavorite, modifier = Modifier.size(32.dp)) {
+              Icon(Icons.Outlined.Bookmark, contentDescription = "收藏工具调用")
+            }
           }
         }
       }
@@ -2226,6 +3809,7 @@ private fun MessageBubble(
   onCopyRawLog: () -> Unit,
   onShareText: () -> Unit,
   onShareImage: () -> Unit,
+  onFavorite: () -> Unit,
   onEditResend: () -> Unit,
   onOpenAttachment: (ChatAttachment) -> Unit,
   onFork: () -> Unit
@@ -2336,6 +3920,12 @@ private fun MessageBubble(
             modifier = Modifier.size(32.dp)
           ) {
             Icon(Icons.AutoMirrored.Outlined.CallSplit, contentDescription = "用其他模型分叉")
+          }
+          IconButton(
+            onClick = onFavorite,
+            modifier = Modifier.size(32.dp)
+          ) {
+            Icon(Icons.Outlined.Bookmark, contentDescription = "收藏此消息")
           }
           if (!isUser) {
             if (!message.rawResponseLog.isNullOrBlank()) {
@@ -2905,7 +4495,8 @@ private fun Composer(
   onRemoveAttachment: (String) -> Unit,
   onOpenAttachment: (ChatAttachment) -> Unit,
   isGenerating: Boolean,
-  onStopGenerating: () -> Unit
+  onStopGenerating: () -> Unit,
+  showRetry: Boolean = true
 ) {
   Column(
     modifier = Modifier
@@ -2967,7 +4558,7 @@ private fun Composer(
         placeholder = { Text("给当前模型发送消息") }
       )
       Spacer(Modifier.width(8.dp))
-      if (!isGenerating) {
+      if (!isGenerating && showRetry) {
         IconButton(onClick = onRetry) {
           Icon(Icons.Outlined.Refresh, contentDescription = "重试上一条", tint = MaterialTheme.colorScheme.primary)
         }
