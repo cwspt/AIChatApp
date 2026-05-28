@@ -3,16 +3,29 @@ package com.personal.aichat.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import com.personal.aichat.data.ChatPreferencesRepository
+import android.net.Uri
+import android.provider.OpenableColumns
+import com.personal.aichat.AppForegroundTracker
+import com.personal.aichat.ChatGenerationService
 import com.personal.aichat.data.ChatRepository
+import com.personal.aichat.data.ChatSelectionStore
+import com.personal.aichat.domain.ChatAttachment
+import com.personal.aichat.domain.AppThemeMode
+import com.personal.aichat.domain.AppThemePalette
 import com.personal.aichat.domain.ChatConversation
 import com.personal.aichat.domain.ChatConversationGroup
 import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ProviderType
+import com.personal.aichat.domain.WebSearchMode
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
@@ -21,13 +34,16 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
+import java.util.UUID
 
 class ChatViewModel(
   private val repository: ChatRepository,
-  private val preferencesRepository: ChatPreferencesRepository
+  private val preferencesRepository: ChatSelectionStore,
+  private val appContext: Context? = null
 ) : ViewModel() {
   private val localState = MutableStateFlow(ChatUiState())
-  private var sendJob: Job? = null
+  private val sendJobsByConversationId = mutableMapOf<String, Job>()
   private var pendingDeleteConversationId: String? = null
 
   private val conversationLists = combine(
@@ -38,7 +54,7 @@ class ChatViewModel(
   }
 
   @OptIn(ExperimentalCoroutinesApi::class)
-  val uiState = combine(
+  private val baseUiState = combine(
     repository.providers,
     conversationLists,
     preferencesRepository.selectedConversationId,
@@ -58,6 +74,11 @@ class ChatViewModel(
       selectedConversationId = effectiveConversationId,
       selectedProviderId = effectiveProviderId
     )
+  }
+
+  @OptIn(ExperimentalCoroutinesApi::class)
+  val uiState = baseUiState.combine(preferencesRepository.appSettings) { state, appSettings ->
+    state.copy(appSettings = appSettings)
   }.flatMapLatest { state ->
     val conversationId = state.selectedConversationId
     if (conversationId == null) {
@@ -78,12 +99,34 @@ class ChatViewModel(
     }
   }
 
-  fun updateInput(value: String) {
+  fun updateInput(value: TextFieldValue) {
     localState.update { it.copy(input = value) }
   }
 
+  fun addAttachments(uris: List<Uri>) {
+    val context = appContext ?: return
+    if (uiState.value.selectedProvider?.supportsAttachments != true) return
+    viewModelScope.launch {
+      val imported = uris.mapNotNull { uri -> importAttachment(context, uri) }
+      if (imported.isNotEmpty()) {
+        localState.update { it.copy(pendingAttachments = it.pendingAttachments + imported) }
+      }
+    }
+  }
+
+  fun removePendingAttachment(id: String) {
+    localState.update { state ->
+      state.pendingAttachments.firstOrNull { it.id == id }?.let { attachment ->
+        runCatching { File(attachment.localPath).delete() }
+      }
+      state.copy(pendingAttachments = state.pendingAttachments.filterNot { it.id == id })
+    }
+  }
+
   fun editAndResend(messageText: String) {
-    localState.update { it.copy(input = messageText) }
+    localState.update {
+      it.copy(input = TextFieldValue(messageText, selection = TextRange(messageText.length)))
+    }
   }
 
   fun toggleMessageSelectionMode(enabled: Boolean) {
@@ -130,19 +173,98 @@ class ChatViewModel(
   fun send() {
     val state = uiState.value
     val conversationId = state.selectedConversationId ?: return
-    val text = state.input
-    localState.update { it.copy(input = "") }
-    sendJob = viewModelScope.launch {
-      repository.sendMessage(conversationId, text)
+    val text = state.input.text
+    val attachments = if (state.selectedProvider?.supportsAttachments == true) state.pendingAttachments else emptyList()
+    if ((text.isBlank() && attachments.isEmpty()) || sendJobsByConversationId[conversationId]?.isActive == true) return
+    localState.update { it.copy(input = TextFieldValue(""), pendingAttachments = emptyList()) }
+    launchStreamingJob(conversationId) {
+      repository.sendMessage(conversationId, text, attachments)
     }
   }
 
   fun retryLast() {
     val conversationId = uiState.value.selectedConversationId ?: return
-    sendJob = viewModelScope.launch {
+    if (sendJobsByConversationId[conversationId]?.isActive == true) return
+    launchStreamingJob(conversationId) {
       repository.retryLast(conversationId)
     }
   }
+
+  fun stopGenerating() {
+    val conversationId = uiState.value.selectedConversationId ?: return
+    sendJobsByConversationId[conversationId]?.cancel()
+  }
+
+  private fun importAttachment(context: Context, uri: Uri): ChatAttachment? {
+    return runCatching {
+      val resolver = context.contentResolver
+      val info = resolver.query(uri, null, null, null, null)?.use { cursor ->
+        val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+        if (cursor.moveToFirst()) {
+          AttachmentImportInfo(
+            displayName = nameIndex.takeIf { it >= 0 }?.let { cursor.getString(it) },
+            sizeBytes = sizeIndex.takeIf { it >= 0 }?.let { cursor.getLong(it) }
+          )
+        } else {
+          AttachmentImportInfo(null, null)
+        }
+      } ?: AttachmentImportInfo(null, null)
+      val mimeType = resolver.getType(uri) ?: "application/octet-stream"
+      val id = "att_${UUID.randomUUID().toString().replace("-", "")}"
+      val displayName = info.displayName?.takeIf { it.isNotBlank() } ?: "$id.${mimeType.substringAfter('/', "bin")}"
+      val dir = File(context.filesDir, "chat_attachments").apply { mkdirs() }
+      val safeName = displayName.replace(Regex("""[\\/:*?"<>|]"""), "_")
+      val target = File(dir, "${id}_$safeName")
+      resolver.openInputStream(uri)?.use { input ->
+        target.outputStream().use { output -> input.copyTo(output) }
+      } ?: return@runCatching null
+      ChatAttachment(
+        id = id,
+        displayName = displayName,
+        mimeType = mimeType,
+        sizeBytes = info.sizeBytes ?: target.length(),
+        localPath = target.absolutePath
+      )
+    }.getOrNull()
+  }
+
+  private fun launchStreamingJob(conversationId: String, block: suspend () -> Unit) {
+    val wasIdle = sendJobsByConversationId.isEmpty()
+    if (wasIdle) {
+      appContext?.let { context ->
+        runCatching { ChatGenerationService.start(context) }
+      }
+    }
+    localState.update { it.copy(streamingConversationIds = it.streamingConversationIds + conversationId) }
+    val job = viewModelScope.launch {
+      var completed = false
+      try {
+        block()
+        completed = true
+      } catch (error: CancellationException) {
+        throw error
+      } finally {
+        sendJobsByConversationId.remove(conversationId)
+        localState.update { it.copy(streamingConversationIds = it.streamingConversationIds - conversationId) }
+        if (sendJobsByConversationId.isEmpty()) {
+          appContext?.let { context ->
+            if (completed && !AppForegroundTracker.isForeground) {
+              runCatching { ChatGenerationService.complete(context) }
+            } else {
+              runCatching { ChatGenerationService.stop(context) }
+            }
+          }
+        }
+      }
+    }
+    sendJobsByConversationId[conversationId] = job
+  }
+
+  private data class AttachmentImportInfo(
+    val displayName: String?,
+    val sizeBytes: Long?
+  )
 
   fun selectConversation(id: String) {
     viewModelScope.launch {
@@ -307,6 +429,23 @@ class ChatViewModel(
     }
   }
 
+  fun openForkProviderPicker(messageId: String) {
+    localState.update { it.copy(forkTargetMessageId = messageId) }
+  }
+
+  fun closeForkProviderPicker() {
+    localState.update { it.copy(forkTargetMessageId = null) }
+  }
+
+  fun forkConversationAtMessage(providerId: String) {
+    val conversationId = uiState.value.selectedConversationId ?: return
+    val messageId = uiState.value.forkTargetMessageId ?: return
+    localState.update { it.copy(forkTargetMessageId = null) }
+    viewModelScope.launch {
+      repository.forkConversationAtMessage(conversationId, messageId, providerId)
+    }
+  }
+
   private suspend fun shareTextInternal(conversationId: String, selectedIds: Set<String>, context: Context) {
     val shareText = if (selectedIds.isEmpty()) {
       repository.conversationShareText(conversationId)
@@ -327,6 +466,12 @@ class ChatViewModel(
     }
   }
 
+  fun renameConversationGroup(oldGroupName: String, newGroupName: String) {
+    viewModelScope.launch {
+      repository.renameConversationGroup(oldGroupName, newGroupName)
+    }
+  }
+
   fun selectProvider(id: String) {
     viewModelScope.launch {
       repository.switchConversationProvider(uiState.value.selectedConversationId, id)
@@ -339,6 +484,89 @@ class ChatViewModel(
       val conversation = repository.createConversation(provider.id, provider.defaultModel)
       preferencesRepository.setSelectedProvider(provider.id)
       preferencesRepository.setSelectedConversation(conversation.id)
+    }
+  }
+
+  fun openNewConversationPicker() {
+    localState.update { it.copy(newConversationPickerOpen = true) }
+  }
+
+  fun closeNewConversationPicker() {
+    localState.update { it.copy(newConversationPickerOpen = false) }
+  }
+
+  fun createConversationWithProvider(providerId: String) {
+    val provider = uiState.value.providers.firstOrNull { it.id == providerId } ?: return
+    localState.update { it.copy(newConversationPickerOpen = false) }
+    viewModelScope.launch {
+      val conversation = repository.createConversation(provider.id, provider.defaultModel)
+      preferencesRepository.setSelectedProvider(provider.id)
+      preferencesRepository.setSelectedConversation(conversation.id)
+    }
+  }
+
+  fun openSettingsPage() {
+    localState.update {
+      it.copy(
+        settingsPageOpen = true,
+        providerManagerOpen = false,
+        settingsOpen = false,
+        editingProvider = null,
+        editingProviderHasApiKey = false
+      )
+    }
+  }
+
+  fun closeSettingsPage() {
+    localState.update { it.copy(settingsPageOpen = false) }
+  }
+
+  fun setThemePalette(palette: AppThemePalette) {
+    viewModelScope.launch {
+      preferencesRepository.setThemePalette(palette)
+    }
+  }
+
+  fun setThemeMode(mode: AppThemeMode) {
+    viewModelScope.launch {
+      preferencesRepository.setThemeMode(mode)
+    }
+  }
+
+  fun setFontScale(scale: Float) {
+    viewModelScope.launch {
+      preferencesRepository.setFontScale(scale)
+    }
+  }
+
+  fun setDebugResponseLogging(enabled: Boolean) {
+    viewModelScope.launch {
+      preferencesRepository.setDebugResponseLogging(enabled)
+    }
+  }
+
+  fun setWebSearchMode(mode: WebSearchMode) {
+    viewModelScope.launch {
+      preferencesRepository.setWebSearchMode(mode)
+    }
+  }
+
+  fun exportProviderConfigsText(context: Context) {
+    viewModelScope.launch {
+      val text = repository.exportProvidersText(includeApiKeys = true)
+      val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+      clipboard.setPrimaryClip(ClipData.newPlainText("AIChat API 配置", text))
+      val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/json"
+        putExtra(Intent.EXTRA_TEXT, text)
+      }
+      context.startActivity(Intent.createChooser(sendIntent, "导出 API 配置文本"))
+    }
+  }
+
+  fun importProviderConfigsText(text: String) {
+    viewModelScope.launch {
+      repository.importProvidersText(text)
     }
   }
 
@@ -409,11 +637,12 @@ class ChatViewModel(
   companion object {
     fun factory(
       repository: ChatRepository,
-      preferencesRepository: ChatPreferencesRepository
+      preferencesRepository: ChatSelectionStore,
+      appContext: Context? = null
     ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
       @Suppress("UNCHECKED_CAST")
       override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return ChatViewModel(repository, preferencesRepository) as T
+        return ChatViewModel(repository, preferencesRepository, appContext) as T
       }
     }
   }

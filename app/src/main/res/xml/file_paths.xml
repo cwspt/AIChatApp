@@ -3,4 +3,10 @@
   <cache-path
       name="shared_exports"
       path="shared_exports/" />
+  <cache-path
+      name="captured_images"
+      path="captured_images/" />
+  <files-path
+      name="chat_attachments"
+      path="chat_attachments/" />
 </paths>

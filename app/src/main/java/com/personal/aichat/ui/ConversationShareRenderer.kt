@@ -150,6 +150,7 @@ object ConversationShareRenderer {
         MessageRole.USER -> "我"
         MessageRole.ASSISTANT -> "AI"
         MessageRole.SYSTEM -> "系统"
+        MessageRole.TOOL -> "工具"
       }
       canvas.drawText("$roleName · ${item.time}", padding, y + 26, rolePaint)
       y += 38

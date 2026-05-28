@@ -1,6 +1,7 @@
 package com.personal.aichat.data.remote
 
 import com.google.gson.Gson
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.personal.aichat.domain.ChatCompletionOptions
@@ -9,6 +10,7 @@ import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ChatStreamEvent
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.ProviderAdapter
+import com.personal.aichat.domain.WebSearchMode
 import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -19,8 +21,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.conscrypt.Conscrypt
+import java.io.File
 import java.io.IOException
 import java.security.Security
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 private val JsonMediaType = "application/json; charset=utf-8".toMediaType()
@@ -36,18 +40,43 @@ class OpenAiResponsesAdapter(
     options: ChatCompletionOptions
   ): Flow<ChatStreamEvent> = flow {
     emit(ChatStreamEvent.Started)
+    val webSearchEnabled = options.webSearchMode != WebSearchMode.OFF
+    var responseWebSearchId: String? = null
+    val responseCitations = linkedMapOf<String, String>()
+    val responseSearchQueries = linkedSetOf<String>()
+    val responseText = StringBuilder()
+    var lastEmittedCitationOutput: String? = null
+    var emittedWebSearchStart = false
+
+    suspend fun emitResponseCitations() {
+      val output = formatWebSearchOutput(responseSearchQueries, responseCitations)
+      if (output.isBlank()) return
+      if (output == lastEmittedCitationOutput) return
+      lastEmittedCitationOutput = output
+      emittedWebSearchStart = true
+      emit(
+        ChatStreamEvent.ToolCall(
+          id = responseWebSearchId ?: "openai-web-search",
+          name = "web_search",
+          input = "OpenAI Responses web search",
+          output = output
+        )
+      )
+    }
+
     val requestBody = mutableMapOf<String, Any>(
         "model" to options.model,
         "stream" to options.stream,
-        "input" to messages.map { message ->
-          mapOf(
-            "role" to message.role.apiRole,
-            "content" to message.content
-          )
-        }
+        "input" to messages.map(::toOpenAiResponseInputMessage)
       )
     config.reasoningEffort.apiValue?.let { effort ->
       requestBody["reasoning"] = mapOf("effort" to effort)
+    }
+    if (options.webSearchMode != WebSearchMode.OFF) {
+      requestBody["tools"] = listOf(mapOf("type" to "web_search"))
+      if (options.webSearchMode == WebSearchMode.REQUIRED) {
+        requestBody["tool_choice"] = mapOf("type" to "web_search")
+      }
     }
     val body = gson.toJson(requestBody)
     val request = Request.Builder()
@@ -60,14 +89,90 @@ class OpenAiResponsesAdapter(
       request = request,
       client = client,
       onFrame = { frame ->
+        if (options.captureRawResponseLog) emit(ChatStreamEvent.RawFrame(frame.event, frame.data))
         when (frame.event) {
-          "response.output_text.delta" -> extractString(frame.data, "delta")
-          "response.completed" -> null
+          "response.output_text.delta" -> {
+            extractString(frame.data, "delta")?.let { delta ->
+              responseText.append(delta)
+              if (webSearchEnabled && emittedWebSearchStart) {
+                extractUrlCitationsFromText(responseText.toString()).forEach { citation ->
+                  responseCitations[citation.url] = citation.title
+                }
+                emitResponseCitations()
+              }
+              emit(ChatStreamEvent.TextDelta(delta))
+            }
+          }
+          "response.completed" -> {
+            extractOpenAiUrlCitations(frame.data).forEach { citation ->
+              responseCitations[citation.url] = citation.title
+            }
+            if (webSearchEnabled && emittedWebSearchStart) {
+              extractUrlCitationsFromText(responseText.toString()).forEach { citation ->
+                responseCitations[citation.url] = citation.title
+              }
+            }
+            emitResponseCitations()
+            if (webSearchEnabled && emittedWebSearchStart && responseCitations.isEmpty() && lastEmittedCitationOutput == null) {
+              emit(
+                ChatStreamEvent.ToolCall(
+                  id = responseWebSearchId ?: "openai-web-search",
+                  name = "web_search",
+                  input = "OpenAI Responses web search",
+                  output = "未返回可展示网址。可在设置中开启调试日志后复制原始响应，用于补充解析规则。"
+                )
+              )
+            }
+            extractTokenUsage(frame.data)?.let {
+              emit(
+                ChatStreamEvent.Usage(
+                  promptTokens = it.promptTokens,
+                  completionTokens = it.completionTokens,
+                  totalTokens = it.totalTokens,
+                  raw = it.raw
+                )
+              )
+            }
+          }
           "error" -> throw IOException(extractString(frame.data, "message") ?: "Provider returned an error")
-          else -> extractString(frame.data, "delta")
+          else -> {
+            extractOpenAiWebSearchUpdate(frame.event, frame.data)?.let { update ->
+              responseWebSearchId = "openai-web-search"
+              responseSearchQueries += update.queries
+              update.urls.forEach { citation ->
+                responseCitations[citation.url] = citation.title
+              }
+              if (update.queries.isNotEmpty() || update.urls.isNotEmpty()) {
+                emitResponseCitations()
+              } else if (!emittedWebSearchStart) {
+                emittedWebSearchStart = true
+                emit(
+                  ChatStreamEvent.ToolCall(
+                    id = responseWebSearchId,
+                    name = "web_search",
+                    input = "OpenAI Responses web search",
+                    output = null
+                  )
+                )
+              }
+            }
+            extractOpenAiUrlCitations(frame.data).forEach { citation ->
+              responseCitations[citation.url] = citation.title
+            }
+            emitResponseCitations()
+            extractString(frame.data, "delta")?.let { delta ->
+              responseText.append(delta)
+              if (webSearchEnabled && emittedWebSearchStart) {
+                extractUrlCitationsFromText(responseText.toString()).forEach { citation ->
+                  responseCitations[citation.url] = citation.title
+                }
+                emitResponseCitations()
+              }
+              emit(ChatStreamEvent.TextDelta(delta))
+            }
+          }
         }
-      },
-      onText = { emit(ChatStreamEvent.TextDelta(it)) }
+      }
     )
     emit(ChatStreamEvent.Completed)
   }.flowOn(Dispatchers.IO)
@@ -75,7 +180,8 @@ class OpenAiResponsesAdapter(
 
 class OpenAiCompatibleChatAdapter(
   private val client: OkHttpClient = defaultAiHttpClient(),
-  private val gson: Gson = Gson()
+  private val gson: Gson = Gson(),
+  private val webSearchClient: WebSearchClient = DuckDuckGoWebSearchClient()
 ) : ProviderAdapter {
   override fun streamChat(
     config: ChatProviderConfig,
@@ -84,15 +190,21 @@ class OpenAiCompatibleChatAdapter(
     options: ChatCompletionOptions
   ): Flow<ChatStreamEvent> = flow {
     emit(ChatStreamEvent.Started)
-    val body = gson.toJson(
-      mapOf(
+    if (options.webSearchMode != WebSearchMode.OFF) {
+      streamChatWithTools(config, apiKey, messages, options) { emit(it) }
+      return@flow
+    }
+    val requestBody = mutableMapOf<String, Any>(
         "model" to options.model,
         "stream" to options.stream,
         "messages" to messages.map { message ->
-          mapOf("role" to message.role.apiRole, "content" to message.content)
+          mapOf("role" to message.role.apiRole, "content" to message.toCompatibleContent())
         }
       )
-    )
+    if (options.stream) {
+      requestBody["stream_options"] = mapOf("include_usage" to true)
+    }
+    val body = gson.toJson(requestBody)
     val request = Request.Builder()
       .url(config.baseUrl.trimEnd('/') + "/chat/completions")
       .headers(config.headersWithAuth(apiKey))
@@ -103,12 +215,155 @@ class OpenAiCompatibleChatAdapter(
       request = request,
       client = client,
       onFrame = { frame ->
-        if (frame.data == "[DONE]") null else extractChatDelta(frame.data)
-      },
-      onText = { emit(ChatStreamEvent.TextDelta(it)) }
+        if (options.captureRawResponseLog) emit(ChatStreamEvent.RawFrame(frame.event, frame.data))
+        if (frame.data != "[DONE]") {
+          extractChatDelta(frame.data)?.let { emit(ChatStreamEvent.TextDelta(it)) }
+          extractTokenUsage(frame.data)?.let {
+            emit(
+              ChatStreamEvent.Usage(
+                promptTokens = it.promptTokens,
+                completionTokens = it.completionTokens,
+                totalTokens = it.totalTokens,
+                raw = it.raw
+              )
+            )
+          }
+        }
+      }
     )
     emit(ChatStreamEvent.Completed)
   }.flowOn(Dispatchers.IO)
+
+  private suspend fun streamChatWithTools(
+    config: ChatProviderConfig,
+    apiKey: String?,
+    messages: List<ChatMessage>,
+    options: ChatCompletionOptions,
+    emitEvent: suspend (ChatStreamEvent) -> Unit
+  ) {
+    val toolMessages = messages.map { message ->
+      mutableMapOf<String, Any>(
+        "role" to message.role.apiRole,
+        "content" to message.toCompatibleContent()
+      )
+    }.toMutableList()
+    val decision = requestToolDecision(config, apiKey, toolMessages, options)
+    if (decision.toolCalls.isEmpty()) {
+      if (!decision.content.isNullOrBlank()) {
+        emitEvent(ChatStreamEvent.TextDelta(decision.content))
+        decision.usage?.let {
+          emitEvent(
+            ChatStreamEvent.Usage(
+              promptTokens = it.promptTokens,
+              completionTokens = it.completionTokens,
+              totalTokens = it.totalTokens,
+              raw = it.raw
+            )
+          )
+        }
+        emitEvent(ChatStreamEvent.Completed)
+      } else {
+        streamFinalChat(config, apiKey, toolMessages, options, emitEvent)
+      }
+      return
+    }
+    toolMessages += mutableMapOf(
+      "role" to "assistant",
+      "content" to "",
+      "tool_calls" to decision.toolCalls.map { it.toRequestMap() }
+    )
+    decision.toolCalls.forEach { call ->
+      emitEvent(ChatStreamEvent.ToolCall(id = call.id, name = call.name, input = call.arguments))
+      val query = parseToolQuery(call.arguments)
+      val output = if (query.isNullOrBlank()) {
+        "工具调用缺少 query 参数。"
+      } else {
+        webSearchClient.search(query).toToolOutput()
+      }
+      emitEvent(ChatStreamEvent.ToolCall(id = call.id, name = call.name, input = call.arguments, output = output))
+      toolMessages += mutableMapOf(
+        "role" to "tool",
+        "tool_call_id" to call.id,
+        "content" to output
+      )
+    }
+    streamFinalChat(config, apiKey, toolMessages, options, emitEvent)
+  }
+
+  private fun requestToolDecision(
+    config: ChatProviderConfig,
+    apiKey: String?,
+    messages: List<Map<String, Any>>,
+    options: ChatCompletionOptions
+  ): CompatibleToolDecision {
+    val requestBody = mutableMapOf<String, Any>(
+      "model" to options.model,
+      "stream" to false,
+      "messages" to messages,
+      "tools" to listOf(webSearchToolDefinition())
+    )
+    requestBody["tool_choice"] = if (options.webSearchMode == WebSearchMode.REQUIRED) {
+      mapOf("type" to "function", "function" to mapOf("name" to "web_search"))
+    } else {
+      "auto"
+    }
+    val request = Request.Builder()
+      .url(config.baseUrl.trimEnd('/') + "/chat/completions")
+      .headers(config.headersWithAuth(apiKey))
+      .post(gson.toJson(requestBody).toRequestBody(JsonMediaType))
+      .build()
+
+    client.newCall(request).execute().use { response ->
+      if (!response.isSuccessful) {
+        throw IOException("Provider request failed with HTTP ${response.code} from ${request.url.host}: ${parseProviderErrorMessage(response.body?.string().orEmpty()).orEmpty()}")
+      }
+      return extractCompatibleToolDecision(response.body?.string().orEmpty())
+    }
+  }
+
+  private suspend fun streamFinalChat(
+    config: ChatProviderConfig,
+    apiKey: String?,
+    messages: List<Map<String, Any>>,
+    options: ChatCompletionOptions,
+    emitEvent: suspend (ChatStreamEvent) -> Unit
+  ) {
+    val requestBody = mutableMapOf<String, Any>(
+      "model" to options.model,
+      "stream" to options.stream,
+      "messages" to messages
+    )
+    if (options.stream) {
+      requestBody["stream_options"] = mapOf("include_usage" to true)
+    }
+    val request = Request.Builder()
+      .url(config.baseUrl.trimEnd('/') + "/chat/completions")
+      .headers(config.headersWithAuth(apiKey))
+      .post(gson.toJson(requestBody).toRequestBody(JsonMediaType))
+      .build()
+
+    streamJsonLines(
+      request = request,
+      client = client,
+      onFrame = { frame ->
+        if (options.captureRawResponseLog) emitEvent(ChatStreamEvent.RawFrame(frame.event, frame.data))
+        if (frame.data != "[DONE]") {
+          extractChatDelta(frame.data)?.let { emitEvent(ChatStreamEvent.TextDelta(it)) }
+          extractTokenUsage(frame.data)?.let {
+            emitEvent(
+              ChatStreamEvent.Usage(
+                promptTokens = it.promptTokens,
+                completionTokens = it.completionTokens,
+                totalTokens = it.totalTokens,
+                raw = it.raw
+              )
+            )
+          }
+        }
+      }
+    )
+    emitEvent(ChatStreamEvent.Completed)
+  }
 }
 
 class TokenHubProxyAdapter(
@@ -122,6 +377,58 @@ class TokenHubProxyAdapter(
   ): Flow<ChatStreamEvent> {
     return delegate.streamChat(config, apiKey, messages, options)
   }
+}
+
+private fun toOpenAiResponseInputMessage(message: ChatMessage): Map<String, Any> {
+  val parts = mutableListOf<Map<String, Any>>()
+  if (message.content.isNotBlank()) {
+    parts += mapOf(
+      "type" to if (message.role == MessageRole.ASSISTANT) "output_text" else "input_text",
+      "text" to message.content
+    )
+  }
+  if (message.role == MessageRole.USER) {
+    message.attachments.forEach { attachment ->
+      val dataUrl = attachment.toDataUrl() ?: return@forEach
+      parts += if (attachment.isImage) {
+        mapOf(
+          "type" to "input_image",
+          "image_url" to dataUrl
+        )
+      } else {
+        mapOf(
+          "type" to "input_file",
+          "filename" to attachment.displayName,
+          "file_data" to dataUrl
+        )
+      }
+    }
+  }
+  val content: Any = parts.ifEmpty { return mapOf("role" to message.role.apiRole, "content" to message.content) }
+  return mapOf(
+    "role" to message.role.apiRole,
+    "content" to content
+  )
+}
+
+private fun ChatMessage.toCompatibleContent(): String {
+  if (attachments.isEmpty()) return content
+  val attachmentText = attachments.joinToString("\n") { attachment ->
+    "- ${attachment.displayName} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)"
+  }
+  return buildString {
+    append(content)
+    if (isNotBlank()) append("\n\n")
+    append("Attachments are present but this provider adapter does not send binary attachment content yet:\n")
+    append(attachmentText)
+  }
+}
+
+private fun com.personal.aichat.domain.ChatAttachment.toDataUrl(): String? {
+  val file = File(localPath)
+  if (!file.exists() || !file.isFile) return null
+  val encoded = Base64.getEncoder().encodeToString(file.readBytes())
+  return "data:$mimeType;base64,$encoded"
 }
 
 fun defaultAiHttpClient(): OkHttpClient {
@@ -145,6 +452,7 @@ private val MessageRole.apiRole: String
     MessageRole.USER -> "user"
     MessageRole.ASSISTANT -> "assistant"
     MessageRole.SYSTEM -> "system"
+    MessageRole.TOOL -> "tool"
   }
 
 private fun ChatProviderConfig.headersWithAuth(apiKey: String?): okhttp3.Headers {
@@ -173,8 +481,7 @@ private fun parseExtraHeaders(extraHeadersJson: String): Map<String, String> {
 private suspend fun streamJsonLines(
   request: Request,
   client: OkHttpClient,
-  onFrame: (SseFrame) -> String?,
-  onText: suspend (String) -> Unit
+  onFrame: suspend (SseFrame) -> Unit
 ) {
   val requestHost = request.url.host
   client.newCall(request).execute().use { response ->
@@ -196,10 +503,7 @@ private suspend fun streamJsonLines(
       while (!source.exhausted()) {
         val line = source.readUtf8Line() ?: break
         val frame = parser.accept(line) ?: continue
-        val text = onFrame(frame)
-        if (!text.isNullOrEmpty()) {
-          onText(text)
-        }
+        onFrame(frame)
       }
     }
   }
@@ -232,6 +536,54 @@ fun extractChatDelta(json: String): String? {
   }.getOrNull()
 }
 
+data class TokenUsage(
+  val promptTokens: Int?,
+  val completionTokens: Int?,
+  val totalTokens: Int?,
+  val raw: String
+)
+
+data class CompatibleToolCall(
+  val id: String,
+  val name: String,
+  val arguments: String
+) {
+  fun toRequestMap(): Map<String, Any> = mapOf(
+    "id" to id,
+    "type" to "function",
+    "function" to mapOf(
+      "name" to name,
+      "arguments" to arguments
+    )
+  )
+}
+
+data class CompatibleToolDecision(
+  val toolCalls: List<CompatibleToolCall>,
+  val content: String?,
+  val usage: TokenUsage?
+)
+
+fun extractTokenUsage(json: String): TokenUsage? {
+  return runCatching {
+    val root = JsonParser.parseString(json)
+    val usage = findUsageObject(root) ?: return@runCatching null
+    val prompt = usage.findInt("prompt_tokens") ?: usage.findInt("input_tokens")
+    val completion = usage.findInt("completion_tokens") ?: usage.findInt("output_tokens")
+    val total = usage.findInt("total_tokens") ?: listOfNotNull(prompt, completion).takeIf { it.size == 2 }?.sum()
+    if (prompt == null && completion == null && total == null) {
+      null
+    } else {
+      TokenUsage(
+        promptTokens = prompt,
+        completionTokens = completion,
+        totalTokens = total,
+        raw = usage.toString()
+      )
+    }
+  }.getOrNull()
+}
+
 private fun JsonObject.findString(name: String): String? {
   if (has(name) && !get(name).isJsonNull) return get(name).asString
   entrySet().forEach { entry ->
@@ -250,4 +602,251 @@ private fun JsonObject.findString(name: String): String? {
     }
   }
   return null
+}
+
+private fun JsonObject.findInt(name: String): Int? {
+  if (has(name) && !get(name).isJsonNull) return runCatching { get(name).asInt }.getOrNull()
+  entrySet().forEach { entry ->
+    val value = entry.value
+    if (value.isJsonObject) {
+      val nested = value.asJsonObject.findInt(name)
+      if (nested != null) return nested
+    }
+    if (value.isJsonArray) {
+      value.asJsonArray.forEach { item ->
+        if (item.isJsonObject) {
+          val nested = item.asJsonObject.findInt(name)
+          if (nested != null) return nested
+        }
+      }
+    }
+  }
+  return null
+}
+
+private fun findUsageObject(element: JsonElement): JsonObject? {
+  if (element.isJsonObject) {
+    val obj = element.asJsonObject
+    obj.get("usage")
+      ?.takeIf { it.isJsonObject }
+      ?.let { return it.asJsonObject }
+    obj.entrySet().forEach { entry ->
+      val nested = findUsageObject(entry.value)
+      if (nested != null) return nested
+    }
+  } else if (element.isJsonArray) {
+    element.asJsonArray.forEach { item ->
+      val nested = findUsageObject(item)
+      if (nested != null) return nested
+    }
+  }
+  return null
+}
+
+private fun webSearchToolDefinition(): Map<String, Any> {
+  return mapOf(
+    "type" to "function",
+    "function" to mapOf(
+      "name" to "web_search",
+      "description" to "Search the web for current information relevant to the user's question.",
+      "parameters" to mapOf(
+        "type" to "object",
+        "properties" to mapOf(
+          "query" to mapOf(
+            "type" to "string",
+            "description" to "A concise search query."
+          )
+        ),
+        "required" to listOf("query")
+      )
+    )
+  )
+}
+
+fun extractCompatibleToolCalls(json: String): List<CompatibleToolCall> {
+  return extractCompatibleToolDecision(json).toolCalls
+}
+
+fun extractCompatibleToolDecision(json: String): CompatibleToolDecision {
+  return runCatching {
+    val root = JsonParser.parseString(json).asJsonObject
+    val firstMessage = root.getAsJsonArray("choices")
+      ?.firstOrNull()
+      ?.asJsonObject
+      ?.getAsJsonObject("message")
+    val calls = root.getAsJsonArray("choices")
+      ?.flatMap { choice ->
+        val message = choice.asJsonObject.getAsJsonObject("message")
+        message?.getAsJsonArray("tool_calls")?.mapNotNull { item ->
+          val tool = item.asJsonObject
+          val function = tool.getAsJsonObject("function") ?: return@mapNotNull null
+          CompatibleToolCall(
+            id = tool.findString("id") ?: return@mapNotNull null,
+            name = function.findString("name") ?: return@mapNotNull null,
+            arguments = function.findString("arguments") ?: "{}"
+          )
+        } ?: emptyList()
+      }
+      .orEmpty()
+      .filter { it.name == "web_search" }
+    CompatibleToolDecision(
+      toolCalls = calls,
+      content = firstMessage?.findString("content"),
+      usage = extractTokenUsage(json)
+    )
+  }.getOrDefault(CompatibleToolDecision(emptyList(), null, null))
+}
+
+fun parseToolQuery(arguments: String): String? {
+  return runCatching {
+    JsonParser.parseString(arguments).asJsonObject.findString("query")
+  }.getOrNull()?.trim()
+}
+
+fun extractResponseToolCall(event: String?, json: String): ChatStreamEvent.ToolCall? {
+  return runCatching {
+    val root = JsonParser.parseString(json).asJsonObject
+    val item = root.getAsJsonObject("item") ?: root
+    val type = item.findString("type").orEmpty()
+    val eventName = event.orEmpty()
+    val isWebSearch = type.contains("web_search", ignoreCase = true) ||
+      eventName.contains("web_search", ignoreCase = true) ||
+      json.contains("web_search_call", ignoreCase = true)
+    if (!isWebSearch) return@runCatching null
+    val status = item.findString("status") ?: root.findString("status") ?: eventName.substringAfterLast('.', "")
+    val citations = extractOpenAiUrlCitations(json)
+    val output = if (status.equals("searching", ignoreCase = true) || status.equals("in_progress", ignoreCase = true)) {
+      null
+    } else if (citations.isNotEmpty()) {
+      formatUrlCitations(citations.associate { it.url to it.title })
+    } else {
+      null
+    }
+    ChatStreamEvent.ToolCall(
+      id = item.findString("id") ?: root.findString("item_id") ?: "openai-web-search",
+      name = "web_search",
+      input = item.findString("query") ?: item.findString("action") ?: eventName.takeIf { it.isNotBlank() },
+      output = output
+    )
+  }.getOrNull()
+}
+
+data class OpenAiWebSearchUpdate(
+  val queries: List<String>,
+  val urls: List<OpenAiUrlCitation>
+)
+
+fun extractOpenAiWebSearchUpdate(event: String?, json: String): OpenAiWebSearchUpdate? {
+  return runCatching {
+    val root = JsonParser.parseString(json).asJsonObject
+    val item = root.getAsJsonObject("item") ?: root
+    val type = item.findString("type").orEmpty()
+    val eventName = event.orEmpty()
+    val isWebSearch = type.contains("web_search", ignoreCase = true) ||
+      eventName.contains("web_search", ignoreCase = true) ||
+      json.contains("web_search_call", ignoreCase = true)
+    if (!isWebSearch) return@runCatching null
+    val action = item.getAsJsonObject("action") ?: root.getAsJsonObject("action")
+    val queries = action?.getAsJsonArray("queries")
+      ?.mapNotNull { query -> runCatching { query.asString.trim() }.getOrNull() }
+      ?.filter { it.isNotBlank() }
+      .orEmpty()
+    val urls = buildList {
+      addAll(extractOpenAiUrlCitations(json))
+      action?.directString("url")?.trimUrlPunctuation()?.takeIf { it.isNotBlank() }?.let { url ->
+        add(OpenAiUrlCitation(url = url, title = action.directString("title") ?: url))
+      }
+    }.distinctBy { it.url }
+    OpenAiWebSearchUpdate(queries = queries, urls = urls)
+  }.getOrNull()
+}
+
+data class OpenAiUrlCitation(
+  val url: String,
+  val title: String
+)
+
+fun extractOpenAiUrlCitations(json: String): List<OpenAiUrlCitation> {
+  return runCatching {
+    val root = JsonParser.parseString(json)
+    collectOpenAiUrlCitations(root)
+      .distinctBy { it.url }
+  }.getOrDefault(emptyList())
+}
+
+fun extractUrlCitationsFromText(text: String): List<OpenAiUrlCitation> {
+  return PlainUrlRegex.findAll(text)
+    .mapNotNull { match ->
+      val url = match.value.trimUrlPunctuation()
+      if (url.isBlank()) {
+        null
+      } else {
+        OpenAiUrlCitation(url = url, title = url)
+      }
+    }
+    .distinctBy { it.url }
+    .toList()
+}
+
+private fun collectOpenAiUrlCitations(element: JsonElement): List<OpenAiUrlCitation> {
+  val citations = mutableListOf<OpenAiUrlCitation>()
+  if (element.isJsonObject) {
+    val obj = element.asJsonObject
+    val type = obj.findString("type").orEmpty()
+    val url = obj.directString("url")
+    if (url != null && (type.contains("url_citation", ignoreCase = true) || obj.has("title"))) {
+      citations += OpenAiUrlCitation(
+        url = url,
+        title = obj.directString("title") ?: url
+      )
+    }
+    obj.entrySet().forEach { entry ->
+      citations += collectOpenAiUrlCitations(entry.value)
+    }
+  } else if (element.isJsonArray) {
+    element.asJsonArray.forEach { item ->
+      citations += collectOpenAiUrlCitations(item)
+    }
+  }
+  return citations
+}
+
+private fun String.trimUrlPunctuation(): String {
+  return trimEnd(
+    '.', ',', ';', ':', ')', ']', '}', '>',
+    '\u3002', '\uFF0C', '\uFF1B', '\uFF1A', '\uFF09'
+  )
+}
+
+private fun JsonObject.directString(name: String): String? {
+  return if (has(name) && !get(name).isJsonNull) {
+    runCatching { get(name).asString }.getOrNull()
+  } else {
+    null
+  }
+}
+
+private val PlainUrlRegex = Regex("https?://[^\\s<>\"'`\\]\\)\\}]+")
+
+private fun formatUrlCitations(citations: Map<String, String>): String {
+  return citations.entries.joinToString("\n") { (url, title) ->
+    if (title.isBlank() || title == url) url else "$title\n$url"
+  }
+}
+
+private fun formatWebSearchOutput(
+  queries: Set<String>,
+  citations: Map<String, String>
+): String {
+  return buildString {
+    if (queries.isNotEmpty()) {
+      appendLine("查询：")
+      queries.forEach { appendLine(it) }
+    }
+    if (citations.isNotEmpty()) {
+      if (isNotEmpty()) appendLine()
+      appendLine("网址：")
+      append(formatUrlCitations(citations))
+    }
+  }.trim()
 }

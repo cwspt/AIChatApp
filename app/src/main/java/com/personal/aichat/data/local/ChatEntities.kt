@@ -12,6 +12,7 @@ data class ProviderEntity(
   val defaultModel: String,
   val enabled: Boolean,
   val supportsStreaming: Boolean,
+  val supportsAttachments: Boolean = false,
   val extraHeadersJson: String,
   val reasoningEffort: String = "AUTO",
   val secretRef: String?,
@@ -25,6 +26,8 @@ data class ConversationEntity(
   val providerId: String,
   val model: String,
   val groupName: String = "",
+  val forkedFromConversationId: String? = null,
+  val forkedFromMessageId: String? = null,
   val createdAt: Long,
   val updatedAt: Long,
   val isArchived: Boolean = false,
@@ -43,5 +46,12 @@ data class MessageEntity(
   val model: String?,
   val createdAt: Long,
   val updatedAt: Long,
-  val errorMessage: String?
+  val errorMessage: String?,
+  val totalDurationMs: Long? = null,
+  val firstTokenDurationMs: Long? = null,
+  val promptTokens: Int? = null,
+  val completionTokens: Int? = null,
+  val totalTokens: Int? = null,
+  val rawResponseLog: String? = null,
+  val attachmentsJson: String = ""
 )

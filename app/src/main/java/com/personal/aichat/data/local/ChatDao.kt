@@ -47,6 +47,12 @@ interface ChatDao {
   @Query("UPDATE conversations SET title = :title, groupName = :groupName, updatedAt = :updatedAt WHERE id = :id")
   suspend fun updateConversationMeta(id: String, title: String, groupName: String, updatedAt: Long)
 
+  @Query("UPDATE conversations SET groupName = :newGroupName, updatedAt = :updatedAt WHERE groupName = :oldGroupName AND isDeleted = 0")
+  suspend fun renameConversationGroup(oldGroupName: String, newGroupName: String, updatedAt: Long)
+
+  @Query("UPDATE conversations SET updatedAt = :updatedAt WHERE id = :id")
+  suspend fun touchConversation(id: String, updatedAt: Long)
+
   @Query("UPDATE conversations SET isPinned = :isPinned, updatedAt = :updatedAt WHERE id = :id")
   suspend fun setConversationPinned(id: String, isPinned: Boolean, updatedAt: Long)
 
@@ -70,6 +76,36 @@ interface ChatDao {
 
   @Query("UPDATE messages SET content = :content, status = :status, updatedAt = :updatedAt, errorMessage = :errorMessage WHERE id = :id")
   suspend fun updateMessage(id: String, content: String, status: String, updatedAt: Long, errorMessage: String?)
+
+  @Query(
+    """
+    UPDATE messages SET
+      content = :content,
+      status = :status,
+      updatedAt = :updatedAt,
+      errorMessage = :errorMessage,
+      totalDurationMs = :totalDurationMs,
+      firstTokenDurationMs = :firstTokenDurationMs,
+      promptTokens = :promptTokens,
+      completionTokens = :completionTokens,
+      totalTokens = :totalTokens,
+      rawResponseLog = :rawResponseLog
+    WHERE id = :id
+    """
+  )
+  suspend fun updateMessageWithMetadata(
+    id: String,
+    content: String,
+    status: String,
+    updatedAt: Long,
+    errorMessage: String?,
+    totalDurationMs: Long?,
+    firstTokenDurationMs: Long?,
+    promptTokens: Int?,
+    completionTokens: Int?,
+    totalTokens: Int?,
+    rawResponseLog: String?
+  )
 
   @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND role = 'USER' ORDER BY createdAt DESC LIMIT 1")
   suspend fun lastUserMessage(conversationId: String): MessageEntity?

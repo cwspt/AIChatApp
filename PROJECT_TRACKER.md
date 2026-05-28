@@ -4,319 +4,227 @@
 
 ## 1. 项目目标
 
-AIChatApp 是一个本地 Android 多 AI Provider 聊天客户端，目标是让用户可以在一个移动端应用里配置多组 AI API，切换不同 Provider 和模型进行对话，并安全保存本机配置与聊天历史。
+AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在移动端统一管理多组 AI API 配置、固定会话模型、保存本地聊天历史，并逐步支持工具调用、联网搜索、多模态附件、分享导出和后台生成。
 
-首版聚焦：
+当前产品规则：
 
-- 文本聊天，不包含图片、语音、文件上传、工具调用和云同步。
-- 同时支持 GPT / OpenAI Responses、DeepSeek / OpenAI-compatible Chat Completions、本地 TokenHubProxy 代理。
-- 支持多组 API 配置，包括新增、编辑、克隆、切换、加密保存 API Key。
-- 支持本地会话历史、归档、恢复、删除确认、置顶、分组、对话列表抽屉。
-- 支持 AI Markdown 回复预览、复制、编辑重发、分享文本、分享 Markdown 文件、分享长图。
-- 支持本地 Jenkins release 构建、共享 Android 工具链、本地 release 签名。
+- 会话创建后固定 `providerId/model`，已有会话不通过顶部控件切换模型。
+- 模型对比通过“从某条消息分叉到其他 Provider/model”的方式完成。
+- OpenAI Responses / TokenHubProxy 可使用联网搜索和图片/文件附件。
+- DeepSeek / OpenAI-compatible Chat 当前以文本和函数式 web_search 为主，DeepSeek 官方 API 当前不支持图片/文件附件输入。
 
-## 2. 状态标记
+## 2. 状态和优先级
 
-| 标记 | 含义 |
+| 状态 | 含义 |
 | --- | --- |
-| Done | 已实现并通过基础验证，可以继续迭代优化 |
-| In Progress | 已部分实现，仍需要继续完善 |
+| Done | 已实现并通过基础验证 |
+| In Progress | 已部分实现，还需要继续完善 |
 | Planned | 已规划，尚未开始 |
-| Blocked | 被外部依赖、产品决策或验证条件阻塞 |
-| Watch | 可用但需要持续观察稳定性、体验或兼容性 |
-
-## 3. 优先级定义
+| Watch | 可用但需要真机或长期稳定性观察 |
+| Blocked | 被外部条件阻塞 |
 
 | 优先级 | 含义 |
 | --- | --- |
-| P0 | 基础可用性、安全性、构建发布或核心聊天链路，必须优先处理 |
-| P1 | 高频体验能力，会明显影响日常使用效率 |
-| P2 | 增强功能、体验细节、可维护性优化 |
-| P3 | 长期扩展、实验性能力或低频高级能力 |
+| P0 | 核心可用性、安全性、构建发布、聊天主链路 |
+| P1 | 高频体验能力，明显影响日常使用 |
+| P2 | 增强功能、体验细节、可维护性 |
+| P3 | 长期扩展、实验能力、低频高级能力 |
 
-## 4. 当前总体进度
+## 3. 当前总体进度
 
-| 模块 | 当前状态 | 进度 | 说明 |
+| 模块 | 状态 | 进度 | 说明 |
 | --- | --- | --- | --- |
-| Android 项目骨架 | Done | 100% | 已创建独立项目 `D:\Projects\Personal\AI\AIChatApp`，包名 `com.personal.aichat` |
-| Git / Remote | Done | 100% | 已初始化 git 并推送到 `git@github.com:cwspt/AIChatApp.git` |
-| 共享工具链 | Done | 100% | 使用 `D:\Projects\Personal\.devtools\android` 和本地 Gradle 8.7 zip |
-| Provider 抽象 | Done | 85% | 已有统一模型和 Adapter 抽象，Anthropic / Gemini 预留未接入 |
-| GPT / OpenAI Responses | Done | 80% | 支持 `/v1/responses`、SSE 增量文本、reasoning effort 配置 |
-| DeepSeek / OpenAI-compatible | Done | 80% | 支持 `/chat/completions`，适配 DeepSeek 默认配置 |
-| TokenHubProxy | Done | 75% | 作为 Responses 兼容代理入口接入，默认可改局域网地址 |
-| 多组 API 配置 | Done | 85% | 支持新增、编辑、克隆、切换、保存 API Key |
-| API Key 安全保存 | Done | 85% | 使用 AndroidX Security Crypto，本地加密保存，不入 Room |
-| 会话与消息本地存储 | Done | 90% | Room 保存 Provider、会话、消息，已有多轮迁移 |
-| 聊天 UI | In Progress | 75% | 主聊天、输入框、气泡、Markdown、滚动条、回到底部已实现，仍需真机继续打磨 |
-| 会话管理 | Done | 80% | 支持置顶、归档、恢复、删除确认、分组、抽屉列表 |
-| 分享导出 | In Progress | 75% | 支持文本、Markdown 文件、长图，单气泡图片保存曾修复但需持续真机验证 |
-| Markdown 渲染 | In Progress | 70% | 支持标题、列表、代码、表格、基础 inline 样式，复杂 Markdown 仍有限 |
-| CI / Jenkins | Done | 90% | 已适配 AIChatApp 的本地 release pipeline |
-| Release 签名 | Done | 90% | 已生成本地 `keystore.properties` 和 JKS，均被 git 忽略 |
-| 自动化测试 | In Progress | 35% | 有 Adapter / SSE 等基础单元测试，UI 和数据层覆盖不足 |
+| Android 项目骨架 | Done | 100% | Kotlin + Compose + Material3 + Room + DataStore + OkHttp |
+| 本机开发环境文档 | Done | 100% | 已按本机真实路径整理本地构建说明 |
+| Provider 抽象 | Done | 90% | OpenAI Responses、OpenAI-compatible、TokenHubProxy 已接入，Anthropic/Gemini 预留 |
+| 会话固定模型 | Done | 100% | 请求实际使用 `conversation.model`，不再临时读 provider default |
+| 会话分叉 | Done | 95% | 支持从消息气泡分叉到其他 Provider，并保存来源关系 |
+| OpenAI Responses | Done | 90% | 支持流式、reasoning effort、usage 元数据、web_search、附件输入 |
+| DeepSeek / OpenAI-compatible | Done | 85% | 支持 Chat Completions 流式、usage、函数式 web_search |
+| 联网搜索 | Done | 85% | OpenAI hosted web_search + compatible function calling + DuckDuckGo fallback |
+| 工具调用 UI | Done | 80% | 工具调用独立卡片、可折叠、显示查询词和 URL |
+| 多模态附件 | Done | 75% | Provider 级附件开关、图片/文件选择、拍照、气泡附件展示、图片 app 内预览 |
+| 设置页 | Done | 85% | 独立设置页，支持主题色、夜间模式、字体、debug log、搜索模式、配置导入导出 |
+| 聊天 UI | In Progress | 85% | 顶栏压缩、输入框修复、自动追踪滚动、选择模式、Markdown 表格与分隔线已优化 |
+| 会话列表 | In Progress | 85% | 抽屉、折叠文件夹、重命名、日期分组、创建/更新时间显示已实现 |
+| 后台生成 | Done | 80% | 前台服务保活，后台完成后通知 |
+| 分享导出 | In Progress | 75% | 文本、Markdown 文件、长图、单气泡分享已实现，超长内容仍需优化 |
+| 自动化测试 | In Progress | 55% | Provider adapter、fork、附件请求体、web_search 解析已有单测 |
+| CI / Release | Done | 90% | Jenkins 本地 release pipeline 和签名配置已接入 |
 
-## 5. 已完成目标
+## 4. 已完成事项
 
-### 5.1 项目与工程化
+### 4.1 Provider 与请求链路
 
-| ID | 目标 | 状态 | 优先级 | 验收状态 |
+| ID | 任务 | 状态 | 优先级 | 验收 |
 | --- | --- | --- | --- | --- |
-| ENG-001 | 创建独立 Android 项目 `AIChatApp` | Done | P0 | 项目可独立打开和构建 |
-| ENG-002 | 使用 Kotlin + Jetpack Compose + Material3 | Done | P0 | 主 UI 已由 Compose 实现 |
-| ENG-003 | 接入 Room / DataStore / OkHttp / Security Crypto | Done | P0 | 数据、偏好、网络、密钥存储均已落地 |
-| ENG-004 | 使用共享 Android SDK、JDK、Gradle cache、本地 Gradle zip | Done | P0 | wrapper 指向本地 `gradle-8.7-bin.zip` |
-| ENG-005 | 初始化 git 并推送 remote | Done | P0 | remote 为 `git@github.com:cwspt/AIChatApp.git` |
-| ENG-006 | 增加本地 Jenkins release pipeline | Done | P0 | `Jenkinsfile.local-keystore` 已适配 AIChatApp |
-| ENG-007 | 生成本地 release 签名配置 | Done | P0 | release assemble 已通过，私钥文件未入 git |
+| API-001 | 统一 Provider 数据模型和 adapter 接口 | Done | P0 | `ChatProviderConfig` / `ProviderAdapter` 已落地 |
+| API-002 | OpenAI Responses adapter | Done | P0 | `/v1/responses` 支持 SSE delta、usage、reasoning |
+| API-003 | OpenAI-compatible Chat adapter | Done | P0 | `/chat/completions` 支持流式 delta、usage |
+| API-004 | TokenHubProxy adapter | Done | P1 | 复用 Responses adapter |
+| API-005 | 请求使用会话固定模型 | Done | P0 | `sendMessage`、`retryLast`、fork 自动回复均使用 `conversation.model` |
+| API-006 | DeepSeek reasoning/thinking 配置入口评估 | Done | P2 | 当前保留 provider reasoning 配置，后续按 provider 差异扩展 |
+| API-007 | raw response debug log | Done | P1 | 设置中可开启，assistant 消息保存原始 SSE frame |
+| API-008 | assistant 元数据显示 | Done | P1 | 气泡底部显示总耗时、首 token、token usage |
 
-### 5.2 Provider 与 API 接入
+### 4.2 会话固定模型与分叉
 
-| ID | 目标 | 状态 | 优先级 | 验收状态 |
+| ID | 任务 | 状态 | 优先级 | 验收 |
 | --- | --- | --- | --- | --- |
-| API-001 | 定义统一 Provider 数据模型 | Done | P0 | `ChatProviderConfig`、`ProviderType` 已存在 |
-| API-002 | 定义统一流式事件模型 | Done | P0 | `ChatStreamEvent.Started/TextDelta/Completed/Failed` 已存在 |
-| API-003 | GPT / OpenAI Responses Adapter | Done | P0 | 请求 `/responses`，支持 SSE 文本 delta |
-| API-004 | DeepSeek / OpenAI-compatible Adapter | Done | P0 | 请求 `/chat/completions`，支持 `[DONE]` 和 delta |
-| API-005 | TokenHubProxy Adapter | Done | P1 | 通过 Responses 兼容代理接入 |
-| API-006 | GPT 推理强度选择 | Done | P1 | 支持 Auto / Low / Medium / High / XHigh |
-| API-007 | 额外 Headers JSON | Done | P2 | 支持配置非 Authorization 额外 header |
-| API-008 | API 错误信息映射 | In Progress | P1 | 已映射 HTTP 状态和 provider message，仍可优化中文提示 |
+| BRANCH-001 | `ConversationEntity` 增加 fork 来源字段 | Done | P0 | `forkedFromConversationId` / `forkedFromMessageId` 已迁移 |
+| BRANCH-002 | 从消息气泡分叉到其他 Provider | Done | P0 | 复制历史消息到目标消息，保存新会话来源 |
+| BRANCH-003 | 从 USER 消息分叉后自动用目标模型回复 | Done | P1 | 仓库测试覆盖 |
+| BRANCH-004 | 对话列表展示分叉来源标记 | Watch | P2 | 已保留来源字段，轻量展示仍可继续优化 |
+| BRANCH-005 | 顶部模型切换降级为显示属性 | Done | P1 | 新建会话时选择模型，已有会话模型固定 |
 
-### 5.3 配置与安全
+### 4.3 联网搜索和工具调用
 
-| ID | 目标 | 状态 | 优先级 | 验收状态 |
+| ID | 任务 | 状态 | 优先级 | 验收 |
 | --- | --- | --- | --- | --- |
-| SEC-001 | API Key 不保存到 Room | Done | P0 | Room 仅保存 `secretRef` |
-| SEC-002 | API Key 使用加密 SharedPreferences 保存 | Done | P0 | `EncryptedApiKeyStore` 已实现 |
-| SEC-003 | 支持再次打开配置时识别已保存 Key | Done | P0 | 配置页显示是否已有 Key，不回显明文 |
-| SEC-004 | 网络日志不打印 Authorization / Key | Done | P0 | 当前未加入明文网络日志 |
-| SEC-005 | release keystore 与配置不入 git | Done | P0 | `.gitignore` 忽略 `keystore.properties` 和 `keystore/` |
-| SEC-006 | 密钥备份策略 | Planned | P1 | 需要在文档中补充 JKS 丢失后的风险和备份流程 |
+| SEARCH-001 | 设置中增加搜索模式 | Done | P1 | 关闭 / 自动搜索 / 强制搜索 |
+| SEARCH-002 | OpenAI Responses hosted `web_search` | Done | P1 | 请求体发送 `tools: web_search` |
+| SEARCH-003 | DeepSeek/OpenAI-compatible 函数式 `web_search` | Done | P1 | 模型返回 tool call 后 app 执行搜索，再回传 tool result |
+| SEARCH-004 | app 侧 DuckDuckGo 搜索客户端 | Done | P2 | 解析 HTML 搜索结果并返回标题、URL、摘要 |
+| SEARCH-005 | 工具调用独立 UI | Done | P1 | 非普通气泡样式，可折叠 |
+| SEARCH-006 | 搜索 URL 展示 | Done | P1 | 解析 `url_citation`、正文 URL、OpenAI `action.url` |
+| SEARCH-007 | OpenAI 多个 hosted web_search item 聚合 | Done | P1 | search/open_page 合并为一个工具卡片 |
+| SEARCH-008 | 工具调用历史参与上下文策略 | Done | P1 | TOOL 消息落库但不回传给模型上下文 |
 
-### 5.4 聊天与会话体验
+### 4.4 多模态附件
 
-| ID | 目标 | 状态 | 优先级 | 验收状态 |
+| ID | 任务 | 状态 | 优先级 | 验收 |
 | --- | --- | --- | --- | --- |
-| CHAT-001 | 创建和保存会话 | Done | P0 | Room 保存 conversations / messages |
-| CHAT-002 | 流式显示 AI 回复 | Done | P0 | delta 增量更新 assistant 消息 |
-| CHAT-003 | 失败时保留错误状态 | Done | P0 | 失败消息带 `FAILED` 和错误信息 |
-| CHAT-004 | 重试最后一条用户消息 | Done | P1 | `retryLast` 已实现 |
-| CHAT-005 | 用户消息编辑重发 | Done | P1 | 用户气泡支持编辑重发 |
-| CHAT-006 | 气泡快捷复制 | Done | P1 | 支持复制单条内容 |
-| CHAT-007 | 气泡显示本地时间 | Done | P1 | 已转换为 local time 显示 |
-| CHAT-008 | 气泡内容局部选择复制 | Watch | P1 | Android Text 选择体验仍需真机确认 |
-| CHAT-009 | Markdown 预览 | In Progress | P1 | 已有基础 Markdown parser，复杂语法不足 |
-| CHAT-010 | 长对话滚动条 | Done | P1 | 已有滚动进度条和跳转 |
-| CHAT-011 | 向下快捷箭头 | Done | P1 | 离底部较远时可快速回到底部 |
+| ATTACH-001 | 消息模型支持附件元数据 | Done | P1 | `ChatAttachment` + `messages.attachmentsJson` |
+| ATTACH-002 | Room v7/v8 附件和 provider 附件开关迁移 | Done | P1 | schema 7/8 已导出 |
+| ATTACH-003 | 输入框附件入口 | Done | P1 | 支持选择图片、选择文件、拍摄照片 |
+| ATTACH-004 | 附件复制到 app 私有目录 | Done | P1 | 保存到 `files/chat_attachments` |
+| ATTACH-005 | OpenAI Responses 图片/文件提交 | Done | P1 | 图片走 `input_image`，文件走 `input_file` data URL |
+| ATTACH-006 | 用户气泡展示附件 | Done | P1 | 气泡内显示附件列表 |
+| ATTACH-007 | 图片缩略图和 app 内预览 | Done | P1 | 图片附件显示缩略图，点击弹窗放大 |
+| ATTACH-008 | provider 级附件开关 | Done | P1 | DeepSeek 默认关闭，OpenAI/TokenHub 默认开启 |
+| ATTACH-009 | 大文件和图片压缩策略 | Planned | P1 | 需要限制大小、压缩图片、超大文件改走 Files API |
+| ATTACH-010 | PDF/文本文件 app 内预览 | Planned | P2 | 当前非图片文件走系统打开 |
 
-### 5.5 会话列表、归档和分组
+### 4.5 设置、主题和配置导入导出
 
-| ID | 目标 | 状态 | 优先级 | 验收状态 |
+| ID | 任务 | 状态 | 优先级 | 验收 |
 | --- | --- | --- | --- | --- |
-| CONV-001 | 左上角展开聊天列表抽屉 | Done | P1 | Drawer 列举会话和分组 |
-| CONV-002 | 会话置顶 | Done | P1 | 支持置顶和取消置顶 |
-| CONV-003 | 会话归档 | Done | P1 | 支持归档当前会话 |
-| CONV-004 | 已归档会话恢复 | Done | P1 | 支持恢复归档会话 |
-| CONV-005 | 删除对话二次确认 | Done | P0 | 删除前弹确认 |
-| CONV-006 | 会话分组 | Done | P1 | 支持通过 groupName 分组 |
-| CONV-007 | 置顶聊天、置顶文件夹、普通聊天、普通文件夹分区展示 | In Progress | P1 | 已有分组展示，细分信息架构还可优化 |
-| CONV-008 | 批量移动会话到分组 | Planned | P1 | 当前更偏单会话编辑分组，批量能力待做 |
+| SETTINGS-001 | 设置从弹窗升级为独立页面 | Done | P1 | 主题、字体、debug、搜索和 provider 管理集中入口 |
+| SETTINGS-002 | 主题色配置 | Done | P1 | 多套调色板影响 app、聊天背景、控件、气泡 |
+| SETTINGS-003 | 夜间模式 | Done | P1 | 修复顶部文字、按钮、输入框图标暗色可见性 |
+| SETTINGS-004 | 字体大小调整 | Done | P1 | 设置中支持字体缩放 |
+| SETTINGS-005 | Provider 配置文本导入导出 | Done | P1 | JSON 文本包含 provider 字段和 key |
+| SETTINGS-006 | Provider 配置二维码导入导出 | Planned | P2 | 复杂度较高，第一版暂缓 |
 
-### 5.6 分享与导出
+### 4.6 聊天 UI 和交互
 
-| ID | 目标 | 状态 | 优先级 | 验收状态 |
+| ID | 任务 | 状态 | 优先级 | 验收 |
 | --- | --- | --- | --- | --- |
-| SHARE-001 | 分享完整对话为文本 | Done | P1 | 支持系统分享 Intent |
-| SHARE-002 | 分享选中气泡为文本 | Done | P1 | 多选后分享节选 |
-| SHARE-003 | 分享完整对话为 Markdown 文件 | Done | P1 | 可导出 `.md` 文件 |
-| SHARE-004 | 分享完整对话为长图 | Done | P1 | 可保存到相册或用文件分享 fallback |
-| SHARE-005 | 分享单个气泡为文本 | Done | P1 | 单气泡菜单支持 |
-| SHARE-006 | 分享单个气泡为图片 | Done | P1 | 已接入图片分享和相册保存路径 |
-| SHARE-007 | 长图里使用 Markdown 预览格式 | In Progress | P1 | 已渲染标题、列表、代码、表格，复杂语法待提升 |
-| SHARE-008 | 网络错误气泡导出策略 | Done | P2 | 已倾向导出错误提示而非空白 |
-| SHARE-009 | 选择到这里 | Done | P1 | 多选后支持范围选择 |
+| UI-001 | 输入框光标跳动修复 | Done | P0 | 使用 `TextFieldValue` 保持 selection |
+| UI-002 | AI 流式输出自动追踪底部 | Done | P1 | 用户手动上滑后暂停追踪，回到底部后恢复 |
+| UI-003 | 输出中状态和停止按钮 | Done | P1 | 发送按钮在生成中变为停止按钮 |
+| UI-004 | 顶部工具条压缩 | Done | P1 | 分享/多选等操作合并到菜单 |
+| UI-005 | 抽屉外区域点击关闭 | Done | P1 | 点击非抽屉区域可收起 |
+| UI-006 | 选择模式点击气泡即选中 | Done | P1 | 不再必须点 checkbox |
+| UI-007 | “选择到这里”快捷按钮 | Done | P1 | 滚动到其他气泡处可范围选择 |
+| UI-008 | 选中气泡高亮 | Done | P1 | 边框和容器色增强 |
+| UI-009 | Markdown 表格渲染 | Done | P1 | 表格边框、行高、分隔线处理已优化 |
+| UI-010 | `---` Markdown 分隔线 | Done | P1 | 渲染为横线 |
+| UI-011 | 滚动条平滑性 | Watch | P1 | 已优化，长气泡边界卡顿仍需真机观察 |
+| UI-012 | 中文乱码修复 | In Progress | P1 | 主界面大部分已修复，tracker 本次已重写；仍需持续扫描 |
 
-### 5.7 UI 与视觉
+### 4.7 后台生成和通知
 
-| ID | 目标 | 状态 | 优先级 | 验收状态 |
+| ID | 任务 | 状态 | 优先级 | 验收 |
 | --- | --- | --- | --- | --- |
-| UI-001 | 主语言中文化 | Done | P1 | 主要 UI 文案已中文 |
-| UI-002 | 生成应用图标 | Done | P2 | 已有 launcher drawable 资源 |
-| UI-003 | 输入框避免重叠 | Done | P0 | 已调整底部布局 |
-| UI-004 | 聊天气泡 Markdown 表格边框 | Done | P1 | UI 表格已加 border |
-| UI-005 | 导出图片表格边框 | Done | P1 | 长图 renderer 已加表格线 |
-| UI-006 | 抽屉当前选中项可读性 | Done | P1 | 已修复只显示背景不显示文本的问题 |
-| UI-007 | 大屏 / 横屏适配 | Planned | P2 | 当前以移动端优先，未系统适配平板 |
+| BG-001 | 多会话生成任务不中断 | Done | P1 | 切换会话不取消其他会话生成 |
+| BG-002 | 前台服务保活生成 | Done | P1 | 生成中启动 foreground service |
+| BG-003 | 后台完成通知 | Done | P1 | app 在后台且生成完成时发通知 |
+| BG-004 | Android 13+ 通知权限请求 | Done | P1 | MainActivity 请求 `POST_NOTIFICATIONS` |
 
-## 6. 当前能力清单
+## 5. 已知风险
 
-### 6.1 Provider 类型
-
-| 类型 | 当前用途 | 状态 | 备注 |
-| --- | --- | --- | --- |
-| `OPENAI_RESPONSES` | GPT / OpenAI 官方 Responses API | Done | Base URL 示例：`https://api.openai.com/v1` |
-| `OPENAI_COMPATIBLE_CHAT` | DeepSeek 和兼容 Chat Completions 的服务 | Done | DeepSeek Base URL 示例：`https://api.deepseek.com` |
-| `TOKENHUB_PROXY` | 本机或局域网代理转发 | Done | 默认可指向 TokenHubProxy 的 `/v1` |
-| `ANTHROPIC_MESSAGES` | Claude Messages API | Planned | 类型已预留，Adapter 未实现 |
-| `GEMINI_GENERATE_CONTENT` | Gemini GenerateContent API | Planned | 类型已预留，Adapter 未实现 |
-
-### 6.2 数据表
-
-| 表 | 用途 | 当前字段重点 |
-| --- | --- | --- |
-| `providers` | Provider 配置元数据 | `type`、`baseUrl`、`defaultModel`、`reasoningEffort`、`secretRef` |
-| `conversations` | 会话元数据 | `title`、`providerId`、`model`、`groupName`、`isArchived`、`isDeleted`、`isPinned` |
-| `messages` | 消息内容 | `role`、`content`、`status`、`providerId`、`model`、`errorMessage` |
-
-### 6.3 构建与发布
-
-| 能力 | 状态 | 说明 |
-| --- | --- | --- |
-| Debug 构建 | Done | 可使用共享环境执行 `:app:assembleDebug` |
-| Release 构建 | Done | `:app:assembleRelease` 已通过 |
-| Jenkins 本地 release pipeline | Done | `Jenkinsfile.local-keystore` 已适配 |
-| 本地 Gradle 分发包 | Done | wrapper 使用 `file:///D:/Projects/Personal/.devtools/android/downloads/gradle-8.7-bin.zip` |
-| Release 签名 | Done | 本地 JKS 和 `keystore.properties` 已生成，需安全备份 |
-| 版本号自增 | Done | Jenkins 可自动 bump `versionCode` 和 patch 版本 |
-
-## 7. 已知风险与观察项
-
-| ID | 风险 | 状态 | 优先级 | 建议处理 |
+| ID | 风险 | 状态 | 优先级 | 处理建议 |
 | --- | --- | --- | --- | --- |
-| RISK-001 | release keystore 丢失会导致同包名应用无法正常升级 | Watch | P0 | 立即将 JKS 和密码文件备份到安全位置 |
-| RISK-002 | 移动端保存第三方 API Key 有本机安全取舍 | Watch | P0 | 后续增加本机锁、导出警告、Key 删除确认 |
-| RISK-003 | Android Web / Markdown 完整渲染复杂度较高 | Watch | P1 | 评估引入成熟 Markdown Compose 组件或 WebView renderer |
-| RISK-004 | 长图导出超长对话可能触达 Bitmap 尺寸或内存限制 | Watch | P1 | 增加分页导出、PDF 导出或自动分段长图 |
-| RISK-005 | 各 Provider SSE 事件格式可能变化 | Watch | P1 | 增加更完整的 MockWebServer 单元测试 |
-| RISK-006 | DeepSeek / OpenAI-compatible 的非流式或错误结构可能差异较大 | Watch | P1 | 增强错误解析和兼容分支 |
-| RISK-007 | 当前 UI 功能密度越来越高，移动端学习成本上升 | Watch | P1 | 后续梳理信息架构和设置入口 |
+| RISK-001 | 附件使用 Base64 data URL，图片/文件过大时会导致请求体和 token 成本过高 | Watch | P1 | 增加大小限制、图片压缩、Files API 上传 |
+| RISK-002 | DeepSeek 当前不支持图片/文件附件 | Done | P1 | 默认关闭附件按钮，保留 provider 开关 |
+| RISK-003 | OpenAI hosted web_search 不一定暴露所有内部访问 URL | Watch | P1 | 保留 raw log 和多策略解析 |
+| RISK-004 | 长图导出超长对话可能触达 Bitmap 内存限制 | Watch | P1 | 后续做分页/PDF 导出 |
+| RISK-005 | `AIChatAppRoot.kt` 文件过大 | Watch | P2 | 后续按 screen/component/dialog/markdown 拆分 |
+| RISK-006 | 中文乱码可能仍残留在旧代码或历史 tracker 文本里 | Watch | P1 | 每次提交前执行 mojibake 扫描 |
+| RISK-007 | Room migration 版本增长较快 | Watch | P2 | 增加 migration 自动化测试 |
+| RISK-008 | release keystore 丢失会导致同包名无法升级 | Watch | P0 | 需要安全备份 JKS 和密码文件 |
 
-## 8. 近期实施计划
+## 6. 下一步计划
 
-### 8.1 P0：稳定核心链路
+### 6.1 P0 / P1
 
 | ID | 任务 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
-| NEXT-P0-001 | 用真实 GPT Key 验证 OpenAI Responses 流式聊天 | Planned | 能发送、流式返回、失败提示可读 |
-| NEXT-P0-002 | 用真实 DeepSeek Key 验证 OpenAI-compatible 流式聊天 | Planned | 默认 Base URL + Key 可正常回复 |
-| NEXT-P0-003 | 备份 release keystore 和 `keystore.properties` | Planned | 私钥文件安全复制到至少一个非仓库位置 |
-| NEXT-P0-004 | Jenkins 真实跑一次 release pipeline | Planned | Jenkins 成功归档 `app-release.apk` |
-| NEXT-P0-005 | 搜索仓库确认无真实 API Key / Authorization / keystore 提交 | Planned | `git status` 干净，敏感文件被 ignore |
+| NEXT-P1-001 | 附件大小限制和错误提示 | Planned | 超过限制时不发送，并提示压缩或改用文件上传 |
+| NEXT-P1-002 | 图片发送前压缩 | Planned | 大图自动压缩到合理分辨率，保留原图查看 |
+| NEXT-P1-003 | OpenAI Files API 上传路径 | Planned | 大 PDF/文件不走 Base64，改用 `file_id` |
+| NEXT-P1-004 | 搜索工具卡片细节优化 | Planned | 显示查询词、打开网页 URL、citation URL 的层级关系 |
+| NEXT-P1-005 | 真实 GPT Key 验证图片 + PDF 输入 | Planned | 真机选择图片/PDF 后 GPT 能正确识别内容 |
+| NEXT-P1-006 | 真实 DeepSeek Key 回归验证附件按钮隐藏 | Planned | DeepSeek 对话无附件按钮，纯文本/搜索功能正常 |
+| NEXT-P1-007 | 滚动卡顿专项优化 | Planned | 排查长气泡交界处滚动卡顿和自绘滚动条影响 |
+| NEXT-P1-008 | provider 错误提示进一步中文化 | Planned | 401、429、超时、DNS、SSL、Base URL 错误均有清晰提示 |
 
-### 8.2 P1：提升日常使用体验
-
-| ID | 任务 | 状态 | 验收标准 |
-| --- | --- | --- | --- |
-| NEXT-P1-001 | 优化 Provider 错误提示中文化 | Planned | 401、超时、断网、Base URL 错误都有明确提示 |
-| NEXT-P1-002 | 批量移动会话到已有分组或新分组 | Planned | 可多选会话并批量归类 |
-| NEXT-P1-003 | 优化聊天列表抽屉的信息架构 | Planned | 明确区分置顶会话、置顶分组、普通会话、普通分组 |
-| NEXT-P1-004 | 提升 Markdown 预览完整度 | Planned | 支持引用、链接、粗体斜体、代码语言标签、任务列表 |
-| NEXT-P1-005 | 分享长图分页或分段 | Planned | 超长对话不会截断或 OOM |
-| NEXT-P1-006 | 补齐数据层和 Provider Adapter 单元测试 | Planned | 覆盖 Provider 保存、会话状态、错误映射、SSE delta |
-
-### 8.3 P2：长期可维护性
+### 6.2 P2 / P3
 
 | ID | 任务 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
-| NEXT-P2-001 | 拆分过大的 Compose 文件 | Planned | `AIChatAppRoot.kt` 按功能拆为 screen / component / markdown / dialog |
-| NEXT-P2-002 | 增加 README 的用户使用指南 | Planned | 包含 GPT、DeepSeek、TokenHubProxy 配置步骤 |
-| NEXT-P2-003 | 增加 release checklist 文档 | Planned | 每次发布有固定验证清单 |
-| NEXT-P2-004 | 增加数据库 migration 测试 | Planned | schema 迁移可自动验证 |
-| NEXT-P2-005 | 优化大屏 / 横屏布局 | Planned | 平板和折叠屏上列表与聊天区可并列显示 |
+| NEXT-P2-001 | PDF/文本 app 内预览 | Planned | PDF 或文本附件可在 app 内预览 |
+| NEXT-P2-002 | Provider 多模态能力矩阵 | Planned | 设置页展示每个 provider 是否支持图片、文件、搜索、reasoning |
+| NEXT-P2-003 | 二维码导入导出 Provider 配置 | Planned | 支持配置生成二维码和扫码导入 |
+| NEXT-P2-004 | UI 文件拆分 | Planned | `AIChatAppRoot.kt` 拆分为 chat/settings/drawer/markdown/components |
+| NEXT-P2-005 | Room migration 测试 | Planned | 从 schema 1 到最新 schema 自动迁移验证 |
+| NEXT-P2-006 | 导出内容包含附件索引 | Planned | Markdown/长图导出能列出用户上传附件名称 |
+| NEXT-P3-001 | Anthropic adapter | Planned | Claude Messages API 文本流式对话 |
+| NEXT-P3-002 | Gemini adapter | Planned | Gemini GenerateContent 文本和多模态对话 |
+| NEXT-P3-003 | 对话 PDF 导出 | Planned | 支持完整对话导出 PDF |
+| NEXT-P3-004 | Prompt 模板和系统提示词 | Planned | 可保存常用 prompt 并按会话应用 |
 
-### 8.4 P3：扩展能力
+## 7. 验证清单
 
-| ID | 任务 | 状态 | 验收标准 |
-| --- | --- | --- | --- |
-| NEXT-P3-001 | Anthropic Messages Adapter | Planned | Claude API 可配置并完成文本流式聊天 |
-| NEXT-P3-002 | Gemini GenerateContent Adapter | Planned | Gemini API 可配置并完成文本聊天 |
-| NEXT-P3-003 | 会话导出为 PDF | Planned | 支持分享或保存完整 PDF |
-| NEXT-P3-004 | Prompt 模板 / 系统提示词管理 | Planned | 可保存常用提示词并按会话应用 |
-| NEXT-P3-005 | MVC 项目登录联动 | Planned | 如后续需要，再接入共享 FirstWebClient 或新共享模块 |
-| NEXT-P3-006 | 多端同步或备份恢复 | Planned | 明确本地备份格式和导入流程 |
+本机 Android 环境：
 
-## 9. 里程碑规划
-
-### M1：本地可用聊天客户端
-
-状态：Done
-
-验收标准：
-
-- 可安装 debug / release APK。
-- 可配置 GPT、DeepSeek、TokenHubProxy。
-- 可保存多组 API 配置。
-- 可创建会话、发送消息、流式接收回复。
-- API Key 不入 git、不入 Room。
-
-### M2：日常可持续使用版本
-
-状态：In Progress
-
-验收标准：
-
-- 会话列表、分组、置顶、归档、恢复、删除确认体验稳定。
-- Markdown 回复在聊天气泡和导出图片中都足够可读。
-- 长对话滚动、回到底部、范围多选、分享导出稳定。
-- 常见网络错误和鉴权错误能用中文清楚说明。
-- Jenkins release 构建可一键产出 APK。
-
-### M3：可维护扩展版本
-
-状态：Planned
-
-验收标准：
-
-- Provider Adapter 单元测试覆盖核心请求体、SSE 和错误映射。
-- Compose UI 按模块拆分，避免单文件持续膨胀。
-- 数据库 migration 有测试保护。
-- README 和 release checklist 完整。
-- Anthropic / Gemini 可按统一 Adapter 模型扩展。
-
-### M4：高级生产力版本
-
-状态：Planned
-
-验收标准：
-
-- 支持 Prompt 模板、系统提示词、常用模型参数。
-- 支持 PDF / 分段长图 / Markdown 文件等更完整导出。
-- 支持本地备份与恢复。
-- 可选接入 MVC 项目能力或账户体系。
-
-## 10. 验证清单
+```powershell
+$env:JAVA_HOME='D:\Projects\Personal\AndroidApps\.devtools\android\jdk\jdk-17.0.18+8'
+$env:ANDROID_HOME='D:\Projects\Personal\AndroidApps\.devtools\android\sdk'
+$env:ANDROID_SDK_ROOT=$env:ANDROID_HOME
+$env:GRADLE_USER_HOME='D:\Projects\Personal\AndroidApps\.gradle-user-home'
+$env:Path="$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\cmdline-tools\latest\bin;$env:Path"
+```
 
 每次核心功能变更后建议执行：
 
 ```powershell
-cd D:\Projects\Personal\AI\AIChatApp
 .\gradlew.bat :app:testDebugUnitTest --console=plain --no-daemon
+.\gradlew.bat :app:compileDebugKotlin --console=plain --no-daemon
 .\gradlew.bat :app:assembleDebug --console=plain --no-daemon
 ```
 
-每次 release 前建议执行：
+提交前建议执行中文乱码扫描：
 
 ```powershell
-cd D:\Projects\Personal\AI\AIChatApp
-.\gradlew.bat :app:assembleRelease --console=plain --no-daemon
-git status --short
-git check-ignore -v keystore.properties keystore/aichat-release.jks
+$pattern = @(
+    '\u9352', '\u93C2', '\u7EEE', '\u9441', '\u7035', '\u95B0',
+    '\u6D93', '\u6D63', '\u6960', '\u7481', '\u6FB6', '\u5BB8',
+    '\u9422', '\u9597', '\u93C5', '\u93C6', '\u59AF',
+    '\u6D34', '\u93C9', '\u6AD9', '\u6FE1', '\u704F', '\u8930',
+    '\u6DC7', '\u757E', '\u7BA0', '\u6D7C', '\u934F', '\u93B4',
+    '\u680D', '\u8DFA', '\u5997', '\u4E4F', '\u6BDA', '\u935A',
+    '\u699B', '\u9483', '\u7C83', '\u943D', '\u6A3A', '\u7F02',
+    '\u5F42', '\u7F03', '\u56E5', '\u57CC', '\u6434'
+) -join '|'
+rg -n $pattern app/src/main/java app/src/test/java PROJECT_TRACKER.md README.md
 ```
 
-手动验证建议：
+## 8. Tracker 维护规则
 
-- GPT Provider：配置 `https://api.openai.com/v1`，选择支持 Responses 的模型，验证推理强度选项。
-- DeepSeek Provider：配置 `https://api.deepseek.com`，选择 DeepSeek 模型，验证流式回复和错误提示。
-- TokenHubProxy Provider：在手机可访问代理地址时验证局域网代理链路。
-- 聊天体验：长对话滚动、回到底部、复制、编辑重发、重试、删除确认。
-- 会话管理：置顶、归档、恢复、分组、抽屉切换。
-- 分享导出：单气泡文本、单气泡图片、选中消息文本、选中消息长图、完整对话 Markdown 文件、完整对话长图。
-
-## 11. Tracker 维护规则
-
-- 每完成一个功能，更新对应条目的状态和进度。
-- 每次发现明显 Bug，先放入 `已知风险与观察项` 或近期计划，再决定是否提升到 P0 / P1。
-- 每次 release 前更新 `当前总体进度` 和 `里程碑规划`。
-- 不在本文件写入真实 API Key、keystore 密码、Jenkins 凭据或任何可用于访问服务的敏感信息。
-- 如果任务已经完成但尚未真机验证，优先标记为 `Watch`，不要直接标成完全稳定。
+- 每完成一个功能，更新对应条目的状态、进度和验收说明。
+- 发现明显 bug 时，先加入风险或近期计划，再决定是否提升到 P0/P1。
+- 不在 tracker 写入真实 API Key、keystore 密码、Jenkins 凭据或其他敏感信息。
+- 已实现但尚未真机验证的功能优先标为 `Watch`。
+- 每次 release 前更新总体进度、风险和验证清单。

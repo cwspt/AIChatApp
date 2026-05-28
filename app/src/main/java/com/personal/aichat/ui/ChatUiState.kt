@@ -1,9 +1,13 @@
 package com.personal.aichat.ui
 
 import com.personal.aichat.domain.ChatConversation
+import com.personal.aichat.domain.ChatAttachment
 import com.personal.aichat.domain.ChatConversationGroup
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
+import com.personal.aichat.domain.AppSettings
+import com.personal.aichat.domain.MessageStatus
+import androidx.compose.ui.text.input.TextFieldValue
 
 data class ChatUiState(
   val providers: List<ChatProviderConfig> = emptyList(),
@@ -13,13 +17,19 @@ data class ChatUiState(
   val messages: List<ChatMessage> = emptyList(),
   val selectedConversationId: String? = null,
   val selectedProviderId: String? = null,
-  val input: String = "",
+  val input: TextFieldValue = TextFieldValue(""),
+  val pendingAttachments: List<ChatAttachment> = emptyList(),
+  val appSettings: AppSettings = AppSettings(),
   val selectedMessageIds: Set<String> = emptySet(),
   val messageSelectionMode: Boolean = false,
+  val settingsPageOpen: Boolean = false,
   val providerManagerOpen: Boolean = false,
+  val newConversationPickerOpen: Boolean = false,
   val settingsOpen: Boolean = false,
   val editingProvider: ChatProviderConfig? = null,
   val editingProviderHasApiKey: Boolean = false,
+  val forkTargetMessageId: String? = null,
+  val streamingConversationIds: Set<String> = emptySet(),
   val deleteConfirmOpen: Boolean = false,
   val deleteTargetConversationId: String? = null,
   val error: String? = null
@@ -28,7 +38,17 @@ data class ChatUiState(
     get() = conversations.firstOrNull { it.id == selectedConversationId }
 
   val selectedProvider: ChatProviderConfig?
-    get() = providers.firstOrNull { it.id == selectedConversation?.providerId }
-      ?: providers.firstOrNull { it.id == selectedProviderId }
-      ?: providers.firstOrNull()
+    get() {
+      val conversation = selectedConversation
+      if (conversation != null) {
+        return providers.firstOrNull { it.id == conversation.providerId }
+          ?.copy(defaultModel = conversation.model)
+      }
+      return providers.firstOrNull { it.id == selectedProviderId }
+        ?: providers.firstOrNull()
+    }
+
+  val isSelectedConversationStreaming: Boolean
+    get() = selectedConversationId != null &&
+      (selectedConversationId in streamingConversationIds || messages.any { it.status == MessageStatus.STREAMING })
 }
