@@ -2245,6 +2245,35 @@ class ChatRepository(
         "请求超时。请检查网络连接或增大请求超时时间。"
       raw.contains("failed to connect", ignoreCase = true) ->
         "无法连接到服务器。请检查 Base URL、网络和代理设置。"
+      raw.contains("HTTP 400", ignoreCase = true) || raw.contains("invalid_request_error", ignoreCase = true) ->
+        "请求参数不被 Provider 接受。请检查模型名、Base URL、接口模式、附件类型和当前模型是否支持这些参数；开启原始响应日志可查看服务端返回详情。"
+      raw.contains("HTTP 401", ignoreCase = true) ||
+        raw.contains("invalid_api_key", ignoreCase = true) ||
+        raw.contains("incorrect api key", ignoreCase = true) ||
+        raw.contains("unauthorized", ignoreCase = true) ->
+        "API Key 无效或未被服务端接受。请检查 API 配置中的 Key 是否正确、是否属于当前 Base URL 对应的服务商，以及是否复制了多余空格。"
+      raw.contains("HTTP 403", ignoreCase = true) ||
+        raw.contains("permission", ignoreCase = true) ||
+        raw.contains("forbidden", ignoreCase = true) ->
+        "当前 Key 没有访问该模型或功能的权限。请检查服务商后台是否开通了对应模型、生图/搜索/附件能力，或更换有权限的 Key。"
+      raw.contains("HTTP 404", ignoreCase = true) ||
+        raw.contains("not found", ignoreCase = true) ||
+        raw.contains("model_not_found", ignoreCase = true) ->
+        "接口地址或模型不存在。请检查 Base URL 是否包含正确前缀（例如 /v1）、接口模式是否匹配服务商能力，以及模型名是否填写正确。"
+      raw.contains("HTTP 429", ignoreCase = true) ||
+        raw.contains("rate_limit", ignoreCase = true) ||
+        raw.contains("too many requests", ignoreCase = true) ->
+        "请求过于频繁或额度被限流。请稍后重试，降低并发/频率，或检查服务商的速率限制和套餐额度。"
+      raw.contains("insufficient_quota", ignoreCase = true) ||
+        raw.contains("quota", ignoreCase = true) ||
+        raw.contains("billing", ignoreCase = true) ||
+        raw.contains("balance", ignoreCase = true) ->
+        "账号额度或余额不足。请检查服务商后台余额、账单状态、套餐配额或中转额度。"
+      raw.contains("HTTP 500", ignoreCase = true) ||
+        raw.contains("HTTP 502", ignoreCase = true) ||
+        raw.contains("HTTP 503", ignoreCase = true) ||
+        raw.contains("HTTP 504", ignoreCase = true) ->
+        "Provider 或上游服务临时异常。请求已经到达服务端但未成功处理；请稍后重试，如果使用中转 Base URL，也请检查中转服务状态。"
       raw.contains("response.failed", ignoreCase = true) && raw.contains("Upstream request failed", ignoreCase = true) ->
         "上游模型请求失败。若本轮开启了网页搜索，通常是搜索工具或代理服务临时失败；请稍后重试，或暂时关闭网页搜索后再让群聊继续。"
       raw.contains("upstream_error", ignoreCase = true) ||

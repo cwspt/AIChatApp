@@ -11,6 +11,7 @@
 - Done: message/tool bubble bottoms are more compact, and grouped tool cards now use a subtle search watermark for clearer visual separation from normal response bubbles.
 - Done: GPT image-generation mode adds dedicated IMAGE conversations, Room v13/v14 fields, OpenAI Responses `image_generation` support, Images API `/images/generations` and `/images/edits` support for compatible middlemen, reference-image input, local generated-image attachments, image-mode composer controls for size/quality/count/format/background, and debug raw-response logging.
 - Done: generated-image previews can now open with system apps without crashing; `chat_generated_images` is covered by FileProvider and external open failures show a lightweight toast.
+- Done: provider/network errors now surface clearer Chinese guidance for invalid requests, API keys, permissions, model/Base URL mismatches, rate limits, quota/billing issues, and 5xx upstream failures.
 - Planned: improve full long-image export for grouped tool cards, structure tool source URLs more explicitly, and consider persistent single-chat turn ids if UI-order grouping is not enough later.
 - Planned: vary grouped tool card watermarks by tool type, such as search for web_search and page/file icons for open or web_fetch.
 - Planned: extend image-generation mode with masks/local edit regions, reusable generation parameters, richer image export layouts, and DeepSeek support only if an official image-generation API becomes available.
@@ -243,7 +244,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-005 | 真实 GPT Key 验证图片 + PDF 输入 | Planned | 真机选择图片/PDF 后 GPT 能正确识别内容 |
 | NEXT-P1-006 | 真实 DeepSeek Key 回归验证附件按钮隐藏 | Planned | DeepSeek 对话无附件按钮，纯文本/搜索功能正常 |
 | NEXT-P1-007 | 滚动卡顿专项优化 | Planned | 排查长气泡交界处滚动卡顿和自绘滚动条影响 |
-| NEXT-P1-008 | provider 错误提示进一步中文化 | Planned | 401、429、超时、DNS、SSL、Base URL 错误均有清晰提示 |
+| NEXT-P1-008 | provider 错误提示进一步中文化 | Done | 400/401/403/404/429、quota/billing、DNS、SSL、超时、Base URL 和 5xx 上游异常均给出更清晰的中文处理建议 |
 | NEXT-P1-009 | 收藏夹标签管理 | Planned | 支持重命名、合并、删除标签 |
 | NEXT-P1-010 | 收藏导入导出 | Planned | 支持收藏片段 JSON/Markdown 导出和恢复 |
 | NEXT-P1-011 | 群聊真机回归 | Planned | 真机验证新建机器人、创建群聊、点名/播放器发言、搜索工具调用、附件上下文和切换页面不中断 |
