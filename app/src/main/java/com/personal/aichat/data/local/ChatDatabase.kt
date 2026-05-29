@@ -18,7 +18,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     GroupChatMemberEntity::class,
     GroupMessageEntity::class
   ],
-  version = 12,
+  version = 14,
   exportSchema = true
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -44,7 +44,9 @@ abstract class ChatDatabase : RoomDatabase() {
           Migration8To9,
           Migration9To10,
           Migration10To11,
-          Migration11To12
+          Migration11To12,
+          Migration12To13,
+          Migration13To14
         ).build().also { instance = it }
       }
     }
@@ -211,6 +213,21 @@ abstract class ChatDatabase : RoomDatabase() {
         db.execSQL("ALTER TABLE group_messages ADD COLUMN turnRound INTEGER DEFAULT NULL")
         db.execSQL("ALTER TABLE group_messages ADD COLUMN turnIndex INTEGER DEFAULT NULL")
         db.execSQL("ALTER TABLE group_messages ADD COLUMN turnMemberCount INTEGER DEFAULT NULL")
+      }
+    }
+
+    private val Migration12To13 = object : Migration(12, 13) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE conversations ADD COLUMN type TEXT NOT NULL DEFAULT 'CHAT'")
+        db.execSQL("ALTER TABLE providers ADD COLUMN supportsImageGeneration INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("UPDATE providers SET supportsImageGeneration = 1 WHERE type = 'OPENAI_RESPONSES'")
+      }
+    }
+
+    private val Migration13To14 = object : Migration(13, 14) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE providers ADD COLUMN imageGenerationApiMode TEXT NOT NULL DEFAULT 'RESPONSES_TOOL'")
+        db.execSQL("ALTER TABLE providers ADD COLUMN imageGenerationModel TEXT NOT NULL DEFAULT ''")
       }
     }
   }

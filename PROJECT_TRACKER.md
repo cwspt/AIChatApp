@@ -7,7 +7,14 @@
 - Done: folder behavior now treats non-empty `groupName` as real folders only; foldered chats are hidden from the loose chat list, deleting a folder moves chats back to the ungrouped list, and blank/default folders are not shown as folders.
 - Done: selecting a single chat from the drawer while a group chat is open now closes the group chat overlay so the selected single chat is visible immediately.
 - Done: app back/close behavior now closes the topmost UI layer first, including drawer, settings, provider manager, API detail dialogs, bot manager, favorites, share target picker, and local edit dialogs; root single/group chat pages still allow Android to exit to launcher.
-- Validation: `:app:compileDebugKotlin` and `:app:assembleDebug` passed after the latest UI/back-stack changes; run full unit + build validation before release tagging.
+- Done: single-chat tool calls now aggregate into an attached tool card above the matching assistant response; group tool cards share the same narrower visual treatment.
+- Done: message/tool bubble bottoms are more compact, and grouped tool cards now use a subtle search watermark for clearer visual separation from normal response bubbles.
+- Done: GPT image-generation mode adds dedicated IMAGE conversations, Room v13/v14 fields, OpenAI Responses `image_generation` support, Images API `/images/generations` and `/images/edits` support for compatible middlemen, reference-image input, local generated-image attachments, image-mode composer controls for size/quality/count/format/background, and debug raw-response logging.
+- Done: generated-image previews can now open with system apps without crashing; `chat_generated_images` is covered by FileProvider and external open failures show a lightweight toast.
+- Planned: improve full long-image export for grouped tool cards, structure tool source URLs more explicitly, and consider persistent single-chat turn ids if UI-order grouping is not enough later.
+- Planned: vary grouped tool card watermarks by tool type, such as search for web_search and page/file icons for open or web_fetch.
+- Planned: extend image-generation mode with masks/local edit regions, reusable generation parameters, richer image export layouts, and DeepSeek support only if an official image-generation API becomes available.
+- Validation: `:app:testDebugUnitTest`, `:app:compileDebugKotlin`, and `:app:assembleDebug` passed after the GPT image-generation mode changes; `:app:compileDebugKotlin` and `:app:assembleDebug` also passed after the generated-image external-open fix.
 
 更新时间：2026-05-29
 

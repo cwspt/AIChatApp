@@ -86,6 +86,9 @@ interface ChatDao {
   @Query("UPDATE messages SET content = :content, status = :status, updatedAt = :updatedAt, errorMessage = :errorMessage WHERE id = :id")
   suspend fun updateMessage(id: String, content: String, status: String, updatedAt: Long, errorMessage: String?)
 
+  @Query("UPDATE messages SET attachmentsJson = :attachmentsJson, updatedAt = :updatedAt WHERE id = :id")
+  suspend fun updateMessageAttachments(id: String, attachmentsJson: String, updatedAt: Long)
+
   @Query(
     """
     UPDATE messages SET

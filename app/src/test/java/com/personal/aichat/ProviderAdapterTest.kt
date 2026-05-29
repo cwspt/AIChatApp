@@ -16,6 +16,12 @@ import com.personal.aichat.domain.ChatCompletionOptions
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatStreamEvent
 import com.personal.aichat.domain.ChatProviderConfig
+import com.personal.aichat.domain.ImageGenerationApiMode
+import com.personal.aichat.domain.ImageGenerationBackground
+import com.personal.aichat.domain.ImageGenerationOptions
+import com.personal.aichat.domain.ImageGenerationOutputFormat
+import com.personal.aichat.domain.ImageGenerationQuality
+import com.personal.aichat.domain.ImageGenerationSize
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderType
@@ -26,6 +32,7 @@ import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
 
@@ -236,6 +243,89 @@ class ProviderAdapterTest {
       assertEquals(true, toolEvents.last().output?.contains("https://api-docs.deepseek.com/quick_start/pricing"))
       assertEquals(ChatStreamEvent.TextDelta("answer"), events.filterIsInstance<ChatStreamEvent.TextDelta>().single())
     } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun openAiResponsesAdapterUsesImagesGenerationsMode() = runTest {
+    val server = MockWebServer()
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[{"b64_json":"aGVsbG8="}]}"""))
+    server.start()
+    try {
+      val adapter = OpenAiResponsesAdapter()
+      val events = adapter.generateImages(
+        config = providerConfig(ProviderType.OPENAI_RESPONSES, server.url("/v1").toString().trimEnd('/')).copy(
+          imageGenerationApiMode = ImageGenerationApiMode.IMAGES_API,
+          imageGenerationModel = "gpt-image-2"
+        ),
+        apiKey = "test-key",
+        messages = listOf(userMessage("生成一张海报")),
+        options = ImageGenerationOptions(
+          size = ImageGenerationSize.LANDSCAPE,
+          quality = ImageGenerationQuality.HIGH,
+          count = 2,
+          outputFormat = ImageGenerationOutputFormat.WEBP,
+          background = ImageGenerationBackground.TRANSPARENT,
+          captureRawResponseLog = true
+        )
+      ).toList()
+
+      val request = server.takeRequest()
+      val body = request.body.readUtf8()
+      assertEquals("/v1/images/generations", request.path)
+      assertTrue(body.contains("gpt-image-2"))
+      assertTrue(body.contains("\"n\":2"))
+      assertTrue(body.contains("\"output_format\":\"webp\""))
+      assertTrue(body.contains("\"background\":\"transparent\""))
+      assertTrue(events.any { it is ChatStreamEvent.RawFrame })
+      assertTrue(events.any { it is ChatStreamEvent.ImageGenerated })
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun openAiResponsesAdapterUsesImagesEditsForReferenceImages() = runTest {
+    val server = MockWebServer()
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":[{"b64_json":"aGVsbG8="}]}"""))
+    server.start()
+    val imageFile = Files.createTempFile("aichat_reference", ".png").toFile().apply {
+      writeBytes(byteArrayOf(1, 2, 3))
+    }
+    try {
+      val adapter = OpenAiResponsesAdapter()
+      adapter.generateImages(
+        config = providerConfig(ProviderType.OPENAI_RESPONSES, server.url("/v1").toString().trimEnd('/')).copy(
+          imageGenerationApiMode = ImageGenerationApiMode.IMAGES_API,
+          imageGenerationModel = "gpt-image-2"
+        ),
+        apiKey = "test-key",
+        messages = listOf(
+          userMessage("参考这张图生成").copy(
+            attachments = listOf(
+              ChatAttachment(
+                id = "att",
+                displayName = "reference.png",
+                mimeType = "image/png",
+                sizeBytes = imageFile.length(),
+                localPath = imageFile.absolutePath
+              )
+            )
+          )
+        ),
+        options = ImageGenerationOptions()
+      ).toList()
+
+      val request = server.takeRequest()
+      val body = request.body.readUtf8()
+      assertEquals("/v1/images/edits", request.path)
+      assertTrue(request.getHeader("Content-Type")?.startsWith("multipart/form-data") == true)
+      assertTrue(body.contains("name=\"image[]\""))
+      assertTrue(body.contains("name=\"model\""))
+      assertTrue(body.contains("gpt-image-2"))
+    } finally {
+      imageFile.delete()
       server.shutdown()
     }
   }

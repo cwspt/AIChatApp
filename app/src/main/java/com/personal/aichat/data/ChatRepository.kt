@@ -32,6 +32,9 @@ import com.personal.aichat.domain.GroupTurnTrigger
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ChatStreamEvent
+import com.personal.aichat.domain.ConversationType
+import com.personal.aichat.domain.ImageGenerationApiMode
+import com.personal.aichat.domain.ImageGenerationOptions
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderAdapter
@@ -42,6 +45,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.CancellationException
 import javax.net.ssl.SSLHandshakeException
+import java.io.File
+import java.util.Base64
 import java.util.UUID
 
 private const val MaxRawResponseLogChars = 64_000
@@ -62,6 +67,9 @@ private data class ProviderConfigExportItem(
   val enabled: Boolean = true,
   val supportsStreaming: Boolean = true,
   val supportsAttachments: Boolean = false,
+  val supportsImageGeneration: Boolean = false,
+  val imageGenerationApiMode: String = ImageGenerationApiMode.RESPONSES_TOOL.name,
+  val imageGenerationModel: String = "",
   val extraHeadersJson: String = "",
   val reasoningEffort: String = ReasoningEffort.AUTO.name,
   val apiKey: String? = null
@@ -76,7 +84,8 @@ class ChatRepository(
   private val dao: ChatDao,
   private val preferencesRepository: ChatSelectionStore,
   private val apiKeyStore: ApiKeyStore,
-  private val adapters: Map<ProviderType, ProviderAdapter> = defaultAdapters()
+  private val adapters: Map<ProviderType, ProviderAdapter> = defaultAdapters(),
+  private val generatedImageDir: File = File(System.getProperty("java.io.tmpdir"), "aichat_generated_images")
 ) {
   private val gson = Gson()
 
@@ -641,6 +650,9 @@ class ChatRepository(
         enabled = true,
         supportsStreaming = true,
         supportsAttachments = true,
+        supportsImageGeneration = true,
+        imageGenerationApiMode = ImageGenerationApiMode.RESPONSES_TOOL,
+        imageGenerationModel = "",
         extraHeadersJson = "",
         secretRef = null,
         reasoningEffort = ReasoningEffort.AUTO
@@ -654,6 +666,9 @@ class ChatRepository(
         enabled = true,
         supportsStreaming = true,
         supportsAttachments = false,
+        supportsImageGeneration = false,
+        imageGenerationApiMode = ImageGenerationApiMode.RESPONSES_TOOL,
+        imageGenerationModel = "",
         extraHeadersJson = "",
         secretRef = null,
         reasoningEffort = ReasoningEffort.AUTO
@@ -667,6 +682,9 @@ class ChatRepository(
         enabled = true,
         supportsStreaming = true,
         supportsAttachments = true,
+        supportsImageGeneration = false,
+        imageGenerationApiMode = ImageGenerationApiMode.RESPONSES_TOOL,
+        imageGenerationModel = "",
         extraHeadersJson = "",
         secretRef = null,
         reasoningEffort = ReasoningEffort.AUTO
@@ -680,6 +698,9 @@ class ChatRepository(
         enabled = false,
         supportsStreaming = true,
         supportsAttachments = false,
+        supportsImageGeneration = false,
+        imageGenerationApiMode = ImageGenerationApiMode.RESPONSES_TOOL,
+        imageGenerationModel = "",
         extraHeadersJson = "",
         secretRef = null,
         reasoningEffort = ReasoningEffort.AUTO
@@ -693,6 +714,9 @@ class ChatRepository(
         enabled = false,
         supportsStreaming = true,
         supportsAttachments = false,
+        supportsImageGeneration = false,
+        imageGenerationApiMode = ImageGenerationApiMode.RESPONSES_TOOL,
+        imageGenerationModel = "",
         extraHeadersJson = "",
         secretRef = null,
         reasoningEffort = ReasoningEffort.AUTO
@@ -760,12 +784,21 @@ class ChatRepository(
   }
 
   suspend fun createConversation(providerId: String, model: String): ChatConversation {
+    return createConversation(providerId, model, ConversationType.CHAT)
+  }
+
+  suspend fun createImageConversation(providerId: String, model: String): ChatConversation {
+    return createConversation(providerId, model, ConversationType.IMAGE)
+  }
+
+  private suspend fun createConversation(providerId: String, model: String, type: ConversationType): ChatConversation {
     val now = System.currentTimeMillis()
     val conversation = ConversationEntity(
       id = newId("conv"),
-      title = "新对话",
+      title = if (type == ConversationType.IMAGE) "新生图" else "新对话",
       providerId = providerId,
       model = model,
+      type = type.name,
       groupName = "",
       createdAt = now,
       updatedAt = now
@@ -792,6 +825,7 @@ class ChatRepository(
       title = "${sourceConversation.title} - ${targetProvider.displayName}",
       providerId = targetProvider.id,
       model = targetProvider.defaultModel,
+      type = sourceConversation.type,
       groupName = sourceConversation.groupName,
       forkedFromConversationId = sourceConversation.id,
       forkedFromMessageId = sourceMessageId,
@@ -901,6 +935,9 @@ class ChatRepository(
         enabled = provider.enabled,
         supportsStreaming = provider.supportsStreaming,
         supportsAttachments = provider.supportsAttachments,
+        supportsImageGeneration = provider.supportsImageGeneration,
+        imageGenerationApiMode = provider.imageGenerationApiMode.name,
+        imageGenerationModel = provider.imageGenerationModel.trim(),
         extraHeadersJson = provider.extraHeadersJson,
         reasoningEffort = provider.reasoningEffort.name,
         secretRef = secretRef,
@@ -913,6 +950,10 @@ class ChatRepository(
     val cleanText = text.trim()
     if (cleanText.isEmpty() && attachments.isEmpty()) return
     val conversation = dao.conversationById(conversationId) ?: return
+    if (conversation.type == ConversationType.IMAGE.name) {
+      sendImageMessage(conversationId, text, attachments, ImageGenerationOptions())
+      return
+    }
     val provider = dao.providerById(conversation.providerId)?.toDomain() ?: return
     val now = System.currentTimeMillis()
     val userMessage = MessageEntity(
@@ -949,6 +990,185 @@ class ChatRepository(
       dao.upsertConversation(conversation.copy(updatedAt = now))
     }
     streamAssistant(conversationId, provider, conversation.model, assistantMessage.id)
+  }
+
+  suspend fun sendImageMessage(
+    conversationId: String,
+    text: String,
+    attachments: List<ChatAttachment> = emptyList(),
+    options: ImageGenerationOptions = ImageGenerationOptions()
+  ) {
+    val cleanText = text.trim()
+    val imageAttachments = attachments.filter { it.isImage }
+    if (cleanText.isEmpty() && imageAttachments.isEmpty()) return
+    val conversation = dao.conversationById(conversationId) ?: return
+    val provider = dao.providerById(conversation.providerId)?.toDomain() ?: return
+    val now = System.currentTimeMillis()
+    val userMessage = MessageEntity(
+      id = newId("msg"),
+      conversationId = conversationId,
+      role = MessageRole.USER.name,
+      content = cleanText,
+      attachmentsJson = formatAttachments(imageAttachments),
+      status = MessageStatus.COMPLETE.name,
+      providerId = provider.id,
+      model = conversation.model,
+      createdAt = now,
+      updatedAt = now,
+      errorMessage = null
+    )
+    val assistantMessage = MessageEntity(
+      id = newId("msg"),
+      conversationId = conversationId,
+      role = MessageRole.ASSISTANT.name,
+      content = "正在生成图片...",
+      status = MessageStatus.STREAMING.name,
+      providerId = provider.id,
+      model = conversation.model,
+      createdAt = now + 1_000,
+      updatedAt = now + 1_000,
+      errorMessage = null
+    )
+    dao.upsertMessage(userMessage)
+    dao.upsertMessage(assistantMessage)
+    if (conversation.title == "新生图" || conversation.title == "新对话" || conversation.title == "New chat") {
+      val titleSource = cleanText.takeIf { it.isNotBlank() } ?: imageAttachments.firstOrNull()?.displayName ?: "生图对话"
+      dao.updateConversationTitle(conversationId, titleSource.take(40), now)
+    } else {
+      dao.upsertConversation(conversation.copy(updatedAt = now))
+    }
+
+    val startedAt = System.currentTimeMillis()
+    generateImagesForAssistant(conversation, provider, assistantMessage.id, options, startedAt)
+  }
+
+  private suspend fun generateImagesForAssistant(
+    conversation: ConversationEntity,
+    provider: ChatProviderConfig,
+    assistantMessageId: String,
+    options: ImageGenerationOptions,
+    startedAt: Long
+  ) {
+    val conversationId = conversation.id
+    val adapter = adapters[provider.type]
+    val captureRawResponseLog = preferencesRepository.appSettings.first().debugResponseLogging
+    val requestOptions = options.copy(captureRawResponseLog = captureRawResponseLog)
+    val rawResponseLog = StringBuilder()
+    var promptTokens: Int? = null
+    var completionTokens: Int? = null
+    var totalTokens: Int? = null
+
+    fun appendRawFrame(event: String?, data: String) {
+      if (!captureRawResponseLog || rawResponseLog.length >= MaxRawResponseLogChars) return
+      val frame = buildString {
+        if (!event.isNullOrBlank()) append("event: ").append(event).append('\n')
+        append("data: ").append(data).append("\n\n")
+      }
+      val remaining = MaxRawResponseLogChars - rawResponseLog.length
+      rawResponseLog.append(frame.take(remaining))
+      if (frame.length > remaining) {
+        rawResponseLog.append("\n... raw response log truncated ...")
+      }
+    }
+
+    suspend fun updateAssistant(
+      content: String,
+      status: MessageStatus,
+      errorMessage: String?,
+      generated: List<ChatAttachment>
+    ) {
+      val updatedAt = System.currentTimeMillis()
+      dao.updateMessageWithMetadata(
+        id = assistantMessageId,
+        content = content,
+        status = status.name,
+        updatedAt = updatedAt,
+        errorMessage = errorMessage,
+        totalDurationMs = updatedAt - startedAt,
+        firstTokenDurationMs = null,
+        promptTokens = promptTokens,
+        completionTokens = completionTokens,
+        totalTokens = totalTokens,
+        rawResponseLog = rawResponseLog.toString().takeIf { captureRawResponseLog && it.isNotBlank() }
+      )
+      dao.updateMessageAttachments(assistantMessageId, formatAttachments(generated), updatedAt)
+      dao.touchConversation(conversationId, updatedAt)
+    }
+
+    if (!provider.supportsImageGeneration || adapter == null) {
+      updateAssistant("", MessageStatus.FAILED, "当前 GPT 配置不支持图片生成", emptyList())
+      return
+    }
+    val apiKey = apiKeyStore.read(provider.secretRef)
+    if (apiKey.isNullOrBlank()) {
+      updateAssistant("", MessageStatus.FAILED, "当前 API 配置还没有保存 Key，请在 API 配置中填写后再发送。", emptyList())
+      return
+    }
+
+    val generated = mutableListOf<ChatAttachment>()
+    var revisedPrompt: String? = null
+    try {
+      val count = options.count.coerceIn(1, 4)
+      repeat(count) { index ->
+        val history = dao.messagesForConversation(conversationId)
+          .filter { it.id != assistantMessageId }
+          .map { it.toDomain() }
+        adapter.generateImages(
+          config = provider.copy(defaultModel = conversation.model),
+          apiKey = apiKey,
+          messages = history,
+          options = requestOptions.copy(count = 1)
+        ).collect { event ->
+          when (event) {
+            ChatStreamEvent.Started -> Unit
+            is ChatStreamEvent.ImageGenerated -> {
+              revisedPrompt = event.revisedPrompt ?: revisedPrompt
+              generated += saveGeneratedImage(event.base64Data, event.mimeType, conversationId, index + 1)
+              updateAssistant(
+                content = imageGenerationContent(generated.size, count, options, revisedPrompt),
+                status = MessageStatus.STREAMING,
+                errorMessage = null,
+                generated = generated
+              )
+            }
+            is ChatStreamEvent.Failed -> throw IllegalStateException(event.message)
+            is ChatStreamEvent.Usage -> {
+              promptTokens = event.promptTokens ?: promptTokens
+              completionTokens = event.completionTokens ?: completionTokens
+              totalTokens = event.totalTokens ?: totalTokens
+              if (event.raw != null) appendRawFrame("usage", event.raw)
+            }
+            is ChatStreamEvent.RawFrame -> appendRawFrame(event.event, event.data)
+            else -> Unit
+          }
+        }
+      }
+      if (generated.isEmpty()) {
+        throw IllegalStateException("OpenAI did not return image data")
+      }
+      val completedAt = System.currentTimeMillis()
+      val completedContent = imageGenerationContent(generated.size, count, options, revisedPrompt)
+      dao.updateMessageWithMetadata(
+        id = assistantMessageId,
+        content = completedContent,
+        status = MessageStatus.COMPLETE.name,
+        updatedAt = completedAt,
+        errorMessage = null,
+        totalDurationMs = completedAt - startedAt,
+        firstTokenDurationMs = null,
+        promptTokens = promptTokens,
+        completionTokens = completionTokens,
+        totalTokens = totalTokens,
+        rawResponseLog = rawResponseLog.toString().takeIf { captureRawResponseLog && it.isNotBlank() }
+      )
+      dao.updateMessageAttachments(assistantMessageId, formatAttachments(generated), completedAt)
+      dao.touchConversation(conversationId, completedAt)
+    } catch (error: CancellationException) {
+      updateAssistant(imageGenerationContent(generated.size, generated.size.coerceAtLeast(1), options, revisedPrompt), MessageStatus.FAILED, "已停止", generated)
+      throw error
+    } catch (error: Exception) {
+      updateAssistant(imageGenerationContent(generated.size, generated.size.coerceAtLeast(1), options, revisedPrompt), MessageStatus.FAILED, friendlyNetworkErrorMessage(error), generated)
+    }
   }
 
   suspend fun conversationShareText(conversationId: String, includeTimestamps: Boolean = true): String {
@@ -1156,7 +1376,11 @@ class ChatRepository(
       errorMessage = null
     )
     dao.upsertMessage(assistantMessage)
-    streamAssistant(conversationId, provider, conversation.model, assistantMessage.id)
+    if (conversation.type == ConversationType.IMAGE.name) {
+      generateImagesForAssistant(conversation, provider, assistantMessage.id, ImageGenerationOptions(), now)
+    } else {
+      streamAssistant(conversationId, provider, conversation.model, assistantMessage.id)
+    }
   }
 
   suspend fun exportProvidersText(includeApiKeys: Boolean = true): String {
@@ -1173,6 +1397,9 @@ class ChatRepository(
           enabled = provider.enabled,
           supportsStreaming = provider.supportsStreaming,
           supportsAttachments = provider.supportsAttachments,
+          supportsImageGeneration = provider.supportsImageGeneration,
+          imageGenerationApiMode = provider.imageGenerationApiMode.name,
+          imageGenerationModel = provider.imageGenerationModel,
           extraHeadersJson = provider.extraHeadersJson,
           reasoningEffort = provider.reasoningEffort.name,
           apiKey = if (includeApiKeys) apiKeyStore.read(provider.secretRef) else null
@@ -1205,6 +1432,9 @@ class ChatRepository(
           enabled = item.enabled,
           supportsStreaming = item.supportsStreaming,
           supportsAttachments = item.supportsAttachments,
+          supportsImageGeneration = item.supportsImageGeneration && type == ProviderType.OPENAI_RESPONSES,
+          imageGenerationApiMode = runCatching { ImageGenerationApiMode.valueOf(item.imageGenerationApiMode) }.getOrDefault(ImageGenerationApiMode.RESPONSES_TOOL),
+          imageGenerationModel = item.imageGenerationModel.trim(),
           extraHeadersJson = item.extraHeadersJson,
           secretRef = "provider_$id",
           reasoningEffort = reasoning
@@ -1377,6 +1607,7 @@ class ChatRepository(
               }
             )
           }
+          is ChatStreamEvent.ImageGenerated -> Unit
           ChatStreamEvent.Completed -> {
             updateFinalMessage(MessageStatus.COMPLETE, null)
             dao.touchConversation(conversationId, System.currentTimeMillis())
@@ -1546,6 +1777,7 @@ class ChatRepository(
           }
           is ChatStreamEvent.RawFrame -> Unit
           is ChatStreamEvent.ToolCall -> upsertGroupToolMessage(event)
+          is ChatStreamEvent.ImageGenerated -> Unit
           ChatStreamEvent.Completed -> {
             updateBotMessage(MessageStatus.COMPLETE, null)
             finalStatus = MessageStatus.COMPLETE
@@ -1748,6 +1980,9 @@ class ChatRepository(
         enabled = true,
         supportsStreaming = true,
         supportsAttachments = true,
+        supportsImageGeneration = false,
+        imageGenerationApiMode = ImageGenerationApiMode.RESPONSES_TOOL.name,
+        imageGenerationModel = "",
         extraHeadersJson = "",
         reasoningEffort = ReasoningEffort.AUTO.name,
         secretRef = "provider_tokenhub-proxy",
@@ -1762,6 +1997,9 @@ class ChatRepository(
         enabled = false,
         supportsStreaming = true,
         supportsAttachments = true,
+        supportsImageGeneration = true,
+        imageGenerationApiMode = ImageGenerationApiMode.RESPONSES_TOOL.name,
+        imageGenerationModel = "",
         extraHeadersJson = "",
         reasoningEffort = ReasoningEffort.AUTO.name,
         secretRef = "provider_openai-responses",
@@ -1776,6 +2014,9 @@ class ChatRepository(
         enabled = false,
         supportsStreaming = true,
         supportsAttachments = false,
+        supportsImageGeneration = false,
+        imageGenerationApiMode = ImageGenerationApiMode.RESPONSES_TOOL.name,
+        imageGenerationModel = "",
         extraHeadersJson = "",
         reasoningEffort = ReasoningEffort.AUTO.name,
         secretRef = "provider_openai-compatible",
@@ -1933,6 +2174,54 @@ class ChatRepository(
     return "%.1f MB".format(kb / 1024.0)
   }
 
+  private fun saveGeneratedImage(
+    base64Data: String,
+    mimeType: String,
+    conversationId: String,
+    sequence: Int
+  ): ChatAttachment {
+    generatedImageDir.mkdirs()
+    val normalizedMimeType = mimeType.ifBlank { "image/png" }
+    val extension = when (normalizedMimeType.substringAfter('/', "png").substringBefore(';').lowercase()) {
+      "jpeg", "jpg" -> "jpg"
+      "webp" -> "webp"
+      else -> "png"
+    }
+    val id = newId("img")
+    val displayName = "generated_${conversationId.takeLast(6)}_${System.currentTimeMillis()}_${sequence}.$extension"
+    val target = File(generatedImageDir, "${id}_$displayName")
+    target.writeBytes(Base64.getDecoder().decode(base64Data.substringAfter("base64,", base64Data)))
+    return ChatAttachment(
+      id = id,
+      displayName = displayName,
+      mimeType = normalizedMimeType,
+      sizeBytes = target.length(),
+      localPath = target.absolutePath
+    )
+  }
+
+  private fun imageGenerationContent(
+    generatedCount: Int,
+    targetCount: Int,
+    options: ImageGenerationOptions,
+    revisedPrompt: String?
+  ): String {
+    return buildString {
+      if (generatedCount > 0) {
+        append("已生成 $generatedCount")
+        if (targetCount > generatedCount) append("/$targetCount")
+        append(" 张图片")
+      } else {
+        append("正在生成图片")
+      }
+      append("。尺寸：${options.size.apiValue}，质量：${options.quality.apiValue}，格式：${options.outputFormat.apiValue}，背景：${options.background.apiValue}")
+      revisedPrompt?.takeIf { it.isNotBlank() }?.let {
+        append("\n\n修订提示词：")
+        append(it)
+      }
+    }
+  }
+
   private fun formatShareTime(timestamp: Long): String {
     val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).apply {
       timeZone = java.util.TimeZone.getDefault()
@@ -1958,6 +2247,9 @@ class ChatRepository(
         "无法连接到服务器。请检查 Base URL、网络和代理设置。"
       raw.contains("response.failed", ignoreCase = true) && raw.contains("Upstream request failed", ignoreCase = true) ->
         "上游模型请求失败。若本轮开启了网页搜索，通常是搜索工具或代理服务临时失败；请稍后重试，或暂时关闭网页搜索后再让群聊继续。"
+      raw.contains("upstream_error", ignoreCase = true) ||
+        raw.contains("Upstream service temporarily unavailable", ignoreCase = true) ->
+        "上游服务暂时不可用。请求已到达 Provider，但 OpenAI 或中转上游当前不可用；请稍后重试，如果使用的是代理 Base URL，也请检查代理服务状态。"
       else -> error.message ?: "Provider request failed"
     }
   }

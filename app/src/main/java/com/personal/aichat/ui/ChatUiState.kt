@@ -11,6 +11,7 @@ import com.personal.aichat.domain.GroupChatMember
 import com.personal.aichat.domain.GroupChatMessage
 import com.personal.aichat.domain.GroupChatRoom
 import com.personal.aichat.domain.AppSettings
+import com.personal.aichat.domain.ImageGenerationOptions
 import com.personal.aichat.domain.MessageStatus
 import androidx.compose.ui.text.input.TextFieldValue
 
@@ -43,6 +44,7 @@ data class ChatUiState(
   val selectedProviderId: String? = null,
   val input: TextFieldValue = TextFieldValue(""),
   val groupInput: TextFieldValue = TextFieldValue(""),
+  val imageGenerationOptions: ImageGenerationOptions = ImageGenerationOptions(),
   val pendingAttachments: List<ChatAttachment> = emptyList(),
   val incomingShareDraft: IncomingShareDraft? = null,
   val appSettings: AppSettings = AppSettings(),

@@ -34,7 +34,8 @@ class MainActivity : ComponentActivity() {
     ChatRepository(
       dao = database.chatDao(),
       preferencesRepository = preferencesRepository,
-      apiKeyStore = apiKeyStore
+      apiKeyStore = apiKeyStore,
+      generatedImageDir = java.io.File(applicationContext.filesDir, "chat_generated_images")
     )
   }
   private var pendingShareIntent by mutableStateOf<Intent?>(null)

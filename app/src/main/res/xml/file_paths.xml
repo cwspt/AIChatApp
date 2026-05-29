@@ -9,4 +9,7 @@
   <files-path
       name="chat_attachments"
       path="chat_attachments/" />
+  <files-path
+      name="chat_generated_images"
+      path="chat_generated_images/" />
 </paths>

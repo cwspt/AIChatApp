@@ -22,12 +22,18 @@ import com.personal.aichat.domain.ChatBackgroundPreset
 import com.personal.aichat.domain.ChatConversation
 import com.personal.aichat.domain.ChatConversationGroup
 import com.personal.aichat.domain.ChatProviderConfig
+import com.personal.aichat.domain.ConversationType
 import com.personal.aichat.domain.FavoriteSnippet
 import com.personal.aichat.domain.GroupChatMember
 import com.personal.aichat.domain.GroupChatMessage
 import com.personal.aichat.domain.GroupChatRoom
 import com.personal.aichat.domain.GroupMessageSenderType
 import com.personal.aichat.domain.GroupTurnTrigger
+import com.personal.aichat.domain.ImageGenerationOptions
+import com.personal.aichat.domain.ImageGenerationBackground
+import com.personal.aichat.domain.ImageGenerationOutputFormat
+import com.personal.aichat.domain.ImageGenerationQuality
+import com.personal.aichat.domain.ImageGenerationSize
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.WebSearchMode
@@ -320,12 +326,41 @@ class ChatViewModel(
     val state = uiState.value
     val conversationId = state.selectedConversationId ?: return
     val text = state.input.text
-    val attachments = if (state.selectedProvider?.supportsAttachments == true) state.pendingAttachments else emptyList()
+    val isImageConversation = state.selectedConversation?.type == ConversationType.IMAGE
+    val attachments = when {
+      isImageConversation -> state.pendingAttachments.filter { it.isImage }
+      state.selectedProvider?.supportsAttachments == true -> state.pendingAttachments
+      else -> emptyList()
+    }
     if ((text.isBlank() && attachments.isEmpty()) || sendJobsByConversationId[conversationId]?.isActive == true) return
     localState.update { it.copy(input = TextFieldValue(""), pendingAttachments = emptyList()) }
     launchStreamingJob(conversationId) {
-      repository.sendMessage(conversationId, text, attachments)
+      if (isImageConversation) {
+        repository.sendImageMessage(conversationId, text, attachments, state.imageGenerationOptions)
+      } else {
+        repository.sendMessage(conversationId, text, attachments)
+      }
     }
+  }
+
+  fun setImageGenerationSize(size: ImageGenerationSize) {
+    localState.update { it.copy(imageGenerationOptions = it.imageGenerationOptions.copy(size = size)) }
+  }
+
+  fun setImageGenerationQuality(quality: ImageGenerationQuality) {
+    localState.update { it.copy(imageGenerationOptions = it.imageGenerationOptions.copy(quality = quality)) }
+  }
+
+  fun setImageGenerationCount(count: Int) {
+    localState.update { it.copy(imageGenerationOptions = it.imageGenerationOptions.copy(count = count.coerceIn(1, 4))) }
+  }
+
+  fun setImageGenerationOutputFormat(format: ImageGenerationOutputFormat) {
+    localState.update { it.copy(imageGenerationOptions = it.imageGenerationOptions.copy(outputFormat = format)) }
+  }
+
+  fun setImageGenerationBackground(background: ImageGenerationBackground) {
+    localState.update { it.copy(imageGenerationOptions = it.imageGenerationOptions.copy(background = background)) }
   }
 
   fun retryLast() {
@@ -1278,6 +1313,16 @@ class ChatViewModel(
   fun setWebSearchMode(mode: WebSearchMode) {
     viewModelScope.launch {
       preferencesRepository.setWebSearchMode(mode)
+    }
+  }
+
+  fun createImageConversationWithProvider(providerId: String) {
+    val provider = uiState.value.providers.firstOrNull { it.id == providerId && it.supportsImageGeneration } ?: return
+    localState.update { it.copy(newConversationPickerOpen = false, groupChatPageOpen = false, selectedGroupChatId = null) }
+    viewModelScope.launch {
+      val conversation = repository.createImageConversation(provider.id, provider.defaultModel)
+      preferencesRepository.setSelectedProvider(provider.id)
+      preferencesRepository.setSelectedConversation(conversation.id)
     }
   }
 

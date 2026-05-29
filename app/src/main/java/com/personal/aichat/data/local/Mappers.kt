@@ -14,6 +14,8 @@ import com.personal.aichat.domain.GroupMessageSenderType
 import com.personal.aichat.domain.GroupTurnTrigger
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
+import com.personal.aichat.domain.ConversationType
+import com.personal.aichat.domain.ImageGenerationApiMode
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderType
@@ -33,6 +35,9 @@ fun ProviderEntity.toDomain(): ChatProviderConfig = ChatProviderConfig(
   enabled = enabled,
   supportsStreaming = supportsStreaming,
   supportsAttachments = supportsAttachments,
+  supportsImageGeneration = supportsImageGeneration,
+  imageGenerationApiMode = runCatching { ImageGenerationApiMode.valueOf(imageGenerationApiMode) }.getOrDefault(ImageGenerationApiMode.RESPONSES_TOOL),
+  imageGenerationModel = imageGenerationModel,
   extraHeadersJson = extraHeadersJson,
   secretRef = secretRef,
   reasoningEffort = runCatching { ReasoningEffort.valueOf(reasoningEffort) }.getOrDefault(ReasoningEffort.AUTO)
@@ -47,6 +52,9 @@ fun ChatProviderConfig.toEntity(sortOrder: Int = 0): ProviderEntity = ProviderEn
   enabled = enabled,
   supportsStreaming = supportsStreaming,
   supportsAttachments = supportsAttachments,
+  supportsImageGeneration = supportsImageGeneration,
+  imageGenerationApiMode = imageGenerationApiMode.name,
+  imageGenerationModel = imageGenerationModel,
   extraHeadersJson = extraHeadersJson,
   reasoningEffort = reasoningEffort.name,
   secretRef = secretRef,
@@ -58,6 +66,7 @@ fun ConversationEntity.toDomain(): ChatConversation = ChatConversation(
   title = title,
   providerId = providerId,
   model = model,
+  type = runCatching { ConversationType.valueOf(type) }.getOrDefault(ConversationType.CHAT),
   groupName = groupName,
   forkedFromConversationId = forkedFromConversationId,
   forkedFromMessageId = forkedFromMessageId,
@@ -73,6 +82,7 @@ fun ChatConversation.toEntity(): ConversationEntity = ConversationEntity(
   title = title,
   providerId = providerId,
   model = model,
+  type = type.name,
   groupName = groupName,
   forkedFromConversationId = forkedFromConversationId,
   forkedFromMessageId = forkedFromMessageId,

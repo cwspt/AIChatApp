@@ -25,6 +25,7 @@ import com.personal.aichat.domain.AiBot
 import com.personal.aichat.domain.GroupChatMessage
 import com.personal.aichat.domain.GroupMessageSenderType
 import com.personal.aichat.domain.GroupTurnTrigger
+import com.personal.aichat.domain.ImageGenerationOptions
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderAdapter
@@ -32,9 +33,11 @@ import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.ReasoningEffort
 import com.personal.aichat.domain.WebSearchMode
 import com.personal.aichat.ui.collapsedGroupMessageSummary
+import com.personal.aichat.ui.ChatMessageListItem
 import com.personal.aichat.ui.GroupMessageListItem
 import com.personal.aichat.ui.LongBubbleNavTarget
 import com.personal.aichat.ui.VisibleListItemBounds
+import com.personal.aichat.ui.chatMessageListItems
 import com.personal.aichat.ui.groupMessageListItems
 import com.personal.aichat.ui.longBubbleNavTarget
 import com.personal.aichat.ui.nextGroupAutoPlayBotId
@@ -51,6 +54,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class ChatRepositoryForkTest {
   @Test
@@ -575,6 +579,116 @@ class ChatRepositoryForkTest {
   }
 
   @Test
+  fun chatToolMessagesAreGroupedBeforeAssistantMessage() {
+    val messages = listOf(
+      testChatMessage("user", MessageRole.USER, createdAt = 1),
+      testChatMessage("tool-1", MessageRole.TOOL, createdAt = 2),
+      testChatMessage("tool-2", MessageRole.TOOL, createdAt = 3),
+      testChatMessage("assistant", MessageRole.ASSISTANT, createdAt = 4)
+    )
+
+    val items = chatMessageListItems(messages)
+
+    assertEquals(3, items.size)
+    assertTrue(items[0] is ChatMessageListItem.Message)
+    val toolGroup = items[1] as ChatMessageListItem.ToolGroup
+    assertEquals(listOf("tool-1", "tool-2"), toolGroup.messageIds)
+    assertEquals("assistant", (items[2] as ChatMessageListItem.Message).message.id)
+  }
+
+  @Test
+  fun chatToolMessagesDoNotCrossUserMessages() {
+    val messages = listOf(
+      testChatMessage("tool-1", MessageRole.TOOL, createdAt = 1),
+      testChatMessage("user", MessageRole.USER, createdAt = 2),
+      testChatMessage("tool-2", MessageRole.TOOL, createdAt = 3),
+      testChatMessage("assistant", MessageRole.ASSISTANT, createdAt = 4)
+    )
+
+    val items = chatMessageListItems(messages)
+
+    assertEquals(4, items.size)
+    assertEquals(listOf("tool-1"), (items[0] as ChatMessageListItem.ToolGroup).messageIds)
+    assertEquals("user", (items[1] as ChatMessageListItem.Message).message.id)
+    assertEquals(listOf("tool-2"), (items[2] as ChatMessageListItem.ToolGroup).messageIds)
+    assertEquals("assistant", (items[3] as ChatMessageListItem.Message).message.id)
+  }
+
+  @Test
+  fun chatOrphanToolMessagesRemainVisibleAsToolGroup() {
+    val messages = listOf(
+      testChatMessage("user", MessageRole.USER, createdAt = 1),
+      testChatMessage("tool", MessageRole.TOOL, createdAt = 2)
+    )
+
+    val items = chatMessageListItems(messages)
+
+    assertEquals(2, items.size)
+    assertEquals("user", (items[0] as ChatMessageListItem.Message).message.id)
+    assertEquals(listOf("tool"), (items[1] as ChatMessageListItem.ToolGroup).messageIds)
+  }
+
+  @Test
+  fun imageConversationGeneratesAssistantImageAttachment() = runTest {
+    val dao = FakeChatDao()
+    val adapter = RecordingAdapter()
+    val keyStore = FakeApiKeyStore()
+    val imageDir = File(System.getProperty("java.io.tmpdir"), "aichat_image_test_${System.nanoTime()}")
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = keyStore,
+      adapters = mapOf(ProviderType.OPENAI_RESPONSES to adapter),
+      generatedImageDir = imageDir
+    )
+    dao.upsertProvider(provider("provider", "gpt-image").copy(
+      type = ProviderType.OPENAI_RESPONSES.name,
+      supportsImageGeneration = true,
+      secretRef = "provider_provider"
+    ))
+    keyStore.write("provider_provider", "key")
+    val conversation = repository.createImageConversation("provider", "gpt-image")
+
+    repository.sendImageMessage(conversation.id, "画一只猫", emptyList(), ImageGenerationOptions(count = 2))
+
+    val messages = dao.messagesForConversation(conversation.id).map { it.toDomain() }
+    assertEquals(listOf(MessageRole.USER, MessageRole.ASSISTANT), messages.map { it.role })
+    val assistant = messages.last()
+    assertEquals(MessageStatus.COMPLETE, assistant.status)
+    assertEquals(2, assistant.attachments.size)
+    assertTrue(assistant.attachments.all { it.isImage && File(it.localPath).exists() })
+    assertEquals(1, adapter.lastImageOptions?.count)
+  }
+
+  @Test
+  fun imageConversationCapturesRawResponseLogWhenDebugLoggingEnabled() = runTest {
+    val dao = FakeChatDao()
+    val adapter = RecordingAdapter()
+    val preferences = FakeSelectionStore()
+    preferences.setDebugResponseLogging(true)
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = preferences,
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = mapOf(ProviderType.OPENAI_RESPONSES to adapter),
+      generatedImageDir = File(System.getProperty("java.io.tmpdir"), "aichat_image_log_test_${System.nanoTime()}")
+    )
+    dao.upsertProvider(provider("provider", "gpt-image").copy(
+      type = ProviderType.OPENAI_RESPONSES.name,
+      supportsImageGeneration = true,
+      secretRef = "provider_provider"
+    ))
+    val conversation = repository.createImageConversation("provider", "gpt-image")
+
+    repository.sendImageMessage(conversation.id, "生成海报", emptyList(), ImageGenerationOptions())
+
+    val assistant = dao.messagesForConversation(conversation.id).map { it.toDomain() }.last()
+    assertEquals(MessageStatus.COMPLETE, assistant.status)
+    assertTrue(adapter.lastImageOptions?.captureRawResponseLog == true)
+    assertTrue(assistant.rawResponseLog?.contains("\"image_generation_call\"") == true)
+  }
+
+  @Test
   fun groupBotTurnSendsPriorBotMessagesAsUserContextForResponsesCompatibility() = runTest {
     val dao = FakeChatDao()
     val adapter = RecordingAdapter()
@@ -838,6 +952,23 @@ class ChatRepositoryForkTest {
     errorMessage = null
   )
 
+  private fun testChatMessage(
+    id: String,
+    role: MessageRole,
+    createdAt: Long
+  ): ChatMessage = ChatMessage(
+    id = id,
+    conversationId = "conversation",
+    role = role,
+    content = "content",
+    status = MessageStatus.COMPLETE,
+    providerId = "provider",
+    model = "model",
+    createdAt = createdAt,
+    updatedAt = createdAt,
+    errorMessage = null
+  )
+
   private fun testBot(id: String, name: String): AiBot = AiBot(
     id = id,
     name = name,
@@ -880,6 +1011,7 @@ private class RecordingAdapter(
   )
 ) : ProviderAdapter {
   var lastOptions: ChatCompletionOptions? = null
+  var lastImageOptions: ImageGenerationOptions? = null
   var lastMessages: List<ChatMessage> = emptyList()
 
   override fun streamChat(
@@ -891,6 +1023,22 @@ private class RecordingAdapter(
     lastMessages = messages
     lastOptions = options
     events.forEach { emit(it) }
+  }
+
+  override fun generateImages(
+    config: ChatProviderConfig,
+    apiKey: String?,
+    messages: List<ChatMessage>,
+    options: ImageGenerationOptions
+  ): Flow<ChatStreamEvent> = flow {
+    lastMessages = messages
+    lastImageOptions = options
+    emit(ChatStreamEvent.Started)
+    if (options.captureRawResponseLog) {
+      emit(ChatStreamEvent.RawFrame("response", """{"type":"image_generation_call","result":"aGVsbG8="}"""))
+    }
+    emit(ChatStreamEvent.ImageGenerated(base64Data = "aGVsbG8=", mimeType = "image/png", revisedPrompt = "revised"))
+    emit(ChatStreamEvent.Completed)
   }
 }
 
@@ -1056,6 +1204,12 @@ private class FakeChatDao : ChatDao {
   override suspend fun updateMessage(id: String, content: String, status: String, updatedAt: Long, errorMessage: String?) {
     messages[id]?.let {
       messages[id] = it.copy(content = content, status = status, updatedAt = updatedAt, errorMessage = errorMessage)
+    }
+  }
+
+  override suspend fun updateMessageAttachments(id: String, attachmentsJson: String, updatedAt: Long) {
+    messages[id]?.let {
+      messages[id] = it.copy(attachmentsJson = attachmentsJson, updatedAt = updatedAt)
     }
   }
 

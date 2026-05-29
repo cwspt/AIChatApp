@@ -4,10 +4,13 @@ import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.personal.aichat.domain.ChatAttachment
 import com.personal.aichat.domain.ChatCompletionOptions
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ChatStreamEvent
+import com.personal.aichat.domain.ImageGenerationApiMode
+import com.personal.aichat.domain.ImageGenerationOptions
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.ProviderAdapter
 import com.personal.aichat.domain.WebSearchMode
@@ -17,8 +20,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.conscrypt.Conscrypt
 import java.io.File
@@ -176,6 +182,183 @@ class OpenAiResponsesAdapter(
     )
     emit(ChatStreamEvent.Completed)
   }.flowOn(Dispatchers.IO)
+
+  override fun generateImages(
+    config: ChatProviderConfig,
+    apiKey: String?,
+    messages: List<ChatMessage>,
+    options: ImageGenerationOptions
+  ): Flow<ChatStreamEvent> = flow {
+    emit(ChatStreamEvent.Started)
+    if (config.imageGenerationApiMode == ImageGenerationApiMode.IMAGES_API) {
+      emitImagesApiGeneration(config, apiKey, messages, options) { event -> emit(event) }
+      emit(ChatStreamEvent.Completed)
+      return@flow
+    }
+    val requestBody = mutableMapOf<String, Any>(
+      "model" to config.defaultModel,
+      "stream" to false,
+      "input" to messages.takeLast(12).map(::toOpenAiImageInputMessage),
+      "tools" to listOf(
+        mapOf(
+          "type" to "image_generation",
+          "size" to options.size.apiValue,
+          "quality" to options.quality.apiValue,
+          "output_format" to options.outputFormat.apiValue,
+          "background" to options.background.apiValue
+        )
+      ),
+      "tool_choice" to mapOf("type" to "image_generation")
+    )
+    val request = Request.Builder()
+      .url(config.baseUrl.trimEnd('/') + "/responses")
+      .headers(config.headersWithAuth(apiKey))
+      .post(gson.toJson(requestBody).toRequestBody(JsonMediaType))
+      .build()
+    client.newCall(request).execute().use { response ->
+      val body = response.body?.string().orEmpty()
+      if (options.captureRawResponseLog) {
+        emit(ChatStreamEvent.RawFrame(if (response.isSuccessful) "response" else "http_error", body))
+      }
+      if (!response.isSuccessful) {
+        throw IOException(parseProviderErrorMessage(body) ?: "Provider request failed with HTTP ${response.code}")
+      }
+      val images = extractGeneratedImages(body)
+      if (images.isEmpty()) {
+        emit(ChatStreamEvent.Failed("OpenAI 未返回可保存的图片数据"))
+        return@flow
+      }
+      images.forEach { image ->
+        emit(
+          ChatStreamEvent.ImageGenerated(
+            base64Data = image.base64Data,
+            mimeType = image.mimeType,
+            revisedPrompt = image.revisedPrompt
+          )
+        )
+      }
+      extractTokenUsage(body)?.let {
+        emit(
+          ChatStreamEvent.Usage(
+            promptTokens = it.promptTokens,
+            completionTokens = it.completionTokens,
+            totalTokens = it.totalTokens,
+            raw = it.raw
+          )
+        )
+      }
+    }
+    emit(ChatStreamEvent.Completed)
+  }.flowOn(Dispatchers.IO)
+
+  private suspend fun emitImagesApiGeneration(
+    config: ChatProviderConfig,
+    apiKey: String?,
+    messages: List<ChatMessage>,
+    options: ImageGenerationOptions,
+    emitEvent: suspend (ChatStreamEvent) -> Unit
+  ) {
+    val model = config.imageGenerationModel.trim()
+    if (model.isBlank()) {
+      emitEvent(ChatStreamEvent.Failed("请在 Provider 配置中填写生图模型名"))
+      return
+    }
+    val latestUser = messages.lastOrNull { it.role == MessageRole.USER }
+    val prompt = latestUser?.content?.trim().orEmpty().ifBlank { "根据参考图片生成或编辑图片" }
+    val referenceImages = latestUser?.attachments.orEmpty().filter { it.isImage && File(it.localPath).isFile }
+    val count = options.count.coerceIn(1, 4)
+    val endpoint = if (referenceImages.isEmpty()) "/images/generations" else "/images/edits"
+    val request = if (referenceImages.isEmpty()) {
+      val requestBody = mapOf(
+        "model" to model,
+        "prompt" to prompt,
+        "n" to count,
+        "size" to options.size.apiValue,
+        "quality" to options.quality.apiValue,
+        "background" to options.background.apiValue,
+        "output_format" to options.outputFormat.apiValue
+      )
+      Request.Builder()
+        .url(config.baseUrl.trimEnd('/') + endpoint)
+        .headers(config.headersWithAuth(apiKey))
+        .post(gson.toJson(requestBody).toRequestBody(JsonMediaType))
+        .build()
+    } else {
+      val multipart = MultipartBody.Builder()
+        .setType(MultipartBody.FORM)
+        .addFormDataPart("model", model)
+        .addFormDataPart("prompt", prompt)
+        .addFormDataPart("n", count.toString())
+        .addFormDataPart("size", options.size.apiValue)
+        .addFormDataPart("quality", options.quality.apiValue)
+        .addFormDataPart("background", options.background.apiValue)
+        .addFormDataPart("output_format", options.outputFormat.apiValue)
+      referenceImages.forEach { attachment ->
+        val file = File(attachment.localPath)
+        multipart.addFormDataPart(
+          "image[]",
+          attachment.displayName,
+          file.asRequestBody(attachment.mimeType.toMediaTypeOrNull())
+        )
+      }
+      Request.Builder()
+        .url(config.baseUrl.trimEnd('/') + endpoint)
+        .headers(config.headersWithAuth(apiKey, includeJsonContentType = false))
+        .post(multipart.build())
+        .build()
+    }
+    client.newCall(request).execute().use { response ->
+      val body = response.body?.string().orEmpty()
+      if (options.captureRawResponseLog) {
+        emitEvent(ChatStreamEvent.RawFrame(if (response.isSuccessful) "response" else "http_error", body))
+      }
+      if (!response.isSuccessful) {
+        throw IOException(parseProviderErrorMessage(body) ?: "Provider request failed with HTTP ${response.code}")
+      }
+      val images = extractImagesApiGeneratedImages(body, options.outputFormat.mimeType).toMutableList()
+      extractImagesApiUrls(body).forEach { url ->
+        downloadGeneratedImage(url, options.outputFormat.mimeType)?.let { images += it }
+      }
+      if (images.isEmpty()) {
+        emitEvent(ChatStreamEvent.Failed("Images API 未返回可保存的图片数据"))
+        return
+      }
+      images.distinctBy { it.base64Data.take(80) }.forEach { image ->
+        emitEvent(
+          ChatStreamEvent.ImageGenerated(
+            base64Data = image.base64Data,
+            mimeType = image.mimeType,
+            revisedPrompt = image.revisedPrompt
+          )
+        )
+      }
+      extractTokenUsage(body)?.let {
+        emitEvent(
+          ChatStreamEvent.Usage(
+            promptTokens = it.promptTokens,
+            completionTokens = it.completionTokens,
+            totalTokens = it.totalTokens,
+            raw = it.raw
+          )
+        )
+      }
+    }
+  }
+
+  private fun downloadGeneratedImage(url: String, fallbackMimeType: String): GeneratedImagePayload? {
+    val request = Request.Builder().url(url).get().build()
+    return runCatching {
+      client.newCall(request).execute().use { response ->
+        if (!response.isSuccessful) return@runCatching null
+        val bytes = response.body?.bytes() ?: return@runCatching null
+        GeneratedImagePayload(
+          base64Data = Base64.getEncoder().encodeToString(bytes),
+          mimeType = response.body?.contentType()?.toString() ?: fallbackMimeType,
+          revisedPrompt = null
+        )
+      }
+    }.getOrNull()
+  }
 }
 
 class OpenAiCompatibleChatAdapter(
@@ -452,6 +635,12 @@ class TokenHubProxyAdapter(
   }
 }
 
+private data class GeneratedImagePayload(
+  val base64Data: String,
+  val mimeType: String,
+  val revisedPrompt: String?
+)
+
 private fun toOpenAiResponseInputMessage(message: ChatMessage): Map<String, Any> {
   val parts = mutableListOf<Map<String, Any>>()
   if (message.content.isNotBlank()) {
@@ -482,6 +671,84 @@ private fun toOpenAiResponseInputMessage(message: ChatMessage): Map<String, Any>
     "role" to message.role.apiRole,
     "content" to content
   )
+}
+
+private fun toOpenAiImageInputMessage(message: ChatMessage): Map<String, Any> {
+  val parts = mutableListOf<Map<String, Any>>()
+  val prefix = when (message.role) {
+    MessageRole.USER -> ""
+    MessageRole.ASSISTANT -> "上一轮生成结果："
+    MessageRole.SYSTEM -> "系统说明："
+    MessageRole.TOOL -> "工具记录："
+  }
+  val text = (prefix + message.content).trim()
+  if (text.isNotBlank()) {
+    parts += mapOf("type" to "input_text", "text" to text)
+  }
+  message.attachments.filter { it.isImage }.forEach { attachment ->
+    val dataUrl = attachment.toDataUrl() ?: return@forEach
+    parts += mapOf("type" to "input_image", "image_url" to dataUrl)
+  }
+  if (parts.isEmpty()) {
+    return mapOf("role" to "user", "content" to message.content)
+  }
+  return mapOf("role" to if (message.role == MessageRole.SYSTEM) "system" else "user", "content" to parts)
+}
+
+private fun extractGeneratedImages(json: String): List<GeneratedImagePayload> {
+  return runCatching {
+    val root = JsonParser.parseString(json)
+    val results = mutableListOf<GeneratedImagePayload>()
+    fun visit(element: JsonElement, revisedPrompt: String?) {
+      when {
+        element.isJsonObject -> {
+          val obj = element.asJsonObject
+          val type = obj.findString("type").orEmpty()
+          val nextPrompt = obj.findString("revised_prompt") ?: obj.findString("revisedPrompt") ?: revisedPrompt
+          val maybeImage = obj.findString("result")
+            ?: obj.findString("b64_json")
+            ?: obj.findString("image_base64")
+          if (maybeImage != null && (type.contains("image", ignoreCase = true) || maybeImage.length > 500)) {
+            results += GeneratedImagePayload(
+              base64Data = maybeImage,
+              mimeType = obj.findString("mime_type") ?: obj.findString("mimeType") ?: "image/png",
+              revisedPrompt = nextPrompt
+            )
+          }
+          obj.entrySet().forEach { visit(it.value, nextPrompt) }
+        }
+        element.isJsonArray -> element.asJsonArray.forEach { visit(it, revisedPrompt) }
+      }
+    }
+    visit(root, null)
+    results.distinctBy { it.base64Data.take(80) }
+  }.getOrDefault(emptyList())
+}
+
+private fun extractImagesApiGeneratedImages(json: String, fallbackMimeType: String): List<GeneratedImagePayload> {
+  return runCatching {
+    val root = JsonParser.parseString(json)
+    val data = root.asJsonObject.getAsJsonArray("data") ?: return@runCatching emptyList()
+    data.mapNotNull { item ->
+      val obj = item.asJsonObject
+      val base64 = obj.findString("b64_json") ?: obj.findString("base64") ?: obj.findString("image_base64")
+      base64?.let {
+        GeneratedImagePayload(
+          base64Data = it,
+          mimeType = obj.findString("mime_type") ?: obj.findString("mimeType") ?: fallbackMimeType,
+          revisedPrompt = obj.findString("revised_prompt") ?: obj.findString("revisedPrompt")
+        )
+      }
+    }
+  }.getOrDefault(emptyList())
+}
+
+private fun extractImagesApiUrls(json: String): List<String> {
+  return runCatching {
+    val root = JsonParser.parseString(json)
+    val data = root.asJsonObject.getAsJsonArray("data") ?: return@runCatching emptyList()
+    data.mapNotNull { item -> item.asJsonObject.findString("url") }
+  }.getOrDefault(emptyList())
 }
 
 private fun ChatMessage.toCompatibleContent(): String {
@@ -528,9 +795,11 @@ private val MessageRole.apiRole: String
     MessageRole.TOOL -> "tool"
   }
 
-private fun ChatProviderConfig.headersWithAuth(apiKey: String?): okhttp3.Headers {
+private fun ChatProviderConfig.headersWithAuth(apiKey: String?, includeJsonContentType: Boolean = true): okhttp3.Headers {
   val builder = okhttp3.Headers.Builder()
-    .add("Content-Type", "application/json")
+  if (includeJsonContentType) {
+    builder.add("Content-Type", "application/json")
+  }
   if (!apiKey.isNullOrBlank()) {
     builder.add("Authorization", "Bearer $apiKey")
   }

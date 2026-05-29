@@ -29,6 +29,51 @@ enum class MessageStatus {
   FAILED
 }
 
+enum class ConversationType {
+  CHAT,
+  IMAGE
+}
+
+enum class ImageGenerationSize(val apiValue: String) {
+  AUTO("auto"),
+  SQUARE("1024x1024"),
+  LANDSCAPE("1536x1024"),
+  PORTRAIT("1024x1536")
+}
+
+enum class ImageGenerationQuality(val apiValue: String) {
+  AUTO("auto"),
+  LOW("low"),
+  MEDIUM("medium"),
+  HIGH("high")
+}
+
+enum class ImageGenerationApiMode {
+  RESPONSES_TOOL,
+  IMAGES_API
+}
+
+enum class ImageGenerationOutputFormat(val apiValue: String, val mimeType: String) {
+  PNG("png", "image/png"),
+  JPEG("jpeg", "image/jpeg"),
+  WEBP("webp", "image/webp")
+}
+
+enum class ImageGenerationBackground(val apiValue: String) {
+  AUTO("auto"),
+  OPAQUE("opaque"),
+  TRANSPARENT("transparent")
+}
+
+data class ImageGenerationOptions(
+  val size: ImageGenerationSize = ImageGenerationSize.AUTO,
+  val quality: ImageGenerationQuality = ImageGenerationQuality.AUTO,
+  val count: Int = 1,
+  val outputFormat: ImageGenerationOutputFormat = ImageGenerationOutputFormat.PNG,
+  val background: ImageGenerationBackground = ImageGenerationBackground.AUTO,
+  val captureRawResponseLog: Boolean = false
+)
+
 data class ChatProviderConfig(
   val id: String,
   val displayName: String,
@@ -38,6 +83,9 @@ data class ChatProviderConfig(
   val enabled: Boolean,
   val supportsStreaming: Boolean,
   val supportsAttachments: Boolean = false,
+  val supportsImageGeneration: Boolean = false,
+  val imageGenerationApiMode: ImageGenerationApiMode = ImageGenerationApiMode.RESPONSES_TOOL,
+  val imageGenerationModel: String = "",
   val extraHeadersJson: String,
   val secretRef: String?,
   val reasoningEffort: ReasoningEffort = ReasoningEffort.AUTO
@@ -48,6 +96,7 @@ data class ChatConversation(
   val title: String,
   val providerId: String,
   val model: String,
+  val type: ConversationType = ConversationType.CHAT,
   val groupName: String,
   val forkedFromConversationId: String?,
   val forkedFromMessageId: String?,
@@ -227,6 +276,11 @@ sealed interface ChatStreamEvent {
     val raw: String? = null
   ) : ChatStreamEvent
   data class RawFrame(val event: String?, val data: String) : ChatStreamEvent
+  data class ImageGenerated(
+    val base64Data: String,
+    val mimeType: String = "image/png",
+    val revisedPrompt: String? = null
+  ) : ChatStreamEvent
   data object Completed : ChatStreamEvent
   data class Failed(val message: String) : ChatStreamEvent
 }
