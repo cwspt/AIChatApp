@@ -351,6 +351,42 @@ class ChatRepositoryForkTest {
   }
 
   @Test
+  fun favoriteSnippetsExportAndImportJson() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "model-a"))
+    dao.upsertConversation(conversation("conv", providerId = "provider", model = "model-a"))
+    dao.upsertMessage(message("a1", "conv", MessageRole.ASSISTANT, "answer one", "provider", "model-a", 1))
+    repository.createFavoriteSnippet("conv", setOf("a1"), "Saved one", "desc", "Work")
+
+    val json = repository.favoriteSnippetsExportJson()
+    val markdown = repository.favoriteSnippetsExportMarkdown()
+    val targetDao = FakeChatDao()
+    val targetRepository = ChatRepository(
+      dao = targetDao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+
+    val imported = targetRepository.importFavoriteSnippetsJson(json)
+    val restored = targetDao.observeFavoriteSnippets().first().map { it.toDomain() }
+
+    assertEquals(1, imported)
+    assertTrue(json.contains("\"schemaVersion\":1"))
+    assertTrue(markdown.contains("Saved one"))
+    assertEquals(1, restored.size)
+    assertEquals("Saved one", restored.first().title)
+    assertEquals(listOf("Work"), restored.first().tags)
+    assertTrue(restored.first().searchText.contains("answer one"))
+  }
+
+  @Test
   fun appendMessagesToFavoriteMergesSortsAndDeduplicatesSnapshots() = runTest {
     val dao = FakeChatDao()
     val repository = ChatRepository(

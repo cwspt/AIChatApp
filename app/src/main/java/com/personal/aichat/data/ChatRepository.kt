@@ -1,6 +1,7 @@
 ﻿package com.personal.aichat.data
 
 import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import com.personal.aichat.data.local.AiBotEntity
 import com.personal.aichat.data.local.ChatDao
 import com.personal.aichat.data.local.ConversationEntity
@@ -78,6 +79,12 @@ private data class ProviderConfigExportItem(
 data class DeleteProviderResult(
   val deleted: Boolean,
   val blockingBots: List<AiBot> = emptyList()
+)
+
+private data class FavoriteSnippetsExportPayload(
+  val schemaVersion: Int = 1,
+  val exportedAt: Long = 0L,
+  val favorites: List<FavoriteSnippet> = emptyList()
 )
 
 class ChatRepository(
@@ -1404,6 +1411,77 @@ class ChatRepository(
     return favorite.toConversationExport()
   }
 
+  suspend fun favoriteSnippetsExportJson(): String {
+    val favorites = dao.observeFavoriteSnippets().first().map { it.toDomain() }
+    return gson.toJson(
+      FavoriteSnippetsExportPayload(
+        schemaVersion = 1,
+        exportedAt = System.currentTimeMillis(),
+        favorites = favorites
+      )
+    )
+  }
+
+  suspend fun favoriteSnippetsExportMarkdown(): String {
+    val favorites = dao.observeFavoriteSnippets().first().map { it.toDomain() }
+    if (favorites.isEmpty()) return ""
+    return buildString {
+      appendLine("# AIChat 收藏夹")
+      appendLine()
+      favorites.forEachIndexed { index, favorite ->
+        appendLine(buildFavoriteShareText(favorite, includeTimestamps = true))
+        if (index < favorites.lastIndex) {
+          appendLine()
+          appendLine("---")
+          appendLine()
+        }
+      }
+    }.trim()
+  }
+
+  suspend fun importFavoriteSnippetsJson(json: String): Int {
+    val favorites = parseFavoriteSnippetsExport(json)
+    require(favorites.isNotEmpty()) { "没有可导入的收藏片段" }
+    var importedCount = 0
+    val now = System.currentTimeMillis()
+    favorites.forEach { favorite ->
+      if (favorite.messages.isEmpty()) return@forEach
+      val targetId = favorite.id.takeIf { it.isNotBlank() && dao.favoriteSnippetById(it) == null } ?: newId("fav")
+      val cleanTags = normalizeTags(favorite.tags.joinToString(" "))
+      val cleanTitle = favorite.title.trim().ifBlank { defaultFavoriteTitle(favorite.sourceConversationTitle, favorite.messages) }
+      val cleanDescription = favorite.description.trim()
+      val cleanSourceTitle = favorite.sourceConversationTitle.ifBlank { "导入收藏" }
+      val cleanMessages = favorite.messages.sortedBy { it.createdAt }
+      val imported = favorite.copy(
+        id = targetId,
+        title = cleanTitle,
+        description = cleanDescription,
+        tags = cleanTags,
+        messages = cleanMessages,
+        searchText = buildFavoriteSearchText(
+          title = cleanTitle,
+          description = cleanDescription,
+          tags = cleanTags,
+          sourceConversationTitle = cleanSourceTitle,
+          sourceProviderName = favorite.sourceProviderName,
+          sourceModel = favorite.sourceModel,
+          messages = cleanMessages
+        ),
+        sourceConversationId = favorite.sourceConversationId.ifBlank { "imported" },
+        sourceConversationTitle = cleanSourceTitle,
+        sourceFirstMessageId = cleanMessages.firstOrNull()?.id,
+        sourceLastMessageId = cleanMessages.lastOrNull()?.id,
+        messageCount = cleanMessages.size,
+        createdAt = favorite.createdAt.takeIf { it > 0L } ?: now,
+        updatedAt = now
+      )
+      dao.upsertFavoriteSnippet(imported.toEntity())
+      importedCount += 1
+    }
+    require(importedCount > 0) { "没有可导入的收藏片段" }
+    return importedCount
+  }
+
   suspend fun retryLast(conversationId: String) {
     val conversation = dao.conversationById(conversationId) ?: return
     val provider = dao.providerById(conversation.providerId)?.toDomain() ?: return
@@ -2146,6 +2224,18 @@ class ChatRepository(
         message.attachments.forEach { appendLine(it.displayName) }
       }
     }.lowercase()
+  }
+
+  private fun parseFavoriteSnippetsExport(json: String): List<FavoriteSnippet> {
+    if (json.isBlank()) return emptyList()
+    return runCatching {
+      gson.fromJson(json, FavoriteSnippetsExportPayload::class.java)?.favorites.orEmpty()
+    }.getOrElse {
+      runCatching {
+        val listType = object : TypeToken<List<FavoriteSnippet>>() {}.type
+        gson.fromJson<List<FavoriteSnippet>>(json, listType)
+      }.getOrDefault(emptyList())
+    }
   }
 
   private fun buildFavoriteShareText(favorite: FavoriteSnippet, includeTimestamps: Boolean): String {

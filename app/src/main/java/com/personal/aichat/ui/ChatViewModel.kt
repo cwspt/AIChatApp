@@ -1422,6 +1422,47 @@ class ChatViewModel(
     }
   }
 
+  fun exportFavoriteSnippetsJson(context: Context) {
+    viewModelScope.launch {
+      val text = repository.favoriteSnippetsExportJson()
+      val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+      clipboard.setPrimaryClip(ClipData.newPlainText("AIChat 收藏 JSON", text))
+      val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/json"
+        putExtra(Intent.EXTRA_TEXT, text)
+      }
+      context.startActivity(Intent.createChooser(sendIntent, "导出收藏 JSON"))
+      localState.update { it.copy(error = "收藏 JSON 已复制") }
+    }
+  }
+
+  fun exportFavoriteSnippetsMarkdown(context: Context) {
+    viewModelScope.launch {
+      val text = repository.favoriteSnippetsExportMarkdown()
+      if (text.isBlank()) {
+        localState.update { it.copy(error = "没有可导出的收藏") }
+        return@launch
+      }
+      val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/markdown"
+        putExtra(Intent.EXTRA_TEXT, text)
+      }
+      context.startActivity(Intent.createChooser(sendIntent, "导出收藏 Markdown"))
+    }
+  }
+
+  fun importFavoriteSnippetsJson(text: String) {
+    viewModelScope.launch {
+      runCatching {
+        repository.importFavoriteSnippetsJson(text)
+      }.onSuccess { count ->
+        localState.update { it.copy(error = "已导入 $count 个收藏") }
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "导入收藏失败") }
+      }
+    }
+  }
+
   fun jumpToFavoriteSource(favorite: FavoriteSnippet) {
     viewModelScope.launch {
       val source = repository.conversationById(favorite.sourceConversationId)

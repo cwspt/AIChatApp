@@ -64,6 +64,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.ImportExport
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Pause
@@ -635,6 +636,9 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onShareText = { viewModel.shareFavoriteSnippetText(it, context) },
         onShareImage = { viewModel.shareFavoriteSnippetLongImage(it, context) },
         onCopyText = { viewModel.copyFavoriteSnippetText(it, context) },
+        onExportJson = { viewModel.exportFavoriteSnippetsJson(context) },
+        onExportMarkdown = { viewModel.exportFavoriteSnippetsMarkdown(context) },
+        onImportJson = viewModel::importFavoriteSnippetsJson,
         onEdit = { editingFavorite = it },
         onDelete = viewModel::deleteFavoriteSnippet,
         onRenameTag = viewModel::renameFavoriteTag,
@@ -1816,6 +1820,9 @@ private fun FavoriteSnippetsPage(
   onShareText: (String) -> Unit,
   onShareImage: (String) -> Unit,
   onCopyText: (String) -> Unit,
+  onExportJson: () -> Unit,
+  onExportMarkdown: () -> Unit,
+  onImportJson: (String) -> Unit,
   onEdit: (FavoriteSnippet) -> Unit,
   onDelete: (String) -> Unit,
   onRenameTag: (String, String) -> Unit,
@@ -1827,6 +1834,7 @@ private fun FavoriteSnippetsPage(
   var tagFilter by remember { mutableStateOf<String?>(null) }
   var selectedFavoriteId by remember { mutableStateOf<String?>(null) }
   var tagManagerOpen by remember { mutableStateOf(false) }
+  var importExportOpen by remember { mutableStateOf(false) }
   val selectedFavorite = favorites.firstOrNull { it.id == selectedFavoriteId }
   val allTags = remember(favorites) {
     favorites.flatMap { it.tags }.distinctBy { it.lowercase() }.sorted()
@@ -1880,6 +1888,11 @@ private fun FavoriteSnippetsPage(
           Icon(Icons.Outlined.Bookmark, contentDescription = null)
           Spacer(Modifier.width(8.dp))
           Text("收藏夹", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+          TextButton(onClick = { importExportOpen = true }) {
+            Icon(Icons.Outlined.ImportExport, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("导入导出")
+          }
           if (allTags.isNotEmpty()) {
             TextButton(onClick = { tagManagerOpen = true }) {
               Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -1955,6 +1968,70 @@ private fun FavoriteSnippetsPage(
       }
     )
   }
+  if (importExportOpen) {
+    FavoriteImportExportDialog(
+      onDismiss = { importExportOpen = false },
+      onExportJson = onExportJson,
+      onExportMarkdown = onExportMarkdown,
+      onImportJson = onImportJson
+    )
+  }
+}
+
+@Composable
+private fun FavoriteImportExportDialog(
+  onDismiss: () -> Unit,
+  onExportJson: () -> Unit,
+  onExportMarkdown: () -> Unit,
+  onImportJson: (String) -> Unit
+) {
+  var importText by remember { mutableStateOf("") }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("导入导出收藏") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+          "JSON 可用于恢复收藏；Markdown 适合阅读和归档。",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+          Button(onClick = onExportJson) {
+            Text("导出 JSON")
+          }
+          TextButton(onClick = onExportMarkdown) {
+            Text("导出 Markdown")
+          }
+        }
+        OutlinedTextField(
+          value = importText,
+          onValueChange = { importText = it },
+          label = { Text("粘贴收藏 JSON") },
+          minLines = 6,
+          maxLines = 10,
+          modifier = Modifier.fillMaxWidth()
+        )
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = {
+          onImportJson(importText)
+          importText = ""
+          onDismiss()
+        },
+        enabled = importText.isNotBlank()
+      ) {
+        Text("导入")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("关闭")
+      }
+    }
+  )
 }
 
 private data class FavoriteTagSummary(

@@ -16,6 +16,7 @@
 - Done: attachment limits are configurable in settings, covering single upload payload, total pending payload, and original image import caps while keeping the existing defaults.
 - Done: grouped tool-call cards now parse and show query text, opened page URLs, and citation URLs separately before the raw input/output details.
 - Done: favorite tag management now supports renaming, merging into an existing tag, and deleting tags without deleting favorite content.
+- Done: favorites can now export all snippets as JSON for restore or Markdown for reading, and import JSON exports back into the local favorites library.
 - Planned: improve full long-image export for grouped tool cards, structure tool source URLs more explicitly, and consider persistent single-chat turn ids if UI-order grouping is not enough later.
 - Planned: vary grouped tool card watermarks by tool type, such as search for web_search and page/file icons for open or web_fetch.
 - Planned: extend image-generation mode with masks/local edit regions, reusable generation parameters, richer image export layouts, and DeepSeek support only if an official image-generation API becomes available.
@@ -250,7 +251,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-007 | 滚动卡顿专项优化 | Planned | 排查长气泡交界处滚动卡顿和自绘滚动条影响 |
 | NEXT-P1-008 | provider 错误提示进一步中文化 | Done | 400/401/403/404/429、quota/billing、DNS、SSL、超时、Base URL 和 5xx 上游异常均给出更清晰的中文处理建议 |
 | NEXT-P1-009 | 收藏夹标签管理 | Done | 收藏夹标签管理弹窗已支持重命名、合并到已有标签和删除标签，收藏内容不受影响 |
-| NEXT-P1-010 | 收藏导入导出 | Planned | 支持收藏片段 JSON/Markdown 导出和恢复 |
+| NEXT-P1-010 | 收藏导入导出 | Done | 收藏夹支持全量 JSON 导出/导入恢复，并支持 Markdown 导出归档 |
 | NEXT-P1-011 | 群聊真机回归 | Planned | 真机验证新建机器人、创建群聊、点名/播放器发言、搜索工具调用、附件上下文和切换页面不中断 |
 | NEXT-P1-012 | 群聊导出增强 | Planned | 群聊可导出文本/Markdown/长图，群消息可生成长图分享 |
 | NEXT-P1-013 | 长气泡侧边按钮真机体验回归 | Planned | 验证单聊/群聊长气泡上下跳转、浮动三点菜单、菜单展开不自动消失、与滚动条和回到底部按钮不重叠 |
