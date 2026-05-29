@@ -18,7 +18,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     GroupChatMemberEntity::class,
     GroupMessageEntity::class
   ],
-  version = 10,
+  version = 12,
   exportSchema = true
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -42,7 +42,9 @@ abstract class ChatDatabase : RoomDatabase() {
           Migration6To7,
           Migration7To8,
           Migration8To9,
-          Migration9To10
+          Migration9To10,
+          Migration10To11,
+          Migration11To12
         ).build().also { instance = it }
       }
     }
@@ -194,6 +196,21 @@ abstract class ChatDatabase : RoomDatabase() {
           )
           """.trimIndent()
         )
+      }
+    }
+
+    private val Migration10To11 = object : Migration(10, 11) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE ai_bots ADD COLUMN bubbleColorKey TEXT NOT NULL DEFAULT 'AUTO'")
+      }
+    }
+
+    private val Migration11To12 = object : Migration(11, 12) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE group_messages ADD COLUMN turnTrigger TEXT NOT NULL DEFAULT 'UNKNOWN'")
+        db.execSQL("ALTER TABLE group_messages ADD COLUMN turnRound INTEGER DEFAULT NULL")
+        db.execSQL("ALTER TABLE group_messages ADD COLUMN turnIndex INTEGER DEFAULT NULL")
+        db.execSQL("ALTER TABLE group_messages ADD COLUMN turnMemberCount INTEGER DEFAULT NULL")
       }
     }
   }

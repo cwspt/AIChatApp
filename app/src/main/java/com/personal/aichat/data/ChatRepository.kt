@@ -28,6 +28,7 @@ import com.personal.aichat.domain.GroupChatMember
 import com.personal.aichat.domain.GroupChatMessage
 import com.personal.aichat.domain.GroupChatRoom
 import com.personal.aichat.domain.GroupMessageSenderType
+import com.personal.aichat.domain.GroupTurnTrigger
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ChatStreamEvent
@@ -302,6 +303,43 @@ class ChatRepository(
     return updated
   }
 
+  suspend fun appendGroupMessagesToFavoriteSnippet(
+    favoriteId: String,
+    groupId: String,
+    messageIds: Set<String>
+  ): FavoriteSnippet? {
+    require(messageIds.isNotEmpty()) { "请先选择要追加的群消息" }
+    val existing = dao.favoriteSnippetById(favoriteId)?.toDomain() ?: return null
+    check(existing.sourceConversationId == groupId) { "只能追加同一来源群聊里的消息" }
+    val sourceMessages = dao.groupMessages(groupId)
+      .filter { it.id in messageIds }
+      .sortedBy { it.createdAt }
+    require(sourceMessages.isNotEmpty()) { "请先选择要追加的群消息" }
+    check(sourceMessages.none { it.status == MessageStatus.STREAMING.name }) { "输出完成后再追加" }
+
+    val mergedMessages = (existing.messages + sourceMessages.map { it.toDomain().toFavoriteMessage() })
+      .distinctBy { it.id }
+      .sortedBy { it.createdAt }
+    val updated = existing.copy(
+      messages = mergedMessages,
+      searchText = buildFavoriteSearchText(
+        title = existing.title,
+        description = existing.description,
+        tags = existing.tags,
+        sourceConversationTitle = existing.sourceConversationTitle,
+        sourceProviderName = existing.sourceProviderName,
+        sourceModel = existing.sourceModel,
+        messages = mergedMessages
+      ),
+      sourceFirstMessageId = mergedMessages.firstOrNull()?.id,
+      sourceLastMessageId = mergedMessages.lastOrNull()?.id,
+      messageCount = mergedMessages.size,
+      updatedAt = System.currentTimeMillis()
+    )
+    dao.upsertFavoriteSnippet(updated.toEntity())
+    return updated
+  }
+
   suspend fun removeMessagesFromFavoriteSnippet(
     favoriteId: String,
     messageIds: Set<String>
@@ -338,7 +376,13 @@ class ChatRepository(
     return dao.conversationById(conversationId)?.toDomain()
   }
 
-  suspend fun createAiBot(name: String, providerId: String, model: String, systemPrompt: String): AiBot {
+  suspend fun createAiBot(
+    name: String,
+    providerId: String,
+    model: String,
+    systemPrompt: String,
+    bubbleColorKey: String = "AUTO"
+  ): AiBot {
     val provider = dao.providerById(providerId) ?: error("请选择有效的 API 配置")
     val now = System.currentTimeMillis()
     val bot = AiBotEntity(
@@ -347,6 +391,7 @@ class ChatRepository(
       providerId = provider.id,
       model = model.trim().ifBlank { provider.defaultModel },
       systemPrompt = systemPrompt.trim(),
+      bubbleColorKey = bubbleColorKey.trim().ifBlank { "AUTO" },
       enabled = true,
       createdAt = now,
       updatedAt = now
@@ -355,7 +400,14 @@ class ChatRepository(
     return bot.toDomain()
   }
 
-  suspend fun updateAiBot(botId: String, name: String, providerId: String, model: String, systemPrompt: String): AiBot? {
+  suspend fun updateAiBot(
+    botId: String,
+    name: String,
+    providerId: String,
+    model: String,
+    systemPrompt: String,
+    bubbleColorKey: String = "AUTO"
+  ): AiBot? {
     val existing = dao.aiBotById(botId) ?: return null
     val provider = dao.providerById(providerId) ?: error("请选择有效的 API 配置")
     val updated = existing.copy(
@@ -363,6 +415,7 @@ class ChatRepository(
       providerId = provider.id,
       model = model.trim().ifBlank { provider.defaultModel },
       systemPrompt = systemPrompt.trim(),
+      bubbleColorKey = bubbleColorKey.trim().ifBlank { "AUTO" },
       updatedAt = System.currentTimeMillis()
     )
     dao.upsertAiBot(updated)
@@ -459,11 +512,17 @@ class ChatRepository(
     dao.touchGroupChatRoom(room.id, now)
   }
 
-  suspend fun sendGroupBotTurn(groupId: String, botId: String, summarize: Boolean = false): MessageStatus {
+  suspend fun sendGroupBotTurn(
+    groupId: String,
+    botId: String,
+    summarize: Boolean = false,
+    trigger: GroupTurnTrigger = GroupTurnTrigger.MANUAL
+  ): MessageStatus {
     val room = dao.groupChatRoomById(groupId) ?: return MessageStatus.FAILED
     val bot = dao.aiBotById(botId) ?: return MessageStatus.FAILED
     val provider = dao.providerById(bot.providerId)?.toDomain() ?: return MessageStatus.FAILED
     val now = System.currentTimeMillis()
+    val turnInfo = nextGroupTurnInfo(groupId, botId, if (summarize) GroupTurnTrigger.SUMMARY else trigger)
     val message = GroupMessageEntity(
       id = newId("gmsg"),
       groupId = groupId,
@@ -477,10 +536,62 @@ class ChatRepository(
       model = bot.model,
       createdAt = now + 1_000,
       updatedAt = now + 1_000,
-      errorMessage = null
+      errorMessage = null,
+      turnTrigger = turnInfo.trigger.name,
+      turnRound = turnInfo.round,
+      turnIndex = turnInfo.index,
+      turnMemberCount = turnInfo.memberCount
     )
     dao.upsertGroupMessage(message)
-    return streamGroupBot(room, bot.toDomain(), provider, message.id, summarize)
+    return streamGroupBot(room, bot.toDomain(), provider, message.id, summarize, turnInfo)
+  }
+
+  private suspend fun nextGroupTurnInfo(
+    groupId: String,
+    botId: String,
+    trigger: GroupTurnTrigger
+  ): GroupTurnInfo {
+    val messages = dao.groupMessages(groupId)
+    return when (trigger) {
+      GroupTurnTrigger.AUTO -> {
+        val memberCount = dao.groupChatMembers(groupId).count { it.enabled }.coerceAtLeast(1)
+        val turnNumber = messages.count {
+          it.senderType == GroupMessageSenderType.BOT.name &&
+            it.role == MessageRole.ASSISTANT.name &&
+            it.turnTrigger == GroupTurnTrigger.AUTO.name
+        } + 1
+        GroupTurnInfo(
+          trigger = trigger,
+          round = ((turnNumber - 1) / memberCount) + 1,
+          index = ((turnNumber - 1) % memberCount) + 1,
+          memberCount = memberCount
+        )
+      }
+      GroupTurnTrigger.SUMMARY -> {
+        val count = messages.count {
+          it.senderType == GroupMessageSenderType.BOT.name &&
+            it.role == MessageRole.ASSISTANT.name &&
+            it.turnTrigger == GroupTurnTrigger.SUMMARY.name
+        } + 1
+        GroupTurnInfo(trigger = trigger, round = null, index = count, memberCount = null)
+      }
+      GroupTurnTrigger.MANUAL -> {
+        val count = messages.count {
+          it.senderType == GroupMessageSenderType.BOT.name &&
+            it.role == MessageRole.ASSISTANT.name &&
+            it.turnTrigger == GroupTurnTrigger.MANUAL.name
+        } + 1
+        GroupTurnInfo(trigger = trigger, round = null, index = count, memberCount = null)
+      }
+      GroupTurnTrigger.UNKNOWN -> {
+        val count = messages.count {
+          it.senderType == GroupMessageSenderType.BOT.name &&
+            it.role == MessageRole.ASSISTANT.name &&
+            it.botId == botId
+        } + 1
+        GroupTurnInfo(trigger = GroupTurnTrigger.MANUAL, round = null, index = count, memberCount = null)
+      }
+    }
   }
 
   suspend fun bootstrapDefaults() {
@@ -861,6 +972,77 @@ class ChatRepository(
     )
   }
 
+  suspend fun groupChatShareText(groupId: String, includeTimestamps: Boolean = true): String {
+    val export = groupChatExport(groupId) ?: return ""
+    return buildConversationShareText(export, includeTimestamps)
+  }
+
+  suspend fun groupChatShareText(
+    groupId: String,
+    messageIds: Set<String>,
+    includeTimestamps: Boolean = true
+  ): String {
+    if (messageIds.isEmpty()) return groupChatShareText(groupId, includeTimestamps)
+    val export = groupChatExport(groupId) ?: return ""
+    val selectedMessages = dao.groupMessages(groupId)
+      .filter { it.id in messageIds }
+      .sortedBy { it.createdAt }
+      .map { it.toDomain() }
+    return buildConversationShareText(
+      export.copy(
+        title = "${export.title}（节选）",
+        messages = selectedMessages.map { it.toExportMessage() }
+      ),
+      includeTimestamps
+    )
+  }
+
+  suspend fun groupChatExport(groupId: String): ConversationExport? {
+    val room = dao.groupChatRoomById(groupId) ?: return null
+    val messages = dao.groupMessages(groupId).map { it.toDomain() }
+    val modelLabel = messages
+      .mapNotNull { message ->
+        when {
+          message.senderType == GroupMessageSenderType.BOT && !message.model.isNullOrBlank() ->
+            "${message.senderName} / ${message.model}"
+          message.senderType == GroupMessageSenderType.TOOL && !message.model.isNullOrBlank() ->
+            "${message.senderName.removeSuffix(" 的工具")} / ${message.model}"
+          else -> null
+        }
+      }
+      .distinct()
+      .take(4)
+      .joinToString("；")
+      .ifBlank { null }
+    return ConversationExport(
+      title = room.title,
+      groupName = "AI 群聊",
+      modelLabel = modelLabel,
+      messages = messages.map { it.toExportMessage() }
+    )
+  }
+
+  suspend fun groupMessageShareText(groupId: String, messageId: String, includeTimestamps: Boolean = true): String {
+    val export = groupChatExport(groupId) ?: return ""
+    val message = export.messages.firstOrNull { it.id == messageId } ?: return ""
+    return buildConversationShareText(
+      export.copy(
+        title = "${export.title}（单条群消息）",
+        messages = listOf(message)
+      ),
+      includeTimestamps
+    )
+  }
+
+  suspend fun groupMessageExport(groupId: String, messageId: String): ConversationExport? {
+    val export = groupChatExport(groupId) ?: return null
+    val message = export.messages.firstOrNull { it.id == messageId } ?: return null
+    return export.copy(
+      title = "${export.title}（单条群消息）",
+      messages = listOf(message)
+    )
+  }
+
   private fun buildConversationShareText(
     export: ConversationExport,
     includeTimestamps: Boolean = true
@@ -1187,7 +1369,8 @@ class ChatRepository(
     bot: AiBot,
     provider: ChatProviderConfig,
     botMessageId: String,
-    summarize: Boolean
+    summarize: Boolean,
+    turnInfo: GroupTurnInfo
   ): MessageStatus {
     val adapter = adapters[provider.type]
     if (adapter == null) {
@@ -1278,9 +1461,13 @@ class ChatRepository(
             status = if (event.output == null) MessageStatus.STREAMING.name else MessageStatus.COMPLETE.name,
             providerId = provider.id,
             model = bot.model,
-            createdAt = now,
+            createdAt = (dao.groupMessages(room.id).firstOrNull { it.id == botMessageId }?.createdAt ?: now + 1_000) - 500 + toolMessageIds.size,
             updatedAt = now,
-            errorMessage = null
+            errorMessage = null,
+            turnTrigger = turnInfo.trigger.name,
+            turnRound = turnInfo.round,
+            turnIndex = turnInfo.index,
+            turnMemberCount = turnInfo.memberCount
           )
         )
       } else {
@@ -1462,6 +1649,53 @@ class ChatRepository(
         append(attachmentText)
       }
     }.trim()
+  }
+
+  private fun GroupChatMessage.toExportMessage(): ConversationExportMessage {
+    val exportRole = when (senderType) {
+      GroupMessageSenderType.USER -> MessageRole.USER
+      GroupMessageSenderType.BOT -> MessageRole.ASSISTANT
+      GroupMessageSenderType.SYSTEM -> MessageRole.SYSTEM
+      GroupMessageSenderType.TOOL -> MessageRole.TOOL
+    }
+    val label = when (senderType) {
+      GroupMessageSenderType.USER -> senderName.ifBlank { "我" }
+      GroupMessageSenderType.BOT -> senderName.ifBlank { "AI" }
+      GroupMessageSenderType.SYSTEM -> "系统"
+      GroupMessageSenderType.TOOL -> senderName.ifBlank { "工具" }
+    }
+    val turnText = formatGroupTurnLabel(this)
+    val header = listOfNotNull(
+      label,
+      model?.takeIf { it.isNotBlank() },
+      turnText
+    ).joinToString(" · ")
+    val body = buildString {
+      appendLine("[$header]")
+      append(content.ifBlank { if (status == MessageStatus.STREAMING) "输出中..." else "" })
+    }.trim()
+    return ConversationExportMessage(
+      id = id,
+      role = exportRole,
+      content = body,
+      status = status,
+      errorMessage = errorMessage,
+      createdAt = createdAt
+    )
+  }
+
+  private fun formatGroupTurnLabel(message: GroupChatMessage): String? {
+    return when (message.turnTrigger) {
+      GroupTurnTrigger.AUTO -> {
+        val round = message.turnRound ?: return "自动发言"
+        val index = message.turnIndex ?: return "自动第 $round 轮"
+        val total = message.turnMemberCount
+        if (total != null && total > 0) "自动第 $round 轮 第 $index/$total 个发言" else "自动第 $round 轮 第 $index 个发言"
+      }
+      GroupTurnTrigger.MANUAL -> message.turnIndex?.let { "点名第 $it 次发言" } ?: "点名发言"
+      GroupTurnTrigger.SUMMARY -> message.turnIndex?.let { "总结第 $it 次" } ?: "总结发言"
+      GroupTurnTrigger.UNKNOWN -> null
+    }
   }
 
   private fun defaultProviders(): List<ProviderEntity> {
@@ -1711,4 +1945,11 @@ class ChatRepository(
     )
   }
 }
+
+private data class GroupTurnInfo(
+  val trigger: GroupTurnTrigger,
+  val round: Int?,
+  val index: Int?,
+  val memberCount: Int?
+)
 

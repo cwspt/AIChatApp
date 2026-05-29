@@ -11,6 +11,7 @@ import com.personal.aichat.data.local.GroupChatRoomEntity
 import com.personal.aichat.data.local.GroupMessageEntity
 import com.personal.aichat.data.local.MessageEntity
 import com.personal.aichat.data.local.ProviderEntity
+import com.personal.aichat.data.local.toDomain
 import com.personal.aichat.data.security.ApiKeyStore
 import com.personal.aichat.domain.AppSettings
 import com.personal.aichat.domain.AppThemeMode
@@ -22,13 +23,21 @@ import com.personal.aichat.domain.ChatStreamEvent
 import com.personal.aichat.domain.AiBot
 import com.personal.aichat.domain.GroupChatMessage
 import com.personal.aichat.domain.GroupMessageSenderType
+import com.personal.aichat.domain.GroupTurnTrigger
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderAdapter
 import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.ReasoningEffort
 import com.personal.aichat.domain.WebSearchMode
+import com.personal.aichat.ui.collapsedGroupMessageSummary
+import com.personal.aichat.ui.GroupMessageListItem
+import com.personal.aichat.ui.LongBubbleNavTarget
+import com.personal.aichat.ui.VisibleListItemBounds
+import com.personal.aichat.ui.groupMessageListItems
+import com.personal.aichat.ui.longBubbleNavTarget
 import com.personal.aichat.ui.nextGroupAutoPlayBotId
+import com.personal.aichat.ui.resolvedBotBubbleColorKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -201,6 +210,25 @@ class ChatRepositoryForkTest {
     assertEquals("target-default", dao.aiBotById(first.id)?.model)
     assertEquals("target", dao.aiBotById(second.id)?.providerId)
     assertEquals("target-default", dao.aiBotById(second.id)?.model)
+  }
+
+  @Test
+  fun createAndUpdateAiBotPersistBubbleColorKey() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "provider-default"))
+
+    val created = repository.createAiBot("Reviewer", "provider", "bot-model", "", "ROSE")
+    val updated = repository.updateAiBot(created.id, "Reviewer", "provider", "bot-model", "", "CYAN")
+
+    assertEquals("ROSE", created.bubbleColorKey)
+    assertEquals("CYAN", updated?.bubbleColorKey)
+    assertEquals("CYAN", dao.aiBotById(created.id)?.bubbleColorKey)
   }
 
   @Test
@@ -406,6 +434,98 @@ class ChatRepositoryForkTest {
     assertTrue(adapter.lastMessages.first().content.contains("评审离线缓存方案"))
     assertTrue(adapter.lastMessages.any { it.content.contains("[用户] 请先提出风险点") })
     assertEquals(listOf("请先提出风险点", "fake response"), dao.groupMessages(group.id).map { it.content })
+    val botMessage = dao.groupMessages(group.id).last()
+    assertEquals(GroupTurnTrigger.MANUAL.name, botMessage.turnTrigger)
+    assertEquals(1, botMessage.turnIndex)
+  }
+
+  @Test
+  fun groupBotTurnStoresAutoRoundAndSummaryTurnLabels() = runTest {
+    val dao = FakeChatDao()
+    val adapter = RecordingAdapter()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = mapOf(ProviderType.TOKENHUB_PROXY to adapter)
+    )
+    dao.upsertProvider(provider("provider", "provider-default"))
+    val first = repository.createAiBot("GPT", "provider", "gpt-fixed", "")
+    val second = repository.createAiBot("Deep", "provider", "deep-fixed", "")
+    val group = repository.createGroupChat("评审", "轮流讨论", listOf(first.id, second.id))
+
+    repository.sendGroupBotTurn(group.id, first.id, trigger = GroupTurnTrigger.AUTO)
+    repository.sendGroupBotTurn(group.id, second.id, trigger = GroupTurnTrigger.AUTO)
+    repository.sendGroupBotTurn(group.id, first.id, trigger = GroupTurnTrigger.AUTO)
+    repository.sendGroupBotTurn(group.id, first.id, summarize = true)
+
+    val botMessages = dao.groupMessages(group.id).filter { it.senderType == GroupMessageSenderType.BOT.name }
+    assertEquals(listOf(1, 1, 2, null), botMessages.map { it.turnRound })
+    assertEquals(listOf(1, 2, 1, 1), botMessages.map { it.turnIndex })
+    assertEquals(listOf(2, 2, 2, null), botMessages.map { it.turnMemberCount })
+    assertEquals(GroupTurnTrigger.SUMMARY.name, botMessages.last().turnTrigger)
+  }
+
+  @Test
+  fun groupToolMessagesInheritTurnInfoAndAreGroupedForUi() = runTest {
+    val dao = FakeChatDao()
+    val adapter = RecordingAdapter(
+      events = listOf(
+        ChatStreamEvent.Started,
+        ChatStreamEvent.ToolCall(id = "search-1", name = "web_search", input = "苏州天气", output = "https://example.com/weather"),
+        ChatStreamEvent.ToolCall(id = "search-2", name = "web_search", input = "苏州景点", output = "https://example.com/travel"),
+        ChatStreamEvent.TextDelta("fake response"),
+        ChatStreamEvent.Completed
+      )
+    )
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = mapOf(ProviderType.TOKENHUB_PROXY to adapter)
+    )
+    dao.upsertProvider(provider("provider", "provider-default"))
+    val bot = repository.createAiBot("GPT", "provider", "gpt-fixed", "")
+    val group = repository.createGroupChat("出游计划", "查资料", listOf(bot.id))
+
+    repository.sendGroupBotTurn(group.id, bot.id, trigger = GroupTurnTrigger.AUTO)
+
+    val messages = dao.groupMessages(group.id).map { it.toDomain() }
+    val toolMessages = messages.filter { it.senderType == GroupMessageSenderType.TOOL }
+    assertEquals(2, toolMessages.size)
+    assertTrue(toolMessages.all { it.turnTrigger == GroupTurnTrigger.AUTO })
+    assertTrue(toolMessages.all { it.turnRound == 1 && it.turnIndex == 1 && it.turnMemberCount == 1 })
+    val items = groupMessageListItems(messages)
+    assertEquals(2, items.size)
+    assertTrue(items.first() is GroupMessageListItem.ToolGroup)
+    val export = repository.groupChatExport(group.id)!!
+    assertEquals(listOf(MessageRole.TOOL, MessageRole.TOOL, MessageRole.ASSISTANT), export.messages.map { it.role })
+    assertTrue(repository.groupChatShareText(group.id).contains("工具"))
+    assertTrue(repository.groupChatShareText(group.id, setOf(toolMessages.first().id)).contains("苏州天气"))
+  }
+
+  @Test
+  fun groupToolListItemAppearsBeforeBotMessageForSameTurnEvenIfInsertedLater() {
+    val bot = testGroupMessage("bot", GroupMessageSenderType.BOT, "bot-a", "A").copy(
+      turnTrigger = GroupTurnTrigger.AUTO,
+      turnRound = 1,
+      turnIndex = 1,
+      turnMemberCount = 1,
+      createdAt = 1000
+    )
+    val tool = testGroupMessage("tool", GroupMessageSenderType.TOOL, "bot-a", "A").copy(
+      role = MessageRole.TOOL,
+      turnTrigger = GroupTurnTrigger.AUTO,
+      turnRound = 1,
+      turnIndex = 1,
+      turnMemberCount = 1,
+      createdAt = 1500
+    )
+
+    val items = groupMessageListItems(listOf(bot, tool))
+
+    assertTrue(items[0] is GroupMessageListItem.ToolGroup)
+    assertTrue(items[1] is GroupMessageListItem.Message)
   }
 
   @Test
@@ -504,6 +624,82 @@ class ChatRepositoryForkTest {
   }
 
   @Test
+  fun longBubbleNavTargetShowsOnlyMissingEdges() {
+    val topHidden = longBubbleNavTarget(
+      visibleItems = listOf(VisibleListItemBounds(index = 2, offset = -220, size = 520)),
+      viewportStart = 0,
+      viewportEnd = 400,
+      candidateIndexes = setOf(2)
+    )
+    val bottomHidden = longBubbleNavTarget(
+      visibleItems = listOf(VisibleListItemBounds(index = 3, offset = 120, size = 520)),
+      viewportStart = 0,
+      viewportEnd = 400,
+      candidateIndexes = setOf(3)
+    )
+    val bothHidden = longBubbleNavTarget(
+      visibleItems = listOf(VisibleListItemBounds(index = 4, offset = -120, size = 720)),
+      viewportStart = 0,
+      viewportEnd = 400,
+      candidateIndexes = setOf(4)
+    )
+    val fullyVisible = longBubbleNavTarget(
+      visibleItems = listOf(VisibleListItemBounds(index = 5, offset = 40, size = 180)),
+      viewportStart = 0,
+      viewportEnd = 400,
+      candidateIndexes = setOf(5)
+    )
+
+    assertEquals(LongBubbleNavTarget(index = 2, showUp = true, showDown = false, bottomOffset = 120), topHidden)
+    assertEquals(LongBubbleNavTarget(index = 3, showUp = false, showDown = true, bottomOffset = 120), bottomHidden)
+    assertEquals(LongBubbleNavTarget(index = 4, showUp = true, showDown = true, bottomOffset = 320), bothHidden)
+    assertNull(fullyVisible)
+  }
+
+  @Test
+  fun longBubbleNavTargetShowsActionsOnlyWhenTopIsHidden() {
+    val topHidden = longBubbleNavTarget(
+      visibleItems = listOf(
+        VisibleListItemBounds(index = 2, offset = -220, size = 520, messageId = "message-2", supportsActions = true)
+      ),
+      viewportStart = 0,
+      viewportEnd = 400,
+      candidateIndexes = setOf(2)
+    )
+    val bottomHidden = longBubbleNavTarget(
+      visibleItems = listOf(
+        VisibleListItemBounds(index = 3, offset = 120, size = 520, messageId = "message-3", supportsActions = true)
+      ),
+      viewportStart = 0,
+      viewportEnd = 400,
+      candidateIndexes = setOf(3)
+    )
+
+    assertEquals("message-2", topHidden?.messageId)
+    assertEquals(true, topHidden?.showActions)
+    assertEquals("message-3", bottomHidden?.messageId)
+    assertEquals(false, bottomHidden?.showActions)
+  }
+
+  @Test
+  fun longBubbleNavTargetPrefersVisibleCandidateNearestViewportCenter() {
+    val target = longBubbleNavTarget(
+      visibleItems = listOf(
+        VisibleListItemBounds(index = 1, offset = -380, size = 500, messageId = "message-1", supportsActions = true),
+        VisibleListItemBounds(index = 2, offset = 120, size = 500, messageId = "message-2", supportsActions = true)
+      ),
+      viewportStart = 0,
+      viewportEnd = 400,
+      candidateIndexes = setOf(1, 2)
+    )
+
+    assertEquals(2, target?.index)
+    assertEquals("message-2", target?.messageId)
+    assertEquals(false, target?.showUp)
+    assertEquals(true, target?.showDown)
+  }
+
+  @Test
   fun nextGroupAutoPlayBotStartsAtFirstBotWhenNoBotHasSpoken() {
     val bots = listOf(testBot("bot-a", "A"), testBot("bot-b", "B"))
 
@@ -528,6 +724,27 @@ class ChatRepositoryForkTest {
     val messages = listOf(testGroupMessage("m1", GroupMessageSenderType.BOT, "bot-b", "B"))
 
     assertEquals("bot-a", nextGroupAutoPlayBotId(bots, messages))
+  }
+
+  @Test
+  fun autoBotBubbleColorKeyIsStableAndUsesPalette() {
+    val first = resolvedBotBubbleColorKey("bot-a", "AUTO")
+    val second = resolvedBotBubbleColorKey("bot-a", "AUTO")
+
+    assertEquals(first, second)
+    assertNotEquals("AUTO", first)
+    assertEquals("ROSE", resolvedBotBubbleColorKey("bot-a", "ROSE"))
+  }
+
+  @Test
+  fun collapsedGroupMessageSummaryUsesFirstNonBlankLineAndLimit() {
+    val longMessage = testGroupMessage("m1", GroupMessageSenderType.BOT, "bot-a", "A").copy(
+      content = "\n\n这是一个很长很长很长很长很长很长很长的回答正文和后续解释，需要继续截断\n第二行"
+    )
+    val emptyMessage = testGroupMessage("m2", GroupMessageSenderType.BOT, "bot-a", "A").copy(content = "")
+
+    assertEquals("这是一个很长很长很长很长很长很长很长的回答正文和后续解释，需...", collapsedGroupMessageSummary(longMessage))
+    assertEquals("无内容", collapsedGroupMessageSummary(emptyMessage))
   }
 
   private fun provider(id: String, model: String): ProviderEntity = ProviderEntity(
@@ -581,6 +798,7 @@ class ChatRepositoryForkTest {
     providerId = "provider",
     model = "model",
     systemPrompt = "",
+    bubbleColorKey = "AUTO",
     enabled = true,
     createdAt = 1,
     updatedAt = 1
@@ -608,7 +826,13 @@ class ChatRepositoryForkTest {
   )
 }
 
-private class RecordingAdapter : ProviderAdapter {
+private class RecordingAdapter(
+  private val events: List<ChatStreamEvent> = listOf(
+    ChatStreamEvent.Started,
+    ChatStreamEvent.TextDelta("fake response"),
+    ChatStreamEvent.Completed
+  )
+) : ProviderAdapter {
   var lastOptions: ChatCompletionOptions? = null
   var lastMessages: List<ChatMessage> = emptyList()
 
@@ -620,9 +844,7 @@ private class RecordingAdapter : ProviderAdapter {
   ): Flow<ChatStreamEvent> = flow {
     lastMessages = messages
     lastOptions = options
-    emit(ChatStreamEvent.Started)
-    emit(ChatStreamEvent.TextDelta("fake response"))
-    emit(ChatStreamEvent.Completed)
+    events.forEach { emit(it) }
   }
 }
 

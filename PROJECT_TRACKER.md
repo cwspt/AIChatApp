@@ -42,16 +42,16 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | OpenAI Responses | Done | 92% | 支持流式、reasoning effort、usage 元数据、web_search、附件输入，并修复群聊首轮搜索上下文兼容 |
 | DeepSeek / OpenAI-compatible | Done | 92% | 支持 Chat Completions 流式、usage、函数式 web_search、DSML open/web_fetch 工具回传 |
 | 联网搜索 | Done | 92% | OpenAI hosted web_search + compatible function calling + 官方 DeepSeek 搜索结果 + DuckDuckGo/Bing fallback |
-| 工具调用 UI | Done | 80% | 工具调用独立卡片、可折叠、显示查询词和 URL |
+| 工具调用 UI | Done | 86% | 工具调用独立卡片、可折叠、显示查询词和 URL；群聊同轮工具调用已聚合展示 |
 | 多模态附件 | Done | 75% | Provider 级附件开关、图片/文件选择、拍照、气泡附件展示、图片 app 内预览 |
 | 设置页 | Done | 88% | 独立设置页，支持主题色、夜间模式、字体、debug log、搜索模式、配置导入导出、Provider 删除/改绑 |
-| 聊天 UI | In Progress | 85% | 顶栏压缩、输入框修复、自动追踪滚动、选择模式、Markdown 表格与分隔线已优化 |
+| 聊天 UI | In Progress | 88% | 顶栏压缩、输入框修复、自动追踪滚动、选择模式、Markdown 表格与分隔线、长 AI 气泡侧边跳转和浮动操作已优化 |
 | 会话列表 | In Progress | 85% | 抽屉、折叠文件夹、重命名、日期分组、创建/更新时间显示已实现 |
 | 成果收藏 | Done | 85% | 支持收藏单条/多条消息为片段，保存快照、来源、标题、标签、描述，并可搜索、查看、追加、移除、分享 |
-| 多 AI 群聊 | Done | 82% | 新增常驻 AI 机器人、独立群聊表、手动点名、播放器式轮流发言、群摘要、群聊工具消息和基础 UI |
+| 多 AI 群聊 | Done | 88% | 新增常驻 AI 机器人、独立群聊表、手动点名、播放器式轮流发言、群摘要、机器人颜色、历史气泡折叠、工具消息聚合和基础 UI |
 | 后台生成 | Done | 80% | 前台服务保活，后台完成后通知 |
-| 分享导出 | In Progress | 75% | 文本、Markdown 文件、长图、单气泡分享已实现，超长内容仍需优化 |
-| 自动化测试 | In Progress | 72% | Provider adapter、fork、附件请求体、web_search、收藏片段、多 AI 群聊仓库链路、Provider 删除/改绑和群聊播放器选择逻辑已有单测 |
+| 分享导出 | In Progress | 80% | 文本、Markdown 文件、长图、单气泡分享、群聊消息分享和长气泡浮动分享入口已实现，超长内容仍需优化 |
+| 自动化测试 | In Progress | 76% | Provider adapter、fork、附件请求体、web_search、收藏片段、多 AI 群聊仓库链路、Provider 删除/改绑、群聊播放器和长气泡导航逻辑已有单测 |
 | CI / Release | Done | 90% | Jenkins 本地 release pipeline 和签名配置已接入 |
 
 ## 4. 已完成事项
@@ -140,6 +140,8 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | UI-010 | `---` Markdown 分隔线 | Done | P1 | 渲染为横线 |
 | UI-011 | 滚动条平滑性 | Watch | P1 | 已优化，长气泡边界卡顿仍需真机观察 |
 | UI-012 | 中文乱码修复 | In Progress | P1 | 主界面大部分已修复，tracker 本次已重写；仍需持续扫描 |
+| UI-013 | 长 AI 气泡顶部/底部快速跳转 | Done | P1 | 单聊 assistant 和群聊展开 BOT 长气泡在滚动时显示侧边上下跳转按钮，点击可滚到当前气泡顶部/底部 |
+| UI-014 | 长 AI 气泡浮动操作菜单 | Done | P1 | 当前长 AI 气泡顶部离屏时显示三点菜单，支持复制、分享文本、分享长图、收藏；菜单展开期间不被隐藏计时收起 |
 
 ### 4.7 后台生成和通知
 
@@ -183,6 +185,11 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | GROUP-012 | 群聊 UI 验证 | Watch | P1 | 已实现群聊页面、点名/总结/播放器入口和机器人气泡，仍需真机验证滚动与后台任务体验 |
 | GROUP-013 | 群聊播放器式开始/暂停 | Done | P1 | 点击开始后按成员顺序循环发言；暂停后当前回复说完即停；播放中用户仍可插话 |
 | GROUP-014 | 群聊 GPT 搜索兼容 | Done | P1 | 群聊历史以 user context 回传，首轮无历史时合成 user task，首轮 GPT web_search 可正常触发 |
+| GROUP-015 | 机器人气泡颜色 | Done | P1 | Room v11 增加机器人固定气泡色，支持自动高对比色和机器人编辑页选择颜色 |
+| GROUP-016 | 群聊 BOT 历史气泡折叠 | Done | P1 | 历史 BOT 气泡默认折叠并保留元数据；最新/输出中气泡展开，用户手动展开在当前页面会话保留 |
+| GROUP-017 | 群聊发言轮次标记 | Done | P1 | BOT 气泡显示自动第几轮第几个发言、点名第几次发言或总结发言标记 |
+| GROUP-018 | 群聊工具调用聚合和顺序 | Done | P1 | 同一轮工具调用聚合为一个可折叠工具气泡，并排在对应正文气泡之前 |
+| GROUP-019 | 群聊多选、收藏和分享 | Done | P1 | 群聊支持多选、范围选择、收藏选中消息、追加收藏、文本分享和长图分享入口 |
 
 ## 5. 已知风险
 
@@ -200,6 +207,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | RISK-010 | 群聊提示词和最近 20 条上下文可能不足以处理长讨论 | Watch | P1 | 后续增加自动摘要滚动更新、上下文长度设置和主持人调度 |
 | RISK-011 | 群聊消息第一版尚未完整接入长图导出 | Watch | P2 | 后续复用导出模型，补齐群聊完整导出和群消息长图分享 |
 | RISK-012 | OpenAI Responses hosted web_search 依赖上游代理稳定性 | Watch | P1 | 已优化群聊首轮请求形态和错误提示；仍需观察 502/upstream_error 是否偶发 |
+| RISK-013 | 长 AI 气泡侧边浮动按钮依赖 LazyList 可见项估算 | Watch | P2 | 已修复底部跳转 offset 和菜单展开隐藏问题，仍需真机验证不同屏幕尺寸与输入法状态下的位置表现 |
 
 ## 6. 下一步计划
 
@@ -219,6 +227,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-010 | 收藏导入导出 | Planned | 支持收藏片段 JSON/Markdown 导出和恢复 |
 | NEXT-P1-011 | 群聊真机回归 | Planned | 真机验证新建机器人、创建群聊、点名/播放器发言、搜索工具调用、附件上下文和切换页面不中断 |
 | NEXT-P1-012 | 群聊导出增强 | Planned | 群聊可导出文本/Markdown/长图，群消息可生成长图分享 |
+| NEXT-P1-013 | 长气泡侧边按钮真机体验回归 | Planned | 验证单聊/群聊长气泡上下跳转、浮动三点菜单、菜单展开不自动消失、与滚动条和回到底部按钮不重叠 |
 
 ### 6.2 P2 / P3
 
@@ -247,8 +256,8 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 本机 Android 环境：
 
 ```powershell
-$env:JAVA_HOME='D:\Projects\Personal\.devtools\android\jdk\jdk-17.0.18+8'
-$env:ANDROID_HOME='D:\Projects\Personal\.devtools\android\sdk'
+$env:JAVA_HOME='D:\Projects\Personal\AndroidApps\.devtools\android\jdk\jdk-17.0.18+8'
+$env:ANDROID_HOME='D:\Projects\Personal\AndroidApps\.devtools\android\sdk'
 $env:ANDROID_SDK_ROOT=$env:ANDROID_HOME
 $env:Path="$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\cmdline-tools\latest\bin;$env:Path"
 ```
@@ -259,13 +268,13 @@ $env:Path="$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME
 .\gradlew.bat :app:testDebugUnitTest --console=plain --no-daemon
 .\gradlew.bat :app:compileDebugKotlin --console=plain --no-daemon
 .\gradlew.bat :app:assembleDebug --console=plain --no-daemon
+```
 
 本次已执行：
 
 ```powershell
-.\gradlew.bat --no-daemon :app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest
-.\gradlew.bat --no-daemon :app:testDebugUnitTest --tests com.personal.aichat.ProviderAdapterTest
-```
+.\gradlew.bat :app:compileDebugKotlin :app:testDebugUnitTest --console=plain --no-daemon
+.\gradlew.bat :app:assembleDebug --console=plain --no-daemon
 ```
 
 提交前建议执行中文乱码扫描：

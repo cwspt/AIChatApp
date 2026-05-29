@@ -25,6 +25,7 @@ import com.personal.aichat.domain.GroupChatMember
 import com.personal.aichat.domain.GroupChatMessage
 import com.personal.aichat.domain.GroupChatRoom
 import com.personal.aichat.domain.GroupMessageSenderType
+import com.personal.aichat.domain.GroupTurnTrigger
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.WebSearchMode
@@ -173,6 +174,22 @@ class ChatViewModel(
     }
   }
 
+  fun setMessagesSelected(messageIds: Set<String>, selected: Boolean) {
+    if (messageIds.isEmpty()) return
+    localState.update { state ->
+      val next = state.selectedMessageIds.toMutableSet()
+      if (selected) {
+        next += messageIds
+      } else {
+        next -= messageIds
+      }
+      state.copy(
+        messageSelectionMode = next.isNotEmpty() || state.messageSelectionMode,
+        selectedMessageIds = next
+      )
+    }
+  }
+
   fun selectMessageRangeTo(messageId: String) {
     val state = uiState.value
     val selectedIds = state.selectedMessageIds
@@ -180,12 +197,16 @@ class ChatViewModel(
       toggleMessageSelected(messageId)
       return
     }
-    val messages = state.messages
-    val targetIndex = messages.indexOfFirst { it.id == messageId }
+    val messageIds = if (state.groupChatPageOpen) {
+      state.groupMessages.map { it.id }
+    } else {
+      state.messages.map { it.id }
+    }
+    val targetIndex = messageIds.indexOf(messageId)
     if (targetIndex < 0) return
-    val anchorIndex = messages.indexOfLast { it.id in selectedIds }.takeIf { it >= 0 } ?: targetIndex
+    val anchorIndex = messageIds.indexOfLast { it in selectedIds }.takeIf { it >= 0 } ?: targetIndex
     val range = if (anchorIndex <= targetIndex) anchorIndex..targetIndex else targetIndex..anchorIndex
-    val rangeIds = range.map { messages[it].id }
+    val rangeIds = range.map { messageIds[it] }
     localState.update {
       it.copy(
         messageSelectionMode = true,
@@ -520,6 +541,99 @@ class ChatViewModel(
     }
   }
 
+  fun shareGroupChatText(context: Context) {
+    val groupId = uiState.value.selectedGroupChatId ?: return
+    viewModelScope.launch {
+      val shareText = repository.groupChatShareText(groupId)
+      if (shareText.isBlank()) return@launch
+      val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, shareText)
+      }
+      context.startActivity(Intent.createChooser(sendIntent, "分享群聊文本"))
+    }
+  }
+
+  fun shareSelectedGroupMessagesText(context: Context) {
+    val state = uiState.value
+    val groupId = state.selectedGroupChatId ?: return
+    val selectedIds = state.selectedMessageIds
+    if (selectedIds.isEmpty()) return
+    viewModelScope.launch {
+      val shareText = repository.groupChatShareText(groupId, selectedIds)
+      if (shareText.isBlank()) return@launch
+      val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, shareText)
+      }
+      context.startActivity(Intent.createChooser(sendIntent, "分享选中群消息"))
+    }
+  }
+
+  fun shareGroupChatLongImage(context: Context) {
+    val groupId = uiState.value.selectedGroupChatId ?: return
+    viewModelScope.launch {
+      val export = repository.groupChatExport(groupId) ?: return@launch
+      val uri = ConversationShareRenderer.saveImageToGallery(context, export)
+        ?: ConversationShareRenderer.writeImageExport(context, export)
+      val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "image/png"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+      context.startActivity(Intent.createChooser(sendIntent, "分享群聊长图"))
+    }
+  }
+
+  fun shareSelectedGroupMessagesLongImage(context: Context) {
+    val state = uiState.value
+    val groupId = state.selectedGroupChatId ?: return
+    val selectedIds = state.selectedMessageIds
+    if (selectedIds.isEmpty()) return
+    viewModelScope.launch {
+      val export = repository.groupChatExport(groupId) ?: return@launch
+      val selectedMessages = export.messages.filter { it.id in selectedIds }
+      if (selectedMessages.isEmpty()) return@launch
+      val selectedExport = export.copy(title = "${export.title}（节选）", messages = selectedMessages)
+      val uri = ConversationShareRenderer.saveImageToGallery(context, selectedExport)
+        ?: ConversationShareRenderer.writeImageExport(context, selectedExport)
+      val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "image/png"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+      context.startActivity(Intent.createChooser(sendIntent, "分享选中群消息长图"))
+    }
+  }
+
+  fun shareGroupMessageText(messageId: String, context: Context) {
+    val groupId = uiState.value.selectedGroupChatId ?: return
+    viewModelScope.launch {
+      val shareText = repository.groupMessageShareText(groupId, messageId)
+      if (shareText.isBlank()) return@launch
+      val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, shareText)
+      }
+      context.startActivity(Intent.createChooser(sendIntent, "分享群消息文本"))
+    }
+  }
+
+  fun shareGroupMessageImage(messageId: String, context: Context) {
+    val groupId = uiState.value.selectedGroupChatId ?: return
+    viewModelScope.launch {
+      val export = repository.groupMessageExport(groupId, messageId) ?: return@launch
+      val uri = ConversationShareRenderer.saveImageToGallery(context, export)
+        ?: ConversationShareRenderer.writeImageExport(context, export)
+      val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "image/png"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+      context.startActivity(Intent.createChooser(sendIntent, "分享群消息图片"))
+    }
+  }
+
   fun openForkProviderPicker(messageId: String) {
     localState.update { it.copy(forkTargetMessageId = messageId) }
   }
@@ -635,7 +749,12 @@ class ChatViewModel(
       }
     ) {
       lastGroupTurnCompletedByGroupId[groupId] =
-        repository.sendGroupBotTurn(groupId, botId, summarize) == MessageStatus.COMPLETE
+        repository.sendGroupBotTurn(
+          groupId = groupId,
+          botId = botId,
+          summarize = summarize,
+          trigger = if (continueAutoPlay) GroupTurnTrigger.AUTO else GroupTurnTrigger.MANUAL
+        ) == MessageStatus.COMPLETE
     }
   }
 
@@ -687,20 +806,20 @@ class ChatViewModel(
     localState.update { it.copy(botManagerOpen = false) }
   }
 
-  fun createAiBot(name: String, providerId: String, model: String, systemPrompt: String) {
+  fun createAiBot(name: String, providerId: String, model: String, systemPrompt: String, bubbleColorKey: String = "AUTO") {
     viewModelScope.launch {
       runCatching {
-        repository.createAiBot(name, providerId, model, systemPrompt)
+        repository.createAiBot(name, providerId, model, systemPrompt, bubbleColorKey)
       }.onFailure { error ->
         localState.update { it.copy(error = error.message ?: "创建机器人失败") }
       }
     }
   }
 
-  fun updateAiBot(botId: String, name: String, providerId: String, model: String, systemPrompt: String) {
+  fun updateAiBot(botId: String, name: String, providerId: String, model: String, systemPrompt: String, bubbleColorKey: String = "AUTO") {
     viewModelScope.launch {
       runCatching {
-        repository.updateAiBot(botId, name, providerId, model, systemPrompt)
+        repository.updateAiBot(botId, name, providerId, model, systemPrompt, bubbleColorKey)
       }.onFailure { error ->
         localState.update { it.copy(error = error.message ?: "更新机器人失败") }
       }
@@ -755,11 +874,16 @@ class ChatViewModel(
 
   fun appendSelectedMessagesToFavorite(favoriteId: String) {
     val state = uiState.value
-    val conversationId = state.selectedConversationId ?: return
     val selectedIds = state.selectedMessageIds
     viewModelScope.launch {
       runCatching {
-        repository.appendMessagesToFavoriteSnippet(favoriteId, conversationId, selectedIds)
+        if (state.groupChatPageOpen) {
+          val groupId = state.selectedGroupChatId ?: error("请先选择群聊")
+          repository.appendGroupMessagesToFavoriteSnippet(favoriteId, groupId, selectedIds)
+        } else {
+          val conversationId = state.selectedConversationId ?: error("请先选择对话")
+          repository.appendMessagesToFavoriteSnippet(favoriteId, conversationId, selectedIds)
+        }
       }.onSuccess {
         localState.update { current -> current.copy(error = "已追加到收藏") }
       }.onFailure { error ->

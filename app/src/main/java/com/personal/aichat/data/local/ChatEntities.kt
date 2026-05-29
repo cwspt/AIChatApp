@@ -84,6 +84,7 @@ data class AiBotEntity(
   val providerId: String,
   val model: String,
   val systemPrompt: String,
+  val bubbleColorKey: String = "AUTO",
   val enabled: Boolean = true,
   val createdAt: Long,
   val updatedAt: Long
@@ -131,5 +132,9 @@ data class GroupMessageEntity(
   val promptTokens: Int? = null,
   val completionTokens: Int? = null,
   val totalTokens: Int? = null,
-  val attachmentsJson: String = ""
+  val attachmentsJson: String = "",
+  val turnTrigger: String = "UNKNOWN",
+  val turnRound: Int? = null,
+  val turnIndex: Int? = null,
+  val turnMemberCount: Int? = null
 )

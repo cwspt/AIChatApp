@@ -11,6 +11,7 @@ import com.personal.aichat.domain.GroupChatMember
 import com.personal.aichat.domain.GroupChatMessage
 import com.personal.aichat.domain.GroupChatRoom
 import com.personal.aichat.domain.GroupMessageSenderType
+import com.personal.aichat.domain.GroupTurnTrigger
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.MessageRole
@@ -168,6 +169,7 @@ fun AiBotEntity.toDomain(): AiBot = AiBot(
   providerId = providerId,
   model = model,
   systemPrompt = systemPrompt,
+  bubbleColorKey = bubbleColorKey,
   enabled = enabled,
   createdAt = createdAt,
   updatedAt = updatedAt
@@ -179,6 +181,7 @@ fun AiBot.toEntity(): AiBotEntity = AiBotEntity(
   providerId = providerId,
   model = model,
   systemPrompt = systemPrompt,
+  bubbleColorKey = bubbleColorKey,
   enabled = enabled,
   createdAt = createdAt,
   updatedAt = updatedAt
@@ -234,7 +237,11 @@ fun GroupMessageEntity.toDomain(): GroupChatMessage = GroupChatMessage(
   promptTokens = promptTokens,
   completionTokens = completionTokens,
   totalTokens = totalTokens,
-  attachments = parseAttachments(attachmentsJson)
+  attachments = parseAttachments(attachmentsJson),
+  turnTrigger = runCatching { GroupTurnTrigger.valueOf(turnTrigger) }.getOrDefault(GroupTurnTrigger.UNKNOWN),
+  turnRound = turnRound,
+  turnIndex = turnIndex,
+  turnMemberCount = turnMemberCount
 )
 
 fun formatAttachments(attachments: List<ChatAttachment>): String {

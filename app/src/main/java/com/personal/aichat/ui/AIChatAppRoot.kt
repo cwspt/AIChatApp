@@ -39,6 +39,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -97,6 +98,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.collectAsState
@@ -116,6 +118,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -131,6 +134,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import com.personal.aichat.domain.ChatAttachment
 import com.personal.aichat.domain.AiBot
@@ -143,6 +147,7 @@ import com.personal.aichat.domain.FavoriteSnippetMessage
 import com.personal.aichat.domain.GroupChatMessage
 import com.personal.aichat.domain.GroupChatRoom
 import com.personal.aichat.domain.GroupMessageSenderType
+import com.personal.aichat.domain.GroupTurnTrigger
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderType
@@ -162,6 +167,104 @@ private data class GroupChatDialogDraft(
   val selectedBotIds: Set<String>,
   val copyMode: Boolean
 )
+
+private data class BotBubblePalette(
+  val key: String,
+  val label: String,
+  val lightContainer: Color,
+  val lightContent: Color,
+  val lightAccent: Color,
+  val darkContainer: Color,
+  val darkContent: Color,
+  val darkAccent: Color
+)
+
+private data class BotBubbleColors(
+  val key: String,
+  val label: String,
+  val container: Color,
+  val content: Color,
+  val accent: Color
+)
+
+internal data class LongBubbleNavTarget(
+  val index: Int,
+  val showUp: Boolean,
+  val showDown: Boolean,
+  val bottomOffset: Int,
+  val messageId: String? = null,
+  val showActions: Boolean = false
+)
+
+internal data class VisibleListItemBounds(
+  val index: Int,
+  val offset: Int,
+  val size: Int,
+  val messageId: String? = null,
+  val supportsActions: Boolean = false
+)
+
+internal sealed interface GroupMessageListItem {
+  val key: String
+  val messageIds: List<String>
+
+  data class Message(val message: GroupChatMessage) : GroupMessageListItem {
+    override val key: String = message.id
+    override val messageIds: List<String> = listOf(message.id)
+  }
+
+  data class ToolGroup(val messages: List<GroupChatMessage>) : GroupMessageListItem {
+    override val key: String = "tool_group_${messages.firstOrNull()?.id.orEmpty()}"
+    override val messageIds: List<String> = messages.map { it.id }
+  }
+}
+
+private val BotBubblePalettes = listOf(
+  BotBubblePalette("TEAL", "青绿", Color(0xFFD2F4EA), Color(0xFF073B32), Color(0xFF00866E), Color(0xFF0C423A), Color(0xFFE0FFF6), Color(0xFF46D3BA)),
+  BotBubblePalette("BLUE", "蓝", Color(0xFFD8E9FF), Color(0xFF062B55), Color(0xFF1E6FD9), Color(0xFF12365E), Color(0xFFE5F1FF), Color(0xFF6EA8FF)),
+  BotBubblePalette("PURPLE", "紫", Color(0xFFE8DDFF), Color(0xFF32105D), Color(0xFF7B43D6), Color(0xFF3A245E), Color(0xFFF0E8FF), Color(0xFFB994FF)),
+  BotBubblePalette("ROSE", "玫红", Color(0xFFFFD9E6), Color(0xFF5F0B2D), Color(0xFFD43D75), Color(0xFF5D2238), Color(0xFFFFE4EE), Color(0xFFFF8BB4)),
+  BotBubblePalette("ORANGE", "橙", Color(0xFFFFE1C7), Color(0xFF542600), Color(0xFFD66A00), Color(0xFF57351D), Color(0xFFFFE9D6), Color(0xFFFFA857)),
+  BotBubblePalette("GOLD", "金", Color(0xFFFFEDB5), Color(0xFF4B3500), Color(0xFFB98700), Color(0xFF4D3E17), Color(0xFFFFF0BE), Color(0xFFFFD35D)),
+  BotBubblePalette("INDIGO", "靛蓝", Color(0xFFDEE3FF), Color(0xFF161F61), Color(0xFF4C5DD9), Color(0xFF252B63), Color(0xFFE8EBFF), Color(0xFF8FA0FF)),
+  BotBubblePalette("CYAN", "湖蓝", Color(0xFFCFF3FF), Color(0xFF003847), Color(0xFF0089A8), Color(0xFF123F4A), Color(0xFFE2F8FF), Color(0xFF54D8F4))
+)
+
+private val AutoBotBubblePalette = BotBubblePalette(
+  key = "AUTO",
+  label = "自动",
+  lightContainer = Color(0xFFE6ECE9),
+  lightContent = Color(0xFF1C2623),
+  lightAccent = Color(0xFF5B6F68),
+  darkContainer = Color(0xFF293230),
+  darkContent = Color(0xFFE8F0ED),
+  darkAccent = Color(0xFF9CB0AA)
+)
+
+internal fun resolvedBotBubbleColorKey(botId: String, requestedKey: String): String {
+  val explicitKey = requestedKey.trim().uppercase(Locale.ROOT)
+  if (explicitKey != "AUTO" && BotBubblePalettes.any { it.key == explicitKey }) return explicitKey
+  if (BotBubblePalettes.isEmpty()) return "AUTO"
+  val hash = botId.fold(0) { acc, char -> (acc * 31 + char.code) and Int.MAX_VALUE }
+  return BotBubblePalettes[hash % BotBubblePalettes.size].key
+}
+
+@Composable
+private fun botBubbleColors(bot: AiBot?): BotBubbleColors {
+  val requestedKey = bot?.bubbleColorKey ?: "AUTO"
+  val key = bot?.let { resolvedBotBubbleColorKey(it.id, requestedKey) } ?: "AUTO"
+  val palette = BotBubblePalettes.firstOrNull { it.key == key } ?: AutoBotBubblePalette
+  val dark = MaterialTheme.colorScheme.onBackground.red > 0.75f &&
+    MaterialTheme.colorScheme.onBackground.green > 0.75f &&
+    MaterialTheme.colorScheme.onBackground.blue > 0.75f
+  return BotBubbleColors(
+    key = palette.key,
+    label = palette.label,
+    container = if (dark) palette.darkContainer else palette.lightContainer,
+    content = if (dark) palette.darkContent else palette.lightContent,
+    accent = if (dark) palette.darkAccent else palette.lightAccent
+  )
+}
 
 @Composable
 fun AIChatAppRoot(viewModel: ChatViewModel) {
@@ -290,6 +393,28 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onToggleAutoPlay = viewModel::toggleGroupAutoPlay,
         onStop = viewModel::stopGroupGenerating,
         onFavoriteMessage = { favoriteDraftGroupMessageIds = setOf(it) },
+        selectedMessageIds = state.selectedMessageIds,
+        selectionMode = state.messageSelectionMode,
+        onToggleSelectionMode = viewModel::toggleMessageSelectionMode,
+        onToggleMessageSelected = viewModel::toggleMessageSelected,
+        onSetMessagesSelected = viewModel::setMessagesSelected,
+        onSelectRangeTo = viewModel::selectMessageRangeTo,
+        onShareText = { viewModel.shareGroupChatText(context) },
+        onShareSelected = { viewModel.shareSelectedGroupMessagesText(context) },
+        onShareImage = { viewModel.shareGroupChatLongImage(context) },
+        onShareSelectedImage = { viewModel.shareSelectedGroupMessagesLongImage(context) },
+        onShareMessageText = { viewModel.shareGroupMessageText(it, context) },
+        onShareMessageImage = { viewModel.shareGroupMessageImage(it, context) },
+        onFavoriteSelected = {
+          if (state.selectedMessageIds.isNotEmpty()) {
+            favoriteDraftGroupMessageIds = state.selectedMessageIds
+          }
+        },
+        onAppendSelectedToFavorite = {
+          if (state.selectedMessageIds.isNotEmpty()) {
+            appendFavoritePickerOpen = true
+          }
+        },
         onCopyGroup = {
           state.selectedGroupChat?.let { group ->
             groupChatDialogDraft = GroupChatDialogDraft(
@@ -484,8 +609,9 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
     }
 
     if (appendFavoritePickerOpen) {
+      val sourceId = if (state.groupChatPageOpen) state.selectedGroupChatId else state.selectedConversationId
       AppendToFavoriteDialog(
-        favorites = state.favoriteSnippets.filter { it.sourceConversationId == state.selectedConversationId },
+        favorites = state.favoriteSnippets.filter { it.sourceConversationId == sourceId },
         selectedCount = state.selectedMessageIds.size,
         onDismiss = { appendFavoritePickerOpen = false },
         onSelectFavorite = { favoriteId ->
@@ -1921,6 +2047,20 @@ private fun GroupChatPage(
   onToggleAutoPlay: () -> Unit,
   onStop: () -> Unit,
   onFavoriteMessage: (String) -> Unit,
+  selectedMessageIds: Set<String>,
+  selectionMode: Boolean,
+  onToggleSelectionMode: (Boolean) -> Unit,
+  onToggleMessageSelected: (String) -> Unit,
+  onSetMessagesSelected: (Set<String>, Boolean) -> Unit,
+  onSelectRangeTo: (String) -> Unit,
+  onShareText: () -> Unit,
+  onShareSelected: () -> Unit,
+  onShareImage: () -> Unit,
+  onShareSelectedImage: () -> Unit,
+  onShareMessageText: (String) -> Unit,
+  onShareMessageImage: (String) -> Unit,
+  onFavoriteSelected: () -> Unit,
+  onAppendSelectedToFavorite: () -> Unit,
   onCopyGroup: () -> Unit
 ) {
   var pickerMode by remember { mutableStateOf<GroupBotPickerMode?>(null) }
@@ -1975,8 +2115,19 @@ private fun GroupChatPage(
             tint = if (state.isSelectedGroupAutoPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
           )
         }
-        IconButton(onClick = onCopyGroup, enabled = selectedGroup != null) {
-          Icon(Icons.Outlined.ContentCopy, contentDescription = "复制群聊")
+        if (selectedGroup != null) {
+          GroupChatOverflowMenu(
+            selectionMode = selectionMode,
+            selectedCount = selectedMessageIds.size,
+            onToggleSelectionMode = onToggleSelectionMode,
+            onShareText = onShareText,
+            onShareSelected = onShareSelected,
+            onShareImage = onShareImage,
+            onShareSelectedImage = onShareSelectedImage,
+            onFavoriteSelected = onFavoriteSelected,
+            onAppendSelectedToFavorite = onAppendSelectedToFavorite,
+            onCopyGroup = onCopyGroup
+          )
         }
         IconButton(onClick = onClose) {
           Icon(Icons.Outlined.Close, contentDescription = "关闭群聊")
@@ -2027,10 +2178,18 @@ private fun GroupChatPage(
             if (groupBots.isNotEmpty()) {
               LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(groupBots, key = { it.id }) { bot ->
+                  val colors = botBubbleColors(bot)
                   AssistChip(
                     onClick = { onBotTurn(bot.id) },
                     enabled = !state.isSelectedGroupStreaming,
-                    label = { Text("${bot.name} · ${bot.model}", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    label = { Text("${bot.name} · ${bot.model}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    leadingIcon = {
+                      Box(
+                        modifier = Modifier
+                          .size(12.dp)
+                          .background(colors.accent, RoundedCornerShape(999.dp))
+                      )
+                    }
                   )
                 }
               }
@@ -2040,6 +2199,14 @@ private fun GroupChatPage(
 
         GroupMessageList(
           messages = state.groupMessages,
+          bots = state.aiBots,
+          selectedMessageIds = selectedMessageIds,
+          selectionMode = selectionMode,
+          onToggleMessageSelected = onToggleMessageSelected,
+          onSetMessagesSelected = onSetMessagesSelected,
+          onSelectRangeTo = onSelectRangeTo,
+          onShareMessageText = onShareMessageText,
+          onShareMessageImage = onShareMessageImage,
           onOpenAttachment = onOpenAttachment,
           onFavoriteMessage = onFavoriteMessage,
           modifier = Modifier
@@ -2110,41 +2277,589 @@ private fun GroupChatPage(
 }
 
 @Composable
-private fun GroupMessageList(
-  messages: List<GroupChatMessage>,
-  onOpenAttachment: (ChatAttachment) -> Unit,
-  onFavoriteMessage: (String) -> Unit,
-  modifier: Modifier = Modifier
+private fun GroupChatOverflowMenu(
+  selectionMode: Boolean,
+  selectedCount: Int,
+  onToggleSelectionMode: (Boolean) -> Unit,
+  onShareText: () -> Unit,
+  onShareSelected: () -> Unit,
+  onShareImage: () -> Unit,
+  onShareSelectedImage: () -> Unit,
+  onFavoriteSelected: () -> Unit,
+  onAppendSelectedToFavorite: () -> Unit,
+  onCopyGroup: () -> Unit
 ) {
-  val listState = rememberLazyListState()
-  LaunchedEffect(messages.size, messages.lastOrNull()?.content, messages.lastOrNull()?.status) {
-    if (messages.isNotEmpty()) {
-      listState.animateScrollToItem(messages.lastIndex)
+  var menuOpen by remember { mutableStateOf(false) }
+  Box {
+    IconButton(onClick = { menuOpen = true }) {
+      Icon(Icons.Outlined.MoreVert, contentDescription = "群聊操作")
     }
-  }
-  LazyColumn(
-    state = listState,
-    modifier = modifier
-      .padding(horizontal = 12.dp),
-    verticalArrangement = Arrangement.spacedBy(10.dp)
-  ) {
-    items(messages, key = { it.id }) { message ->
-      GroupMessageBubble(
-        message = message,
-        onOpenAttachment = onOpenAttachment,
-        onFavorite = { onFavoriteMessage(message.id) }
+    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+      DropdownMenuItem(
+        text = { Text(if (selectionMode) "退出多选" else "多选消息") },
+        leadingIcon = { Icon(Icons.Outlined.CheckCircle, contentDescription = null) },
+        onClick = {
+          menuOpen = false
+          onToggleSelectionMode(!selectionMode)
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("分享全文文本") },
+        leadingIcon = { Icon(Icons.Outlined.Share, contentDescription = null) },
+        onClick = {
+          menuOpen = false
+          onShareText()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("分享选中消息") },
+        leadingIcon = { Icon(Icons.Outlined.CheckCircle, contentDescription = null) },
+        enabled = selectedCount > 0,
+        onClick = {
+          menuOpen = false
+          onShareSelected()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("收藏选中消息") },
+        leadingIcon = { Icon(Icons.Outlined.Bookmark, contentDescription = null) },
+        enabled = selectedCount > 0,
+        onClick = {
+          menuOpen = false
+          onFavoriteSelected()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("追加到已有收藏") },
+        leadingIcon = { Icon(Icons.Outlined.Bookmark, contentDescription = null) },
+        enabled = selectedCount > 0,
+        onClick = {
+          menuOpen = false
+          onAppendSelectedToFavorite()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("生成长图分享") },
+        leadingIcon = { Icon(Icons.Outlined.Image, contentDescription = null) },
+        onClick = {
+          menuOpen = false
+          onShareImage()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("选中消息生成长图") },
+        leadingIcon = { Icon(Icons.Outlined.Image, contentDescription = null) },
+        enabled = selectedCount > 0,
+        onClick = {
+          menuOpen = false
+          onShareSelectedImage()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("复制群聊") },
+        leadingIcon = { Icon(Icons.Outlined.ContentCopy, contentDescription = null) },
+        onClick = {
+          menuOpen = false
+          onCopyGroup()
+        }
       )
     }
   }
 }
 
 @Composable
+private fun GroupMessageList(
+  messages: List<GroupChatMessage>,
+  bots: List<AiBot>,
+  selectedMessageIds: Set<String>,
+  selectionMode: Boolean,
+  onToggleMessageSelected: (String) -> Unit,
+  onSetMessagesSelected: (Set<String>, Boolean) -> Unit,
+  onSelectRangeTo: (String) -> Unit,
+  onShareMessageText: (String) -> Unit,
+  onShareMessageImage: (String) -> Unit,
+  onOpenAttachment: (ChatAttachment) -> Unit,
+  onFavoriteMessage: (String) -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val context = LocalContext.current
+  val listState = rememberLazyListState()
+  val scope = rememberCoroutineScope()
+  val groupId = messages.firstOrNull()?.groupId
+  var autoFollow by remember(groupId) { mutableStateOf(true) }
+  var expandedBotMessageIds by remember(groupId) { mutableStateOf<Set<String>>(emptySet()) }
+  val hasStreaming = messages.any { it.status == MessageStatus.STREAMING }
+  var lastAutoFollowAt by remember(groupId) { mutableStateOf(0L) }
+  var scrollHintVisible by remember(groupId) { mutableStateOf(false) }
+  var longBubbleActionsExpanded by remember(groupId) { mutableStateOf(false) }
+  val latestBotMessageId = messages.lastOrNull { it.senderType == GroupMessageSenderType.BOT }?.id
+  val botsById = remember(bots) { bots.associateBy { it.id } }
+  val listItems = remember(messages) { groupMessageListItems(messages) }
+  val bottomAnchorIndex = listItems.size
+  val visibleRangeTargetId by remember(selectionMode, selectedMessageIds, messages) {
+    derivedStateOf {
+      if (!selectionMode || selectedMessageIds.isEmpty()) {
+        null
+      } else {
+        listState.layoutInfo.visibleItemsInfo
+          .mapNotNull { item -> listItems.getOrNull(item.index) }
+          .flatMap { it.messageIds }
+          .firstOrNull { it !in selectedMessageIds }
+      }
+    }
+  }
+  val showScrollToBottom by remember(messages.size) {
+    derivedStateOf {
+      val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+      val lastItem = listState.layoutInfo.totalItemsCount - 1
+      lastItem > 0 && lastVisible < lastItem - 1
+    }
+  }
+  val groupLongBubbleNavTarget by remember(scrollHintVisible, listItems, expandedBotMessageIds, latestBotMessageId) {
+    derivedStateOf {
+      if (!scrollHintVisible) {
+        null
+      } else {
+        val visibleBotCandidates = listItems.mapIndexedNotNull { index, item ->
+          val message = (item as? GroupMessageListItem.Message)?.message ?: return@mapIndexedNotNull null
+          val isExpandedBot = message.senderType == GroupMessageSenderType.BOT &&
+            (message.status == MessageStatus.STREAMING || message.id == latestBotMessageId || message.id in expandedBotMessageIds)
+          if (isExpandedBot) index to message.id else null
+        }.toMap()
+        lazyListLongBubbleNavTarget(
+          visibleItems = listState.layoutInfo.visibleItemsInfo,
+          viewportStart = listState.layoutInfo.viewportStartOffset,
+          viewportEnd = listState.layoutInfo.viewportEndOffset,
+          candidates = visibleBotCandidates
+        )
+      }
+    }
+  }
+
+  LaunchedEffect(listState, groupId) {
+    snapshotFlow { listState.isScrollInProgress to listState.isAtBottom() }
+      .collect { (scrolling, atBottom) ->
+        if (scrolling) scrollHintVisible = true
+        if (scrolling && !atBottom) autoFollow = false
+        if (atBottom) autoFollow = true
+      }
+  }
+
+  LaunchedEffect(scrollHintVisible, listState.isScrollInProgress, longBubbleActionsExpanded) {
+    if (scrollHintVisible && !listState.isScrollInProgress && !longBubbleActionsExpanded) {
+      delay(2_500)
+      if (!listState.isScrollInProgress && !longBubbleActionsExpanded) scrollHintVisible = false
+    }
+  }
+
+  LaunchedEffect(messages.size, messages.lastOrNull()?.content, hasStreaming, autoFollow) {
+    if (autoFollow && messages.isNotEmpty()) {
+      val now = System.currentTimeMillis()
+      if (!hasStreaming || now - lastAutoFollowAt > 120L) {
+        lastAutoFollowAt = now
+        listState.scrollToItem(bottomAnchorIndex)
+      }
+    }
+  }
+
+  Box(modifier = modifier) {
+    LazyColumn(
+      state = listState,
+      modifier = Modifier
+        .fillMaxSize()
+        .padding(horizontal = 12.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+      items(listItems, key = { it.key }) { item ->
+        when (item) {
+          is GroupMessageListItem.Message -> {
+            val message = item.message
+            val isBotMessage = message.senderType == GroupMessageSenderType.BOT
+            val forceExpanded = isBotMessage && (
+              message.status == MessageStatus.STREAMING ||
+                message.id == latestBotMessageId
+              )
+            val expanded = !isBotMessage ||
+              forceExpanded ||
+              message.id in expandedBotMessageIds
+            GroupMessageBubble(
+              message = message,
+              bot = message.botId?.let { botsById[it] },
+              expanded = expanded,
+              canToggleExpanded = isBotMessage && !forceExpanded,
+              onToggleExpanded = if (isBotMessage && !forceExpanded) {
+                {
+                  expandedBotMessageIds = if (message.id in expandedBotMessageIds) {
+                    expandedBotMessageIds - message.id
+                  } else {
+                    expandedBotMessageIds + message.id
+                  }
+                }
+              } else {
+                null
+              },
+              selected = message.id in selectedMessageIds,
+              selectionMode = selectionMode,
+              canSelectRangeTo = selectionMode && selectedMessageIds.isNotEmpty() && message.id !in selectedMessageIds,
+              onToggleSelected = { onToggleMessageSelected(message.id) },
+              onSelectRangeTo = { onSelectRangeTo(message.id) },
+              onShareText = { onShareMessageText(message.id) },
+              onShareImage = { onShareMessageImage(message.id) },
+              onOpenAttachment = onOpenAttachment,
+              onFavorite = { onFavoriteMessage(message.id) }
+            )
+          }
+          is GroupMessageListItem.ToolGroup -> {
+            val first = item.messages.first()
+            val forceExpanded = item.messages.any { it.status == MessageStatus.STREAMING } ||
+              first.id == latestBotMessageId
+            val expanded = forceExpanded || first.id in expandedBotMessageIds
+            val toolIds = item.messages.map { it.id }.toSet()
+            val selected = toolIds.all { it in selectedMessageIds }
+            GroupToolMessageBubble(
+              messages = item.messages,
+              bot = first.botId?.let { botsById[it] },
+              expanded = expanded,
+              canToggleExpanded = !forceExpanded,
+              onToggleExpanded = if (!forceExpanded) {
+                {
+                  expandedBotMessageIds = if (first.id in expandedBotMessageIds) {
+                    expandedBotMessageIds - first.id
+                  } else {
+                    expandedBotMessageIds + first.id
+                  }
+                }
+              } else {
+                null
+              },
+              selected = selected,
+              selectionMode = selectionMode,
+              canSelectRangeTo = selectionMode && selectedMessageIds.isNotEmpty() && item.messages.any { it.id !in selectedMessageIds },
+              onToggleSelected = { onSetMessagesSelected(toolIds, !selected) },
+              onSelectRangeTo = { onSelectRangeTo(first.id) },
+              onShareText = { onShareMessageText(first.id) },
+              onShareImage = { onShareMessageImage(first.id) },
+              onFavorite = { onFavoriteMessage(first.id) }
+            )
+          }
+        }
+      }
+      item(key = "group-message-list-bottom-anchor") {
+        Spacer(Modifier.height(1.dp))
+      }
+    }
+    val rangeTargetId = visibleRangeTargetId
+    if (rangeTargetId != null) {
+      Button(
+        onClick = { onSelectRangeTo(rangeTargetId) },
+        modifier = Modifier
+          .align(Alignment.TopStart)
+          .padding(start = 18.dp, top = 8.dp)
+      ) {
+        Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text("选择到这里")
+      }
+    }
+    MessageScrollIndicator(
+      listState = listState,
+      onDragProgress = { progress ->
+        autoFollow = false
+        scrollHintVisible = true
+        scope.launch {
+          val total = listState.layoutInfo.totalItemsCount
+          if (total > 0) {
+            listState.scrollToItem(
+              listState.itemIndexForProgress(progress).coerceIn(0, total - 1)
+            )
+          }
+        }
+      },
+      modifier = Modifier
+        .align(Alignment.CenterEnd)
+        .padding(end = 4.dp)
+    )
+    if (showScrollToBottom && scrollHintVisible) {
+      Button(
+        onClick = {
+          scope.launch {
+            val last = listState.layoutInfo.totalItemsCount - 1
+            if (last >= 0) {
+              listState.animateScrollToItem(last)
+              autoFollow = true
+            }
+          }
+        },
+        modifier = Modifier
+          .align(Alignment.BottomCenter)
+          .padding(bottom = 12.dp)
+      ) {
+        Icon(Icons.Outlined.ArrowDownward, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text("回到底部")
+      }
+    }
+    LongBubbleNavOverlay(
+      target = groupLongBubbleNavTarget,
+      onJumpTop = { target ->
+        autoFollow = false
+        scrollHintVisible = true
+        scope.launch { listState.animateScrollToItem(target.index) }
+      },
+      onJumpBottom = { target ->
+        autoFollow = false
+        scrollHintVisible = true
+        scope.launch { listState.animateScrollToItem(target.index, target.bottomOffset) }
+      },
+      onCopy = { target ->
+        target.messageId
+          ?.let { id -> messages.firstOrNull { it.id == id } }
+          ?.let { copyToClipboard(context, it.content) }
+      },
+      onShareText = { target ->
+        target.messageId?.let(onShareMessageText)
+      },
+      onShareImage = { target ->
+        target.messageId?.let(onShareMessageImage)
+      },
+      onFavorite = { target ->
+        target.messageId?.let(onFavoriteMessage)
+      },
+      onActionsExpandedChange = { longBubbleActionsExpanded = it },
+      modifier = Modifier
+        .align(Alignment.CenterEnd)
+        .padding(end = 22.dp)
+    )
+  }
+}
+
+internal fun groupMessageListItems(messages: List<GroupChatMessage>): List<GroupMessageListItem> {
+  val result = mutableListOf<GroupMessageListItem>()
+  val toolGroups = messages
+    .filter { it.senderType == GroupMessageSenderType.TOOL }
+    .groupBy { it.groupTurnKey() }
+    .mapValues { (_, tools) -> tools.sortedBy { it.createdAt } }
+  val emittedToolKeys = mutableSetOf<GroupTurnKey>()
+
+  messages.forEach { message ->
+    if (message.senderType == GroupMessageSenderType.TOOL) {
+      val key = message.groupTurnKey()
+      if (emittedToolKeys.add(key)) {
+        result += GroupMessageListItem.ToolGroup(toolGroups.getValue(key))
+      }
+    } else {
+      if (message.senderType == GroupMessageSenderType.BOT) {
+        val key = message.groupTurnKey()
+        val tools = toolGroups[key].orEmpty()
+        if (tools.isNotEmpty() && emittedToolKeys.add(key)) {
+          result += GroupMessageListItem.ToolGroup(tools)
+        }
+      }
+      result += GroupMessageListItem.Message(message)
+    }
+  }
+  return result
+}
+
+private data class GroupTurnKey(
+  val groupId: String,
+  val botId: String?,
+  val trigger: GroupTurnTrigger,
+  val round: Int?,
+  val index: Int?,
+  val memberCount: Int?
+)
+
+private fun GroupChatMessage.groupTurnKey(): GroupTurnKey = GroupTurnKey(
+  groupId = groupId,
+  botId = botId,
+  trigger = turnTrigger,
+  round = turnRound,
+  index = turnIndex,
+  memberCount = turnMemberCount
+)
+
+private fun lazyListLongBubbleNavTarget(
+  visibleItems: List<LazyListItemInfo>,
+  viewportStart: Int,
+  viewportEnd: Int,
+  candidates: Map<Int, String>
+): LongBubbleNavTarget? = longBubbleNavTarget(
+  visibleItems = visibleItems.map { item ->
+    VisibleListItemBounds(
+      index = item.index,
+      offset = item.offset,
+      size = item.size,
+      messageId = candidates[item.index],
+      supportsActions = candidates.containsKey(item.index)
+    )
+  },
+  viewportStart = viewportStart,
+  viewportEnd = viewportEnd,
+  candidateIndexes = candidates.keys
+)
+
+internal fun longBubbleNavTarget(
+  visibleItems: List<VisibleListItemBounds>,
+  viewportStart: Int,
+  viewportEnd: Int,
+  candidateIndexes: Set<Int>
+): LongBubbleNavTarget? {
+  if (candidateIndexes.isEmpty() || viewportEnd <= viewportStart) return null
+  val viewportHeight = viewportEnd - viewportStart
+  val viewportCenter = viewportStart + viewportHeight / 2
+  return visibleItems
+    .asSequence()
+    .filter { it.index in candidateIndexes }
+    .mapNotNull { item ->
+      val itemTop = item.offset
+      val itemBottom = item.offset + item.size
+      val showUp = itemTop < viewportStart
+      val showDown = itemBottom > viewportEnd
+      val longEnough = item.size > viewportHeight
+      if (!showUp && !showDown) return@mapNotNull null
+      if (!longEnough && itemTop >= viewportStart && itemBottom <= viewportEnd) return@mapNotNull null
+      val distanceToCenter = kotlin.math.abs((itemTop + item.size / 2) - viewportCenter)
+      val bottomOffset = (item.size - viewportHeight).coerceAtLeast(0)
+      distanceToCenter to LongBubbleNavTarget(
+        index = item.index,
+        showUp = showUp,
+        showDown = showDown,
+        bottomOffset = bottomOffset,
+        messageId = item.messageId,
+        showActions = showUp && item.supportsActions && item.messageId != null
+      )
+    }
+    .minByOrNull { it.first }
+    ?.second
+}
+
+@Composable
+private fun LongBubbleNavOverlay(
+  target: LongBubbleNavTarget?,
+  onJumpTop: (LongBubbleNavTarget) -> Unit,
+  onJumpBottom: (LongBubbleNavTarget) -> Unit,
+  onCopy: (LongBubbleNavTarget) -> Unit,
+  onShareText: (LongBubbleNavTarget) -> Unit,
+  onShareImage: (LongBubbleNavTarget) -> Unit,
+  onFavorite: (LongBubbleNavTarget) -> Unit,
+  onActionsExpandedChange: (Boolean) -> Unit,
+  modifier: Modifier = Modifier
+) {
+  if (target == null || (!target.showUp && !target.showDown && !target.showActions)) return
+  var actionsExpanded by remember(target.index, target.messageId) { mutableStateOf(false) }
+  DisposableEffect(actionsExpanded) {
+    onActionsExpandedChange(actionsExpanded)
+    onDispose {
+      if (actionsExpanded) onActionsExpandedChange(false)
+    }
+  }
+  Surface(
+    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f),
+    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    shape = RoundedCornerShape(999.dp),
+    modifier = modifier
+      .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(999.dp))
+  ) {
+    Column(
+      modifier = Modifier.padding(vertical = 3.dp),
+      horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+      if (target.showUp) {
+        IconButton(onClick = { onJumpTop(target) }, modifier = Modifier.size(34.dp)) {
+          Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = "跳到气泡顶部")
+        }
+      }
+      if (target.showActions) {
+        Box {
+          IconButton(onClick = { actionsExpanded = true }, modifier = Modifier.size(34.dp)) {
+            Icon(Icons.Outlined.MoreVert, contentDescription = "更多气泡操作")
+          }
+          DropdownMenu(
+            expanded = actionsExpanded,
+            onDismissRequest = { actionsExpanded = false }
+          ) {
+            DropdownMenuItem(
+              text = { Text("复制") },
+              leadingIcon = { Icon(Icons.Outlined.ContentCopy, contentDescription = null) },
+              onClick = {
+                actionsExpanded = false
+                onCopy(target)
+              }
+            )
+            DropdownMenuItem(
+              text = { Text("分享文本") },
+              leadingIcon = { Icon(Icons.Outlined.Share, contentDescription = null) },
+              onClick = {
+                actionsExpanded = false
+                onShareText(target)
+              }
+            )
+            DropdownMenuItem(
+              text = { Text("分享长图") },
+              leadingIcon = { Icon(Icons.Outlined.Image, contentDescription = null) },
+              onClick = {
+                actionsExpanded = false
+                onShareImage(target)
+              }
+            )
+            DropdownMenuItem(
+              text = { Text("收藏") },
+              leadingIcon = { Icon(Icons.Outlined.Bookmark, contentDescription = null) },
+              onClick = {
+                actionsExpanded = false
+                onFavorite(target)
+              }
+            )
+          }
+        }
+      }
+      if (target.showDown) {
+        IconButton(onClick = { onJumpBottom(target) }, modifier = Modifier.size(34.dp)) {
+          Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "跳到气泡底部")
+        }
+      }
+    }
+  }
+}
+
+private fun groupTurnLabel(message: GroupChatMessage): String? {
+  return when (message.turnTrigger) {
+    GroupTurnTrigger.AUTO -> {
+      val round = message.turnRound ?: return "自动发言"
+      val index = message.turnIndex ?: return "自动第 $round 轮"
+      val total = message.turnMemberCount
+      if (total != null && total > 0) {
+        "自动第 $round 轮 · 第 $index/$total 个发言"
+      } else {
+        "自动第 $round 轮 · 第 $index 个发言"
+      }
+    }
+    GroupTurnTrigger.MANUAL -> message.turnIndex?.let { "点名第 $it 次发言" } ?: "点名发言"
+    GroupTurnTrigger.SUMMARY -> message.turnIndex?.let { "总结第 $it 次" } ?: "总结发言"
+    GroupTurnTrigger.UNKNOWN -> null
+  }
+}
+
+@Composable
 private fun GroupMessageBubble(
   message: GroupChatMessage,
+  bot: AiBot?,
+  expanded: Boolean,
+  canToggleExpanded: Boolean,
+  onToggleExpanded: (() -> Unit)?,
+  selected: Boolean,
+  selectionMode: Boolean,
+  canSelectRangeTo: Boolean,
+  onToggleSelected: () -> Unit,
+  onSelectRangeTo: () -> Unit,
+  onShareText: () -> Unit,
+  onShareImage: () -> Unit,
   onOpenAttachment: (ChatAttachment) -> Unit,
   onFavorite: () -> Unit
 ) {
   val context = LocalContext.current
+  var shareMenuOpen by remember(message.id) { mutableStateOf(false) }
   if (message.senderType == GroupMessageSenderType.TOOL) {
     ToolCallItem(
       message = message.toChatMessage(),
@@ -2159,22 +2874,56 @@ private fun GroupMessageBubble(
     return
   }
   val isUser = message.senderType == GroupMessageSenderType.USER
+  val isBot = message.senderType == GroupMessageSenderType.BOT
+  val botColors = botBubbleColors(bot)
+  val contentColor = when {
+    isUser -> MaterialTheme.colorScheme.onPrimary
+    isBot -> botColors.content
+    else -> MaterialTheme.colorScheme.onSurface
+  }
+  val metadataColor = when {
+    isUser -> MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f)
+    isBot -> botColors.content.copy(alpha = 0.74f)
+    else -> MaterialTheme.colorScheme.onSurfaceVariant
+  }
   Row(
-    modifier = Modifier.fillMaxWidth(),
+    modifier = Modifier
+      .fillMaxWidth()
+      .then(if (selectionMode) Modifier.clickable(onClick = onToggleSelected) else Modifier),
     horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
   ) {
     Surface(
       color = when {
+        selected -> MaterialTheme.colorScheme.secondaryContainer
         isUser -> MaterialTheme.colorScheme.primary
         message.status == MessageStatus.FAILED -> MaterialTheme.colorScheme.errorContainer
+        isBot -> botColors.container
         else -> MaterialTheme.colorScheme.surface
       },
-      contentColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+      contentColor = contentColor,
       shape = RoundedCornerShape(8.dp),
-      modifier = Modifier.fillMaxWidth(if (isUser) 0.84f else 0.92f)
+      modifier = Modifier
+        .fillMaxWidth(if (isUser) 0.84f else 0.92f)
+        .then(
+          if (isBot) {
+            Modifier.border(if (selected) 2.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else botColors.accent, RoundedCornerShape(8.dp))
+          } else if (selected) {
+            Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+          } else {
+            Modifier
+          }
+        )
     ) {
       Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+          if (isBot) {
+            Box(
+              modifier = Modifier
+                .size(12.dp)
+                .background(botColors.accent, RoundedCornerShape(999.dp))
+            )
+            Spacer(Modifier.width(7.dp))
+          }
           Column(modifier = Modifier.weight(1f)) {
             Text(
               text = message.senderName.ifBlank { if (isUser) "用户" else "AI" },
@@ -2182,10 +2931,19 @@ private fun GroupMessageBubble(
               maxLines = 1,
               overflow = TextOverflow.Ellipsis
             )
+            groupTurnLabel(message)?.let { label ->
+              Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = metadataColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+              )
+            }
             Text(
               text = listOfNotNull(message.model, formatMessageTime(message.createdAt)).joinToString(" · "),
               style = MaterialTheme.typography.bodySmall,
-              color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f) else MaterialTheme.colorScheme.onSurfaceVariant,
+              color = metadataColor,
               maxLines = 1,
               overflow = TextOverflow.Ellipsis
             )
@@ -2193,8 +2951,28 @@ private fun GroupMessageBubble(
           IconButton(onClick = { copyToClipboard(context, message.content) }, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Outlined.ContentCopy, contentDescription = "复制群消息")
           }
-          IconButton(onClick = { shareText(context, message.content, "分享群消息") }, modifier = Modifier.size(32.dp)) {
-            Icon(Icons.Outlined.Share, contentDescription = "分享群消息")
+          Box {
+            IconButton(onClick = { shareMenuOpen = true }, modifier = Modifier.size(32.dp)) {
+              Icon(Icons.Outlined.Share, contentDescription = "分享群消息")
+            }
+            DropdownMenu(expanded = shareMenuOpen, onDismissRequest = { shareMenuOpen = false }) {
+              DropdownMenuItem(
+                text = { Text("分享文本") },
+                leadingIcon = { Icon(Icons.Outlined.Share, contentDescription = null) },
+                onClick = {
+                  shareMenuOpen = false
+                  onShareText()
+                }
+              )
+              DropdownMenuItem(
+                text = { Text("分享长图") },
+                leadingIcon = { Icon(Icons.Outlined.Image, contentDescription = null) },
+                onClick = {
+                  shareMenuOpen = false
+                  onShareImage()
+                }
+              )
+            }
           }
           IconButton(onClick = onFavorite, enabled = message.status != MessageStatus.STREAMING, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Outlined.Bookmark, contentDescription = "收藏群消息")
@@ -2202,6 +2980,14 @@ private fun GroupMessageBubble(
         }
         if (isUser) {
           Text(message.content)
+        } else if (isBot && !expanded) {
+          Text(
+            text = collapsedGroupMessageSummary(message),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.bodyMedium,
+            color = contentColor
+          )
         } else {
           SelectionContainer {
             MarkdownPreview(message.content.ifBlank { if (message.status == MessageStatus.STREAMING) "..." else "" })
@@ -2226,9 +3012,216 @@ private fun GroupMessageBubble(
           Text(
             text = metadata,
             style = MaterialTheme.typography.bodySmall,
-            color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f) else MaterialTheme.colorScheme.onSurfaceVariant
+            color = metadataColor
           )
         }
+        if (selectionMode) {
+          Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = selected, onCheckedChange = { onToggleSelected() })
+            if (canSelectRangeTo) {
+              TextButton(onClick = onSelectRangeTo) {
+                Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("选择到这里")
+              }
+            }
+          }
+        }
+        if (isBot && canToggleExpanded && onToggleExpanded != null) {
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = onToggleExpanded) {
+              Icon(
+                if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+              )
+              Spacer(Modifier.width(4.dp))
+              Text(if (expanded) "折叠" else "展开")
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun GroupToolMessageBubble(
+  messages: List<GroupChatMessage>,
+  bot: AiBot?,
+  expanded: Boolean,
+  canToggleExpanded: Boolean,
+  onToggleExpanded: (() -> Unit)?,
+  selected: Boolean,
+  selectionMode: Boolean,
+  canSelectRangeTo: Boolean,
+  onToggleSelected: () -> Unit,
+  onSelectRangeTo: () -> Unit,
+  onShareText: () -> Unit,
+  onShareImage: () -> Unit,
+  onFavorite: () -> Unit
+) {
+  if (messages.isEmpty()) return
+  val context = LocalContext.current
+  val first = messages.first()
+  var shareMenuOpen by remember(first.id) { mutableStateOf(false) }
+  val colors = botBubbleColors(bot)
+  val details = remember(messages) { messages.map { parseToolCallDetails(it.content) } }
+  val isStreaming = messages.any { it.status == MessageStatus.STREAMING }
+  val contentColor = colors.content
+  val metadataColor = colors.content.copy(alpha = 0.74f)
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .then(if (selectionMode) Modifier.clickable(onClick = onToggleSelected) else Modifier),
+    horizontalArrangement = Arrangement.Start
+  ) {
+    Surface(
+      color = if (selected) MaterialTheme.colorScheme.secondaryContainer else colors.container,
+      contentColor = contentColor,
+      shape = RoundedCornerShape(8.dp),
+      modifier = Modifier
+        .fillMaxWidth(0.92f)
+        .border(if (selected) 2.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else colors.accent, RoundedCornerShape(8.dp))
+    ) {
+      Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Box(
+            modifier = Modifier
+              .size(12.dp)
+              .background(colors.accent, RoundedCornerShape(999.dp))
+          )
+          Spacer(Modifier.width(7.dp))
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "${first.senderName.ifBlank { bot?.name ?: "AI" }} · 工具调用",
+              fontWeight = FontWeight.SemiBold,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
+            )
+            groupTurnLabel(first)?.let { label ->
+              Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = metadataColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+              )
+            }
+            Text(
+              text = listOfNotNull(first.model, formatMessageTime(first.createdAt)).joinToString(" · "),
+              style = MaterialTheme.typography.bodySmall,
+              color = metadataColor,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
+            )
+          }
+          IconButton(onClick = { copyToClipboard(context, messages.joinToString("\n\n") { it.content }) }, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Outlined.ContentCopy, contentDescription = "复制工具调用")
+          }
+          Box {
+            IconButton(onClick = { shareMenuOpen = true }, modifier = Modifier.size(32.dp)) {
+              Icon(Icons.Outlined.Share, contentDescription = "分享工具调用")
+            }
+            DropdownMenu(expanded = shareMenuOpen, onDismissRequest = { shareMenuOpen = false }) {
+              DropdownMenuItem(
+                text = { Text("分享文本") },
+                leadingIcon = { Icon(Icons.Outlined.Share, contentDescription = null) },
+                onClick = {
+                  shareMenuOpen = false
+                  onShareText()
+                }
+              )
+              DropdownMenuItem(
+                text = { Text("分享长图") },
+                leadingIcon = { Icon(Icons.Outlined.Image, contentDescription = null) },
+                onClick = {
+                  shareMenuOpen = false
+                  onShareImage()
+                }
+              )
+            }
+          }
+          IconButton(onClick = onFavorite, enabled = messages.none { it.status == MessageStatus.STREAMING }, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Outlined.Bookmark, contentDescription = "收藏工具调用")
+          }
+        }
+
+        Text(
+          text = groupToolSummary(details, messages.size, isStreaming),
+          maxLines = if (expanded) 3 else 1,
+          overflow = TextOverflow.Ellipsis,
+          style = MaterialTheme.typography.bodyMedium,
+          color = contentColor
+        )
+
+        if (expanded) {
+          details.forEachIndexed { index, item ->
+            GroupToolCallDetail(
+              index = index + 1,
+              details = item,
+              metadataColor = metadataColor
+            )
+          }
+        }
+
+        if (isStreaming) {
+          Text("工具调用中", style = MaterialTheme.typography.bodySmall, color = metadataColor)
+        }
+
+        if (selectionMode) {
+          Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = selected, onCheckedChange = { onToggleSelected() })
+            if (canSelectRangeTo) {
+              TextButton(onClick = onSelectRangeTo) {
+                Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("选择到这里")
+              }
+            }
+          }
+        }
+
+        if (canToggleExpanded && onToggleExpanded != null) {
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = onToggleExpanded) {
+              Icon(
+                if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+              )
+              Spacer(Modifier.width(4.dp))
+              Text(if (expanded) "折叠" else "展开")
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun GroupToolCallDetail(
+  index: Int,
+  details: ToolCallDetails,
+  metadataColor: Color
+) {
+  Surface(
+    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.36f),
+    contentColor = MaterialTheme.colorScheme.onSurface,
+    shape = RoundedCornerShape(8.dp),
+    modifier = Modifier.fillMaxWidth()
+  ) {
+    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(17.dp))
+        Spacer(Modifier.width(7.dp))
+        Text("工具 $index · ${details.name}", fontWeight = FontWeight.SemiBold)
+      }
+      details.input?.takeIf { it.isNotBlank() }?.let { ToolCallSection("输入", it) }
+      details.output?.takeIf { it.isNotBlank() }?.let { ToolCallSection("输出", it) }
+      if (details.input.isNullOrBlank() && details.output.isNullOrBlank()) {
+        Text("暂无详情", style = MaterialTheme.typography.bodySmall, color = metadataColor)
       }
     }
   }
@@ -2253,6 +3246,36 @@ private fun GroupChatMessage.toChatMessage(): ChatMessage {
     totalTokens = totalTokens,
     attachments = attachments
   )
+}
+
+internal fun collapsedGroupMessageSummary(message: GroupChatMessage): String {
+  if (message.content.isBlank()) {
+    return if (message.status == MessageStatus.STREAMING) "输出中..." else "无内容"
+  }
+  val firstLine = message.content
+    .lineSequence()
+    .map { it.trim() }
+    .firstOrNull { it.isNotBlank() }
+    .orEmpty()
+  val compact = firstLine.replace(Regex("\\s+"), " ")
+  return if (compact.length <= 30) compact else compact.take(30) + "..."
+}
+
+private fun groupToolSummary(details: List<ToolCallDetails>, count: Int, streaming: Boolean): String {
+  val names = details.map { it.name }.distinct().joinToString("、").ifBlank { "tool" }
+  val summary = details.asSequence()
+    .mapNotNull { it.summary }
+    .firstOrNull { it.isNotBlank() }
+  return buildString {
+    append(if (streaming) "正在调用" else "已调用")
+    append(" $count 次工具")
+    append("：")
+    append(names)
+    summary?.let {
+      append(" · ")
+      append(it)
+    }
+  }
 }
 
 private fun formatGroupMessageMetadata(message: GroupChatMessage): String? {
@@ -2319,8 +3342,8 @@ private fun BotManagerPage(
   providers: List<ChatProviderConfig>,
   bots: List<AiBot>,
   onDismiss: () -> Unit,
-  onCreate: (String, String, String, String) -> Unit,
-  onUpdate: (String, String, String, String, String) -> Unit,
+  onCreate: (String, String, String, String, String) -> Unit,
+  onUpdate: (String, String, String, String, String, String) -> Unit,
   onToggleEnabled: (String, Boolean) -> Unit,
   onDelete: (String) -> Unit
 ) {
@@ -2367,12 +3390,23 @@ private fun BotManagerPage(
         }
         items(bots, key = { it.id }) { bot ->
           val providerName = providers.firstOrNull { it.id == bot.providerId }?.displayName ?: bot.providerId
+          val colors = botBubbleColors(bot)
           Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
               Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                  modifier = Modifier
+                    .size(18.dp)
+                    .background(colors.accent, RoundedCornerShape(999.dp))
+                )
+                Spacer(Modifier.width(9.dp))
                 Column(modifier = Modifier.weight(1f)) {
                   Text(bot.name, fontWeight = FontWeight.SemiBold)
-                  Text("$providerName · ${bot.model}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                  Text(
+                    "$providerName · ${bot.model} · ${colors.label}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                  )
                 }
                 Switch(checked = bot.enabled, onCheckedChange = { onToggleEnabled(bot.id, it) })
               }
@@ -2403,8 +3437,8 @@ private fun BotManagerPage(
       providers = providers,
       bot = null,
       onDismiss = { creating = false },
-      onSave = { name, providerId, model, prompt ->
-        onCreate(name, providerId, model, prompt)
+      onSave = { name, providerId, model, prompt, colorKey ->
+        onCreate(name, providerId, model, prompt, colorKey)
         creating = false
       }
     )
@@ -2415,8 +3449,8 @@ private fun BotManagerPage(
       providers = providers,
       bot = bot,
       onDismiss = { editingBot = null },
-      onSave = { name, providerId, model, prompt ->
-        onUpdate(bot.id, name, providerId, model, prompt)
+      onSave = { name, providerId, model, prompt, colorKey ->
+        onUpdate(bot.id, name, providerId, model, prompt, colorKey)
         editingBot = null
       }
     )
@@ -2429,13 +3463,14 @@ private fun BotEditorDialog(
   providers: List<ChatProviderConfig>,
   bot: AiBot?,
   onDismiss: () -> Unit,
-  onSave: (String, String, String, String) -> Unit
+  onSave: (String, String, String, String, String) -> Unit
 ) {
   val initialProvider = providers.firstOrNull { it.id == bot?.providerId } ?: providers.firstOrNull()
   var name by remember(bot?.id) { mutableStateOf(bot?.name ?: "") }
   var providerId by remember(bot?.id, providers) { mutableStateOf(initialProvider?.id.orEmpty()) }
   var model by remember(bot?.id, providers) { mutableStateOf(bot?.model ?: initialProvider?.defaultModel.orEmpty()) }
   var prompt by remember(bot?.id) { mutableStateOf(bot?.systemPrompt ?: "") }
+  var bubbleColorKey by remember(bot?.id) { mutableStateOf(bot?.bubbleColorKey ?: "AUTO") }
   val selectedProvider = providers.firstOrNull { it.id == providerId }
 
   AlertDialog(
@@ -2489,6 +3524,45 @@ private fun BotEditorDialog(
           singleLine = true,
           modifier = Modifier.fillMaxWidth()
         )
+        Text("气泡颜色", fontWeight = FontWeight.SemiBold)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          item(key = "AUTO") {
+            BotColorChoice(
+              label = "自动",
+              selected = bubbleColorKey == "AUTO",
+              colors = botBubbleColors(bot?.copy(bubbleColorKey = "AUTO") ?: AiBot(
+                id = "preview_auto",
+                name = name,
+                providerId = providerId,
+                model = model,
+                systemPrompt = prompt,
+                bubbleColorKey = "AUTO",
+                enabled = true,
+                createdAt = 0,
+                updatedAt = 0
+              )),
+              onClick = { bubbleColorKey = "AUTO" }
+            )
+          }
+          items(BotBubblePalettes, key = { it.key }) { palette ->
+            BotColorChoice(
+              label = palette.label,
+              selected = bubbleColorKey == palette.key,
+              colors = botBubbleColors(bot?.copy(bubbleColorKey = palette.key) ?: AiBot(
+                id = "preview_${palette.key}",
+                name = name,
+                providerId = providerId,
+                model = model,
+                systemPrompt = prompt,
+                bubbleColorKey = palette.key,
+                enabled = true,
+                createdAt = 0,
+                updatedAt = 0
+              )),
+              onClick = { bubbleColorKey = palette.key }
+            )
+          }
+        }
         OutlinedTextField(
           value = prompt,
           onValueChange = { prompt = it },
@@ -2501,7 +3575,7 @@ private fun BotEditorDialog(
     },
     confirmButton = {
       Button(
-        onClick = { onSave(name.trim(), providerId, model.trim(), prompt.trim()) },
+        onClick = { onSave(name.trim(), providerId, model.trim(), prompt.trim(), bubbleColorKey) },
         enabled = name.isNotBlank() && providerId.isNotBlank() && model.isNotBlank()
       ) {
         Text("保存")
@@ -2513,6 +3587,47 @@ private fun BotEditorDialog(
       }
     }
   )
+}
+
+@Composable
+private fun BotColorChoice(
+  label: String,
+  selected: Boolean,
+  colors: BotBubbleColors,
+  onClick: () -> Unit
+) {
+  Surface(
+    color = if (selected) colors.container else MaterialTheme.colorScheme.surfaceVariant,
+    contentColor = if (selected) colors.content else MaterialTheme.colorScheme.onSurfaceVariant,
+    shape = RoundedCornerShape(8.dp),
+    modifier = Modifier
+      .width(74.dp)
+      .border(
+        width = if (selected) 2.dp else 1.dp,
+        color = if (selected) colors.accent else MaterialTheme.colorScheme.outlineVariant,
+        shape = RoundedCornerShape(8.dp)
+      )
+      .clickable(onClick = onClick)
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+      Box(
+        modifier = Modifier
+          .size(18.dp)
+          .background(colors.accent, RoundedCornerShape(999.dp))
+      )
+      Text(
+        text = label,
+        style = MaterialTheme.typography.bodySmall,
+        textAlign = TextAlign.Center,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+      )
+    }
+  }
 }
 
 @Composable
@@ -3344,6 +4459,8 @@ private fun MessageList(
   val hasStreaming = messages.any { it.status == MessageStatus.STREAMING }
   val bottomAnchorIndex = messages.size
   var lastAutoFollowAt by remember(state.selectedConversationId) { mutableStateOf(0L) }
+  var scrollHintVisible by remember(state.selectedConversationId) { mutableStateOf(false) }
+  var longBubbleActionsExpanded by remember(state.selectedConversationId) { mutableStateOf(false) }
   val visibleRangeTargetId by remember(selectionMode, selectedMessageIds, messages) {
     derivedStateOf {
       if (!selectionMode || selectedMessageIds.isEmpty()) {
@@ -3363,12 +4480,36 @@ private fun MessageList(
       lastItem > 0 && lastVisible < lastItem - 1
     }
   }
+  val messageLongBubbleNavTarget by remember(scrollHintVisible, messages) {
+    derivedStateOf {
+      if (!scrollHintVisible) {
+        null
+      } else {
+        val assistantCandidates = messages.mapIndexedNotNull { index, message ->
+          if (message.role == MessageRole.ASSISTANT) index to message.id else null
+        }.toMap()
+        lazyListLongBubbleNavTarget(
+          visibleItems = listState.layoutInfo.visibleItemsInfo,
+          viewportStart = listState.layoutInfo.viewportStartOffset,
+          viewportEnd = listState.layoutInfo.viewportEndOffset,
+          candidates = assistantCandidates
+        )
+      }
+    }
+  }
   LaunchedEffect(listState, state.selectedConversationId) {
     snapshotFlow { listState.isScrollInProgress to listState.isAtBottom() }
       .collect { (scrolling, atBottom) ->
+        if (scrolling) scrollHintVisible = true
         if (scrolling && !atBottom) autoFollow = false
         if (atBottom) autoFollow = true
       }
+  }
+  LaunchedEffect(scrollHintVisible, listState.isScrollInProgress, longBubbleActionsExpanded) {
+    if (scrollHintVisible && !listState.isScrollInProgress && !longBubbleActionsExpanded) {
+      delay(2_500)
+      if (!listState.isScrollInProgress && !longBubbleActionsExpanded) scrollHintVisible = false
+    }
   }
   LaunchedEffect(messages.size, messages.lastOrNull()?.content, hasStreaming, autoFollow) {
     if (autoFollow && messages.isNotEmpty()) {
@@ -3446,6 +4587,7 @@ private fun MessageList(
     MessageScrollIndicator(
       listState = listState,
       onDragProgress = { progress ->
+        scrollHintVisible = true
         scope.launch {
           val total = listState.layoutInfo.totalItemsCount
           if (total > 0) {
@@ -3459,7 +4601,7 @@ private fun MessageList(
         .align(Alignment.CenterEnd)
         .padding(end = 4.dp)
     )
-    if (showScrollToBottom) {
+    if (showScrollToBottom && scrollHintVisible) {
       Button(
         onClick = {
           scope.launch {
@@ -3476,6 +4618,37 @@ private fun MessageList(
         Text("回到底部")
       }
     }
+    LongBubbleNavOverlay(
+      target = messageLongBubbleNavTarget,
+      onJumpTop = { target ->
+        autoFollow = false
+        scrollHintVisible = true
+        scope.launch { listState.animateScrollToItem(target.index) }
+      },
+      onJumpBottom = { target ->
+        autoFollow = false
+        scrollHintVisible = true
+        scope.launch { listState.animateScrollToItem(target.index, target.bottomOffset) }
+      },
+      onCopy = { target ->
+        target.messageId
+          ?.let { id -> messages.firstOrNull { it.id == id } }
+          ?.let { copyToClipboard(context, it.content) }
+      },
+      onShareText = { target ->
+        target.messageId?.let(onShareMessageText)
+      },
+      onShareImage = { target ->
+        target.messageId?.let(onShareMessageImage)
+      },
+      onFavorite = { target ->
+        target.messageId?.let(onFavoriteMessage)
+      },
+      onActionsExpandedChange = { longBubbleActionsExpanded = it },
+      modifier = Modifier
+        .align(Alignment.CenterEnd)
+        .padding(end = 18.dp)
+    )
   }
 }
 

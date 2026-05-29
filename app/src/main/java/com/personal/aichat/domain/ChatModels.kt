@@ -139,12 +139,20 @@ enum class GroupMessageSenderType {
   TOOL
 }
 
+enum class GroupTurnTrigger {
+  MANUAL,
+  AUTO,
+  SUMMARY,
+  UNKNOWN
+}
+
 data class AiBot(
   val id: String,
   val name: String,
   val providerId: String,
   val model: String,
   val systemPrompt: String,
+  val bubbleColorKey: String = "AUTO",
   val enabled: Boolean,
   val createdAt: Long,
   val updatedAt: Long
@@ -189,7 +197,11 @@ data class GroupChatMessage(
   val promptTokens: Int? = null,
   val completionTokens: Int? = null,
   val totalTokens: Int? = null,
-  val attachments: List<ChatAttachment> = emptyList()
+  val attachments: List<ChatAttachment> = emptyList(),
+  val turnTrigger: GroupTurnTrigger = GroupTurnTrigger.UNKNOWN,
+  val turnRound: Int? = null,
+  val turnIndex: Int? = null,
+  val turnMemberCount: Int? = null
 )
 
 data class ChatCompletionOptions(
