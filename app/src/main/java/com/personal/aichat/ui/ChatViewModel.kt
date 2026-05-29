@@ -140,9 +140,15 @@ class ChatViewModel(
     val context = appContext ?: return
     if (!uiState.value.groupChatPageOpen && uiState.value.selectedProvider?.supportsAttachments != true) return
     viewModelScope.launch {
-      val imported = uris.mapNotNull { uri -> importAttachment(context, uri) }
-      if (imported.isNotEmpty()) {
-        localState.update { it.copy(pendingAttachments = it.pendingAttachments + imported) }
+      val attempts = uris.map { uri -> importAttachment(context, uri) }
+      val imported = attempts.mapNotNull { it.attachment }
+      val importErrorCount = attempts.count { it.attachment == null }
+      val result = appendAttachmentsWithinLimit(uiState.value.pendingAttachments, imported)
+      localState.update {
+        it.copy(
+          pendingAttachments = result.attachments,
+          error = attachmentImportMessage(importErrorCount + result.skippedCount, uris.size)
+        )
       }
     }
   }
@@ -186,11 +192,13 @@ class ChatViewModel(
     val context = appContext ?: return
     val payload = intent?.toIncomingSharePayload() ?: return
     viewModelScope.launch {
-      val imported = payload.uris.mapNotNull { uri -> importAttachment(context, uri) }
-      val failedCount = payload.uris.size - imported.size
-      if (payload.text.isBlank() && imported.isEmpty()) {
+      val attempts = payload.uris.map { uri -> importAttachment(context, uri) }
+      val imported = attempts.mapNotNull { it.attachment }
+      val appendResult = appendAttachmentsWithinLimit(emptyList(), imported)
+      val failedCount = attempts.count { it.attachment == null } + appendResult.skippedCount
+      if (payload.text.isBlank() && appendResult.attachments.isEmpty()) {
         if (failedCount > 0) {
-          localState.update { it.copy(error = "分享文件导入失败") }
+          localState.update { it.copy(error = "分享文件过大或导入失败") }
         }
         return@launch
       }
@@ -198,10 +206,11 @@ class ChatViewModel(
         it.copy(
           incomingShareDraft = IncomingShareDraft(
             text = payload.text,
-            attachments = imported,
+            attachments = appendResult.attachments,
             failedCount = failedCount,
             open = true
           ),
+          error = attachmentImportMessage(failedCount, payload.uris.size),
           favoritePageOpen = false,
           settingsPageOpen = false,
           providerManagerOpen = false,
@@ -408,7 +417,7 @@ class ChatViewModel(
     localState.update { it.copy(autoPlayingGroupIds = it.autoPlayingGroupIds - targetGroupId) }
   }
 
-  private fun importAttachment(context: Context, uri: Uri): ChatAttachment? {
+  private fun importAttachment(context: Context, uri: Uri): AttachmentImportAttempt {
     return runCatching {
       val resolver = context.contentResolver
       val info = resolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -426,20 +435,63 @@ class ChatViewModel(
       val mimeType = resolver.getType(uri) ?: "application/octet-stream"
       val id = "att_${UUID.randomUUID().toString().replace("-", "")}"
       val displayName = info.displayName?.takeIf { it.isNotBlank() } ?: "$id.${mimeType.substringAfter('/', "bin")}"
+      if ((info.sizeBytes ?: 0L) > MaxAttachmentBytes) {
+        return@runCatching AttachmentImportAttempt(errorMessage = "${displayName} 超过 ${formatImportLimit(MaxAttachmentBytes)}")
+      }
       val dir = File(context.filesDir, "chat_attachments").apply { mkdirs() }
       val safeName = displayName.replace(Regex("""[\\/:*?"<>|]"""), "_")
       val target = File(dir, "${id}_$safeName")
       resolver.openInputStream(uri)?.use { input ->
         target.outputStream().use { output -> input.copyTo(output) }
-      } ?: return@runCatching null
-      ChatAttachment(
-        id = id,
-        displayName = displayName,
-        mimeType = mimeType,
-        sizeBytes = info.sizeBytes ?: target.length(),
-        localPath = target.absolutePath
+      } ?: return@runCatching AttachmentImportAttempt(errorMessage = "${displayName} 导入失败")
+      val actualSize = target.length()
+      if (actualSize > MaxAttachmentBytes) {
+        runCatching { target.delete() }
+        return@runCatching AttachmentImportAttempt(errorMessage = "${displayName} 超过 ${formatImportLimit(MaxAttachmentBytes)}")
+      }
+      AttachmentImportAttempt(
+        attachment = ChatAttachment(
+          id = id,
+          displayName = displayName,
+          mimeType = mimeType,
+          sizeBytes = info.sizeBytes ?: actualSize,
+          localPath = target.absolutePath
+        )
       )
-    }.getOrNull()
+    }.getOrDefault(AttachmentImportAttempt(errorMessage = "附件导入失败"))
+  }
+
+  private fun appendAttachmentsWithinLimit(
+    existing: List<ChatAttachment>,
+    incoming: List<ChatAttachment>
+  ): AttachmentAppendResult {
+    var totalSize = existing.sumOf { it.sizeBytes }
+    val accepted = existing.toMutableList()
+    var skipped = 0
+    incoming.forEach { attachment ->
+      if (totalSize + attachment.sizeBytes <= MaxPendingAttachmentBytes) {
+        accepted += attachment
+        totalSize += attachment.sizeBytes
+      } else {
+        skipped += 1
+        runCatching { File(attachment.localPath).delete() }
+      }
+    }
+    return AttachmentAppendResult(accepted, skipped)
+  }
+
+  private fun attachmentImportMessage(failedCount: Int, totalCount: Int): String? {
+    if (failedCount <= 0) return null
+    return if (failedCount == totalCount) {
+      "附件过大或导入失败。单个附件上限 ${formatImportLimit(MaxAttachmentBytes)}，待发送总量上限 ${formatImportLimit(MaxPendingAttachmentBytes)}。"
+    } else {
+      "已跳过 $failedCount 个过大或导入失败的附件。单个附件上限 ${formatImportLimit(MaxAttachmentBytes)}。"
+    }
+  }
+
+  private fun formatImportLimit(bytes: Long): String {
+    val mb = bytes / 1024L / 1024L
+    return "${mb}MB"
   }
 
   private fun launchStreamingJob(conversationId: String, block: suspend () -> Unit) {
@@ -512,6 +564,16 @@ class ChatViewModel(
   private data class AttachmentImportInfo(
     val displayName: String?,
     val sizeBytes: Long?
+  )
+
+  private data class AttachmentImportAttempt(
+    val attachment: ChatAttachment? = null,
+    val errorMessage: String? = null
+  )
+
+  private data class AttachmentAppendResult(
+    val attachments: List<ChatAttachment>,
+    val skippedCount: Int
   )
 
   private data class IncomingSharePayload(
@@ -1504,6 +1566,9 @@ class ChatViewModel(
   }
 
   companion object {
+    private const val MaxAttachmentBytes = 20L * 1024L * 1024L
+    private const val MaxPendingAttachmentBytes = 50L * 1024L * 1024L
+
     fun factory(
       repository: ChatRepository,
       preferencesRepository: ChatSelectionStore,

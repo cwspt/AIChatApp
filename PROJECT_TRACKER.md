@@ -127,7 +127,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | ATTACH-008 | provider 级附件开关 | Done | P1 | DeepSeek 默认关闭，OpenAI/TokenHub 默认开启 |
 | ATTACH-009 | Android 系统分享导入 | Done | P1 | App 可作为系统分享目标，支持文本、单文件、多文件导入为待发送草稿 |
 | ATTACH-010 | 分享目标选择 | Done | P1 | 分享进入后可选已有单聊、已有群聊或快速新建单聊，不自动发送 |
-| ATTACH-011 | 大文件和图片压缩策略 | Planned | P1 | 需要限制大小、压缩图片、超大文件改走 Files API |
+| ATTACH-011 | 附件大小限制和错误提示 | Done | P1 | 选择附件和系统分享导入均限制单个附件 20MB、待发送总量 50MB，超限文件跳过并提示 |
 | ATTACH-012 | PDF/文本文件 app 内预览 | Planned | P2 | 当前非图片文件走系统打开 |
 
 ### 4.5 设置、主题和配置导入导出
@@ -236,8 +236,8 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 
 | ID | 任务 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
-| NEXT-P1-001 | 附件大小限制和错误提示 | Planned | 超过限制时不发送，并提示压缩或改用文件上传 |
-| NEXT-P1-002 | 图片发送前压缩 | Planned | 大图自动压缩到合理分辨率，保留原图查看 |
+| NEXT-P1-001 | 图片发送前压缩 | Planned | 大图自动压缩到合理分辨率，保留原图查看 |
+| NEXT-P1-002 | 附件限制设置项 | Planned | 后续允许用户按 provider 或全局调整单文件和总量上限 |
 | NEXT-P1-003 | OpenAI Files API 上传路径 | Planned | 大 PDF/文件不走 Base64，改用 `file_id` |
 | NEXT-P1-004 | 搜索工具卡片细节优化 | Planned | 显示查询词、打开网页 URL、citation URL 的层级关系 |
 | NEXT-P1-005 | 真实 GPT Key 验证图片 + PDF 输入 | Planned | 真机选择图片/PDF 后 GPT 能正确识别内容 |
