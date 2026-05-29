@@ -18,6 +18,7 @@ import com.personal.aichat.data.ChatRepository
 import com.personal.aichat.data.ChatSelectionStore
 import com.personal.aichat.domain.ChatAttachment
 import com.personal.aichat.domain.AiBot
+import com.personal.aichat.domain.AppSettings
 import com.personal.aichat.domain.AppThemeMode
 import com.personal.aichat.domain.AppThemePalette
 import com.personal.aichat.domain.ChatBackgroundPreset
@@ -144,14 +145,15 @@ class ChatViewModel(
     val context = appContext ?: return
     if (!uiState.value.groupChatPageOpen && uiState.value.selectedProvider?.supportsAttachments != true) return
     viewModelScope.launch {
-      val attempts = uris.map { uri -> importAttachment(context, uri) }
+      val settings = uiState.value.appSettings
+      val attempts = uris.map { uri -> importAttachment(context, uri, settings) }
       val imported = attempts.mapNotNull { it.attachment }
       val importErrorCount = attempts.count { it.attachment == null }
-      val result = appendAttachmentsWithinLimit(uiState.value.pendingAttachments, imported)
+      val result = appendAttachmentsWithinLimit(uiState.value.pendingAttachments, imported, settings)
       localState.update {
         it.copy(
           pendingAttachments = result.attachments,
-          error = attachmentImportMessage(importErrorCount + result.skippedCount, uris.size)
+          error = attachmentImportMessage(importErrorCount + result.skippedCount, uris.size, settings)
         )
       }
     }
@@ -196,9 +198,10 @@ class ChatViewModel(
     val context = appContext ?: return
     val payload = intent?.toIncomingSharePayload() ?: return
     viewModelScope.launch {
-      val attempts = payload.uris.map { uri -> importAttachment(context, uri) }
+      val settings = uiState.value.appSettings
+      val attempts = payload.uris.map { uri -> importAttachment(context, uri, settings) }
       val imported = attempts.mapNotNull { it.attachment }
-      val appendResult = appendAttachmentsWithinLimit(emptyList(), imported)
+      val appendResult = appendAttachmentsWithinLimit(emptyList(), imported, settings)
       val failedCount = attempts.count { it.attachment == null } + appendResult.skippedCount
       if (payload.text.isBlank() && appendResult.attachments.isEmpty()) {
         if (failedCount > 0) {
@@ -214,7 +217,7 @@ class ChatViewModel(
             failedCount = failedCount,
             open = true
           ),
-          error = attachmentImportMessage(failedCount, payload.uris.size),
+          error = attachmentImportMessage(failedCount, payload.uris.size, settings),
           favoritePageOpen = false,
           settingsPageOpen = false,
           providerManagerOpen = false,
@@ -421,7 +424,7 @@ class ChatViewModel(
     localState.update { it.copy(autoPlayingGroupIds = it.autoPlayingGroupIds - targetGroupId) }
   }
 
-  private fun importAttachment(context: Context, uri: Uri): AttachmentImportAttempt {
+  private fun importAttachment(context: Context, uri: Uri, settings: AppSettings): AttachmentImportAttempt {
     return runCatching {
       val resolver = context.contentResolver
       val info = resolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -446,7 +449,8 @@ class ChatViewModel(
       val id = "att_${UUID.randomUUID().toString().replace("-", "")}"
       val displayName = info.displayName?.takeIf { it.isNotBlank() } ?: "$id.${mimeType.substringAfter('/', "bin")}"
       val isImageAttachment = isImageAttachment(mimeType, displayName)
-      val maxSourceBytes = if (isImageAttachment) MaxImageSourceBytes else MaxAttachmentBytes
+      val maxAttachmentBytes = settings.maxAttachmentBytes()
+      val maxSourceBytes = if (isImageAttachment) settings.maxImageSourceBytes() else maxAttachmentBytes
       if ((info.sizeBytes ?: 0L) > maxSourceBytes) {
         return@runCatching AttachmentImportAttempt(errorMessage = "${displayName} 超过 ${formatImportLimit(maxSourceBytes)}")
       }
@@ -462,15 +466,15 @@ class ChatViewModel(
         return@runCatching AttachmentImportAttempt(errorMessage = "${displayName} 超过 ${formatImportLimit(maxSourceBytes)}")
       }
       val compressedPayload = if (isImageAttachment) {
-        compressedImagePayload(target, id)
+        compressedImagePayload(target, id, maxAttachmentBytes)
       } else {
         null
       }
       val payloadSize = compressedPayload?.sizeBytes ?: actualSize
-      if (payloadSize > MaxAttachmentBytes) {
+      if (payloadSize > maxAttachmentBytes) {
         runCatching { target.delete() }
         compressedPayload?.let { payload -> runCatching { payload.file.delete() } }
-        return@runCatching AttachmentImportAttempt(errorMessage = "${displayName} 超过 ${formatImportLimit(MaxAttachmentBytes)}")
+        return@runCatching AttachmentImportAttempt(errorMessage = "${displayName} 超过 ${formatImportLimit(maxAttachmentBytes)}")
       }
       AttachmentImportAttempt(
         attachment = ChatAttachment(
@@ -487,14 +491,15 @@ class ChatViewModel(
     }.getOrDefault(AttachmentImportAttempt(errorMessage = "附件导入失败"))
   }
 
-  private fun compressedImagePayload(source: File, id: String): CompressedImagePayload? {
+  private fun compressedImagePayload(source: File, id: String, maxAttachmentBytes: Long): CompressedImagePayload? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeFile(source.absolutePath, bounds)
     val width = bounds.outWidth
     val height = bounds.outHeight
     if (width <= 0 || height <= 0) return null
     val longestEdge = max(width, height)
-    val shouldCompress = longestEdge > MaxImageUploadEdgePx || source.length() > PreferredImageUploadBytes
+    val preferredUploadBytes = minOf(PreferredImageUploadBytes, maxAttachmentBytes)
+    val shouldCompress = longestEdge > MaxImageUploadEdgePx || source.length() > preferredUploadBytes
     if (!shouldCompress) return null
 
     val sampleSize = imageSampleSize(width, height, MaxImageUploadEdgePx)
@@ -524,10 +529,10 @@ class ChatViewModel(
       output.outputStream().use { stream ->
         scaled.compress(format, quality, stream)
       }
-      if (output.length() <= MaxAttachmentBytes || quality == qualities.last()) {
+      if (output.length() <= maxAttachmentBytes || quality == qualities.last()) {
         if (scaled !== decoded) scaled.recycle()
         decoded.recycle()
-        return if (output.length() < source.length() || source.length() > MaxAttachmentBytes) {
+        return if (output.length() < source.length() || source.length() > maxAttachmentBytes) {
           CompressedImagePayload(output, outputMimeType, output.length())
         } else {
           runCatching { output.delete() }
@@ -584,13 +589,15 @@ class ChatViewModel(
 
   private fun appendAttachmentsWithinLimit(
     existing: List<ChatAttachment>,
-    incoming: List<ChatAttachment>
+    incoming: List<ChatAttachment>,
+    settings: AppSettings
   ): AttachmentAppendResult {
+    val maxPendingAttachmentBytes = settings.maxPendingAttachmentBytes()
     var totalSize = existing.sumOf { it.payloadSizeBytes }
     val accepted = existing.toMutableList()
     var skipped = 0
     incoming.forEach { attachment ->
-      if (totalSize + attachment.payloadSizeBytes <= MaxPendingAttachmentBytes) {
+      if (totalSize + attachment.payloadSizeBytes <= maxPendingAttachmentBytes) {
         accepted += attachment
         totalSize += attachment.payloadSizeBytes
       } else {
@@ -601,12 +608,15 @@ class ChatViewModel(
     return AttachmentAppendResult(accepted, skipped)
   }
 
-  private fun attachmentImportMessage(failedCount: Int, totalCount: Int): String? {
+  private fun attachmentImportMessage(failedCount: Int, totalCount: Int, settings: AppSettings): String? {
     if (failedCount <= 0) return null
+    val maxAttachmentBytes = settings.maxAttachmentBytes()
+    val maxImageSourceBytes = settings.maxImageSourceBytes()
+    val maxPendingAttachmentBytes = settings.maxPendingAttachmentBytes()
     return if (failedCount == totalCount) {
-      "附件过大或导入失败。单个附件上传上限 ${formatImportLimit(MaxAttachmentBytes)}，图片原图导入上限 ${formatImportLimit(MaxImageSourceBytes)}，待发送总量上限 ${formatImportLimit(MaxPendingAttachmentBytes)}。"
+      "附件过大或导入失败。单个附件上传上限 ${formatImportLimit(maxAttachmentBytes)}，图片原图导入上限 ${formatImportLimit(maxImageSourceBytes)}，待发送总量上限 ${formatImportLimit(maxPendingAttachmentBytes)}。"
     } else {
-      "已跳过 $failedCount 个过大或导入失败的附件。单个附件上传上限 ${formatImportLimit(MaxAttachmentBytes)}，图片原图导入上限 ${formatImportLimit(MaxImageSourceBytes)}。"
+      "已跳过 $failedCount 个过大或导入失败的附件。单个附件上传上限 ${formatImportLimit(maxAttachmentBytes)}，图片原图导入上限 ${formatImportLimit(maxImageSourceBytes)}。"
     }
   }
 
@@ -614,6 +624,22 @@ class ChatViewModel(
     val mb = bytes / 1024L / 1024L
     return "${mb}MB"
   }
+
+  private fun AppSettings.maxAttachmentBytes(): Long {
+    return attachmentMaxFileMb.coerceIn(MinAttachmentFileMb, MaxAttachmentFileMb).mbToBytes()
+  }
+
+  private fun AppSettings.maxPendingAttachmentBytes(): Long {
+    val fileMb = attachmentMaxFileMb.coerceIn(MinAttachmentFileMb, MaxAttachmentFileMb)
+    return attachmentMaxPendingMb.coerceIn(fileMb, MaxAttachmentPendingMb).mbToBytes()
+  }
+
+  private fun AppSettings.maxImageSourceBytes(): Long {
+    val fileMb = attachmentMaxFileMb.coerceIn(MinAttachmentFileMb, MaxAttachmentFileMb)
+    return attachmentMaxImageSourceMb.coerceIn(fileMb, MaxAttachmentImageSourceMb).mbToBytes()
+  }
+
+  private fun Int.mbToBytes(): Long = this.toLong() * 1024L * 1024L
 
   private fun launchStreamingJob(conversationId: String, block: suspend () -> Unit) {
     val wasIdle = sendJobsByConversationId.isEmpty()
@@ -1505,6 +1531,39 @@ class ChatViewModel(
     }
   }
 
+  fun setAttachmentMaxFileMb(value: Int) {
+    val current = uiState.value.appSettings
+    viewModelScope.launch {
+      preferencesRepository.setAttachmentLimits(
+        maxFileMb = value,
+        maxPendingMb = current.attachmentMaxPendingMb.coerceAtLeast(value),
+        maxImageSourceMb = current.attachmentMaxImageSourceMb.coerceAtLeast(value)
+      )
+    }
+  }
+
+  fun setAttachmentMaxPendingMb(value: Int) {
+    val current = uiState.value.appSettings
+    viewModelScope.launch {
+      preferencesRepository.setAttachmentLimits(
+        maxFileMb = current.attachmentMaxFileMb,
+        maxPendingMb = value,
+        maxImageSourceMb = current.attachmentMaxImageSourceMb
+      )
+    }
+  }
+
+  fun setAttachmentMaxImageSourceMb(value: Int) {
+    val current = uiState.value.appSettings
+    viewModelScope.launch {
+      preferencesRepository.setAttachmentLimits(
+        maxFileMb = current.attachmentMaxFileMb,
+        maxPendingMb = current.attachmentMaxPendingMb,
+        maxImageSourceMb = value
+      )
+    }
+  }
+
   fun createImageConversationWithProvider(providerId: String) {
     val provider = uiState.value.providers.firstOrNull { it.id == providerId && it.supportsImageGeneration } ?: return
     localState.update { it.copy(newConversationPickerOpen = false, groupChatPageOpen = false, selectedGroupChatId = null) }
@@ -1693,9 +1752,10 @@ class ChatViewModel(
   }
 
   companion object {
-    private const val MaxAttachmentBytes = 20L * 1024L * 1024L
-    private const val MaxPendingAttachmentBytes = 50L * 1024L * 1024L
-    private const val MaxImageSourceBytes = 80L * 1024L * 1024L
+    private const val MinAttachmentFileMb = 1
+    private const val MaxAttachmentFileMb = 100
+    private const val MaxAttachmentPendingMb = 300
+    private const val MaxAttachmentImageSourceMb = 300
     private const val PreferredImageUploadBytes = 4L * 1024L * 1024L
     private const val MaxImageUploadEdgePx = 2048
 

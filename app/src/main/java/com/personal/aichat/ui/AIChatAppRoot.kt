@@ -615,6 +615,9 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onFontScale = viewModel::setFontScale,
         onDebugResponseLogging = viewModel::setDebugResponseLogging,
         onWebSearchMode = viewModel::setWebSearchMode,
+        onAttachmentMaxFileMb = viewModel::setAttachmentMaxFileMb,
+        onAttachmentMaxPendingMb = viewModel::setAttachmentMaxPendingMb,
+        onAttachmentMaxImageSourceMb = viewModel::setAttachmentMaxImageSourceMb,
         onExportProviderConfigs = { viewModel.exportProviderConfigsText(context) },
         onImportProviderConfigs = viewModel::importProviderConfigsText,
         onOpenBotManager = viewModel::openBotManager,
@@ -3961,6 +3964,9 @@ private fun AppSettingsPage(
   onFontScale: (Float) -> Unit,
   onDebugResponseLogging: (Boolean) -> Unit,
   onWebSearchMode: (WebSearchMode) -> Unit,
+  onAttachmentMaxFileMb: (Int) -> Unit,
+  onAttachmentMaxPendingMb: (Int) -> Unit,
+  onAttachmentMaxImageSourceMb: (Int) -> Unit,
   onExportProviderConfigs: () -> Unit,
   onImportProviderConfigs: (String) -> Unit,
   onOpenBotManager: () -> Unit,
@@ -4033,6 +4039,35 @@ private fun AppSettingsPage(
             onValueChange = onFontScale,
             valueRange = 0.85f..1.25f,
             steps = 7
+          )
+        }
+
+        SettingsSection(title = "附件限制") {
+          Text(
+            "限制按实际上传给 Provider 的附件体积计算；图片会先保留原图预览，再生成较小的发送副本。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+          )
+          AttachmentLimitSlider(
+            title = "单个附件上传上限",
+            description = "普通文件按原文件计算；图片按压缩后的发送副本计算。",
+            valueMb = state.appSettings.attachmentMaxFileMb,
+            range = 1..100,
+            onValueChange = onAttachmentMaxFileMb
+          )
+          AttachmentLimitSlider(
+            title = "待发送附件总量上限",
+            description = "同一条消息里所有待发送附件的上传体积总和。",
+            valueMb = state.appSettings.attachmentMaxPendingMb.coerceAtLeast(state.appSettings.attachmentMaxFileMb),
+            range = state.appSettings.attachmentMaxFileMb..300,
+            onValueChange = onAttachmentMaxPendingMb
+          )
+          AttachmentLimitSlider(
+            title = "图片原图导入上限",
+            description = "超过该大小的原图不会导入；已导入原图仍用于本地预览。",
+            valueMb = state.appSettings.attachmentMaxImageSourceMb.coerceAtLeast(state.appSettings.attachmentMaxFileMb),
+            range = state.appSettings.attachmentMaxFileMb..300,
+            onValueChange = onAttachmentMaxImageSourceMb
           )
         }
 
@@ -4139,6 +4174,37 @@ private fun AppSettingsPage(
         onImportProviderConfigs(text)
         importDialogOpen = false
       }
+    )
+  }
+}
+
+@Composable
+private fun AttachmentLimitSlider(
+  title: String,
+  description: String,
+  valueMb: Int,
+  range: IntRange,
+  onValueChange: (Int) -> Unit
+) {
+  val cleanRange = if (range.first <= range.last) range else range.last..range.first
+  val cleanValue = valueMb.coerceIn(cleanRange.first, cleanRange.last)
+  Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+      Column(modifier = Modifier.weight(1f)) {
+        Text(title, fontWeight = FontWeight.SemiBold)
+        Text(
+          description,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+      }
+      Text("${cleanValue}MB", fontWeight = FontWeight.SemiBold)
+    }
+    Slider(
+      value = cleanValue.toFloat(),
+      onValueChange = { next -> onValueChange(next.roundToInt().coerceIn(cleanRange.first, cleanRange.last)) },
+      valueRange = cleanRange.first.toFloat()..cleanRange.last.toFloat(),
+      steps = (cleanRange.last - cleanRange.first - 1).coerceAtLeast(0)
     )
   }
 }

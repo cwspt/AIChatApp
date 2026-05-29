@@ -18,6 +18,10 @@ enum class WebSearchMode(val label: String) {
   REQUIRED("强制搜索")
 }
 
+const val DEFAULT_ATTACHMENT_MAX_FILE_MB = 20
+const val DEFAULT_ATTACHMENT_MAX_PENDING_MB = 50
+const val DEFAULT_ATTACHMENT_MAX_IMAGE_SOURCE_MB = 80
+
 data class ChatBackgroundPreset(
   val id: String,
   val title: String,
@@ -33,6 +37,9 @@ data class AppSettings(
   val fontScale: Float = 1.0f,
   val debugResponseLogging: Boolean = false,
   val webSearchMode: WebSearchMode = WebSearchMode.OFF,
+  val attachmentMaxFileMb: Int = DEFAULT_ATTACHMENT_MAX_FILE_MB,
+  val attachmentMaxPendingMb: Int = DEFAULT_ATTACHMENT_MAX_PENDING_MB,
+  val attachmentMaxImageSourceMb: Int = DEFAULT_ATTACHMENT_MAX_IMAGE_SOURCE_MB,
   val backgroundPresets: List<ChatBackgroundPreset> = defaultBackgroundPresets()
 )
 

@@ -1075,6 +1075,14 @@ private class FakeSelectionStore : ChatSelectionStore {
     appSettings.value = appSettings.value.copy(webSearchMode = mode)
   }
 
+  override suspend fun setAttachmentLimits(maxFileMb: Int, maxPendingMb: Int, maxImageSourceMb: Int) {
+    appSettings.value = appSettings.value.copy(
+      attachmentMaxFileMb = maxFileMb,
+      attachmentMaxPendingMb = maxPendingMb,
+      attachmentMaxImageSourceMb = maxImageSourceMb
+    )
+  }
+
   override suspend fun setBackgroundPresets(presets: List<ChatBackgroundPreset>) {
     appSettings.value = appSettings.value.copy(backgroundPresets = presets)
   }
