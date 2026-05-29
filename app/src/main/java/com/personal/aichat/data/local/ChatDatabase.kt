@@ -18,7 +18,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     GroupChatMemberEntity::class,
     GroupMessageEntity::class
   ],
-  version = 14,
+  version = 15,
   exportSchema = true
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -46,7 +46,8 @@ abstract class ChatDatabase : RoomDatabase() {
           Migration10To11,
           Migration11To12,
           Migration12To13,
-          Migration13To14
+          Migration13To14,
+          Migration14To15
         ).build().also { instance = it }
       }
     }
@@ -228,6 +229,18 @@ abstract class ChatDatabase : RoomDatabase() {
       override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE providers ADD COLUMN imageGenerationApiMode TEXT NOT NULL DEFAULT 'RESPONSES_TOOL'")
         db.execSQL("ALTER TABLE providers ADD COLUMN imageGenerationModel TEXT NOT NULL DEFAULT ''")
+      }
+    }
+
+    private val Migration14To15 = object : Migration(14, 15) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE providers ADD COLUMN contextWindowTokensOverride INTEGER DEFAULT NULL")
+        db.execSQL("ALTER TABLE conversations ADD COLUMN contextSummary TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE conversations ADD COLUMN contextSummaryCutoffMessageId TEXT DEFAULT NULL")
+        db.execSQL("ALTER TABLE conversations ADD COLUMN contextSummaryUpdatedAt INTEGER DEFAULT NULL")
+        db.execSQL("ALTER TABLE group_chat_rooms ADD COLUMN contextSummary TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE group_chat_rooms ADD COLUMN contextSummaryCutoffMessageId TEXT DEFAULT NULL")
+        db.execSQL("ALTER TABLE group_chat_rooms ADD COLUMN contextSummaryUpdatedAt INTEGER DEFAULT NULL")
       }
     }
   }

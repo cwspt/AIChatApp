@@ -39,6 +39,7 @@ import com.personal.aichat.domain.ImageGenerationQuality
 import com.personal.aichat.domain.ImageGenerationSize
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderType
+import com.personal.aichat.domain.StreamingBubbleMotion
 import com.personal.aichat.domain.WebSearchMode
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -113,13 +114,29 @@ class ChatViewModel(
     val conversationId = state.selectedConversationId
     if (groupId != null) {
       repository.observeGroupMessages(groupId).combine(repository.observeGroupMembers(groupId)) { groupMessages, members ->
-        state.copy(groupMessages = groupMessages, groupMembers = members)
+        val memberOrder = members.associate { it.botId to it.sortOrder }
+        val bots = state.aiBots
+          .filter { it.enabled && it.id in memberOrder }
+          .sortedWith(compareBy<AiBot> { bot -> memberOrder[bot.id] ?: Int.MAX_VALUE }.thenBy { it.name })
+        val estimateBotId = nextGroupAutoPlayBotId(bots, groupMessages) ?: bots.firstOrNull()?.id
+        state.copy(
+          groupMessages = groupMessages,
+          groupMembers = members,
+          selectedGroupContextCapacity = repository.estimateGroupContextCapacity(groupId, estimateBotId),
+          selectedContextCapacity = null
+        )
       }
     } else if (conversationId == null) {
-      flowOf(state.copy(groupMessages = emptyList(), groupMembers = emptyList()))
+      flowOf(state.copy(groupMessages = emptyList(), groupMembers = emptyList(), selectedContextCapacity = null, selectedGroupContextCapacity = null))
     } else {
       repository.observeMessages(conversationId).combine(flowOf(state)) { messages, current ->
-        current.copy(messages = messages, groupMessages = emptyList(), groupMembers = emptyList())
+        current.copy(
+          messages = messages,
+          groupMessages = emptyList(),
+          groupMembers = emptyList(),
+          selectedContextCapacity = repository.estimateConversationContextCapacity(conversationId),
+          selectedGroupContextCapacity = null
+        )
       }
     }
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
@@ -392,9 +409,39 @@ class ChatViewModel(
     sendJobsByConversationId[conversationId]?.cancel()
   }
 
+  fun compressSelectedConversationContext() {
+    val conversationId = uiState.value.selectedConversationId ?: return
+    if (conversationId in uiState.value.compressingConversationIds) return
+    localState.update { it.copy(compressingConversationIds = it.compressingConversationIds + conversationId) }
+    viewModelScope.launch {
+      runCatching {
+        repository.compressConversationContext(conversationId)
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "压缩上下文失败") }
+      }
+      localState.update { it.copy(compressingConversationIds = it.compressingConversationIds - conversationId) }
+    }
+  }
+
   fun stopGroupGenerating() {
     val groupId = uiState.value.selectedGroupChatId ?: return
     groupJobsByGroupId[groupId]?.cancel()
+  }
+
+  fun compressSelectedGroupContext() {
+    val state = uiState.value
+    val groupId = state.selectedGroupChatId ?: return
+    if (groupId in state.compressingGroupIds) return
+    val botId = nextAutoPlayBotId(groupId) ?: enabledGroupBotsForCurrentState(groupId).firstOrNull()?.id
+    localState.update { it.copy(compressingGroupIds = it.compressingGroupIds + groupId) }
+    viewModelScope.launch {
+      runCatching {
+        repository.compressGroupContext(groupId, botId)
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "压缩群聊上下文失败") }
+      }
+      localState.update { it.copy(compressingGroupIds = it.compressingGroupIds - groupId) }
+    }
   }
 
   fun toggleGroupAutoPlay() {
@@ -1593,6 +1640,12 @@ class ChatViewModel(
   fun setWebSearchMode(mode: WebSearchMode) {
     viewModelScope.launch {
       preferencesRepository.setWebSearchMode(mode)
+    }
+  }
+
+  fun setStreamingBubbleMotion(motion: StreamingBubbleMotion) {
+    viewModelScope.launch {
+      preferencesRepository.setStreamingBubbleMotion(motion)
     }
   }
 

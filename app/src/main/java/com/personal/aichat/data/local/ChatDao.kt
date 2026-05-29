@@ -62,6 +62,23 @@ interface ChatDao {
   @Query("UPDATE conversations SET updatedAt = :updatedAt WHERE id = :id")
   suspend fun touchConversation(id: String, updatedAt: Long)
 
+  @Query(
+    """
+    UPDATE conversations SET
+      contextSummary = :summary,
+      contextSummaryCutoffMessageId = :cutoffMessageId,
+      contextSummaryUpdatedAt = :updatedAt,
+      updatedAt = :updatedAt
+    WHERE id = :id
+    """
+  )
+  suspend fun updateConversationContextSummary(
+    id: String,
+    summary: String,
+    cutoffMessageId: String?,
+    updatedAt: Long
+  )
+
   @Query("UPDATE conversations SET isPinned = :isPinned, updatedAt = :updatedAt WHERE id = :id")
   suspend fun setConversationPinned(id: String, isPinned: Boolean, updatedAt: Long)
 
@@ -163,6 +180,23 @@ interface ChatDao {
 
   @Query("UPDATE group_chat_rooms SET summary = :summary, updatedAt = :updatedAt WHERE id = :id")
   suspend fun updateGroupChatSummary(id: String, summary: String, updatedAt: Long)
+
+  @Query(
+    """
+    UPDATE group_chat_rooms SET
+      contextSummary = :summary,
+      contextSummaryCutoffMessageId = :cutoffMessageId,
+      contextSummaryUpdatedAt = :updatedAt,
+      updatedAt = :updatedAt
+    WHERE id = :id
+    """
+  )
+  suspend fun updateGroupContextSummary(
+    id: String,
+    summary: String,
+    cutoffMessageId: String?,
+    updatedAt: Long
+  )
 
   @Query("UPDATE group_chat_rooms SET updatedAt = :updatedAt WHERE id = :id")
   suspend fun touchGroupChatRoom(id: String, updatedAt: Long)

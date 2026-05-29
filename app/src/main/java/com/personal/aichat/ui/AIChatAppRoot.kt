@@ -10,11 +10,17 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -133,9 +139,11 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
@@ -148,6 +156,8 @@ import com.personal.aichat.domain.ChatBackgroundPreset
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatConversation
 import com.personal.aichat.domain.ChatProviderConfig
+import com.personal.aichat.domain.ContextCapacity
+import com.personal.aichat.domain.ContextCapacityStatus
 import com.personal.aichat.domain.ConversationType
 import com.personal.aichat.domain.ChatConversationGroup
 import com.personal.aichat.domain.FavoriteSnippet
@@ -167,6 +177,7 @@ import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.ReasoningEffort
 import com.personal.aichat.domain.AppThemeMode
 import com.personal.aichat.domain.AppThemePalette
+import com.personal.aichat.domain.StreamingBubbleMotion
 import com.personal.aichat.domain.WebSearchMode
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -350,6 +361,125 @@ private fun userBubbleColors(): UserBubbleColors {
 }
 
 @Composable
+private fun streamingPulse(enabled: Boolean): Float {
+  if (!enabled) return 0f
+  val transition = rememberInfiniteTransition()
+  val pulse by transition.animateFloat(
+    initialValue = 0f,
+    targetValue = 1f,
+    animationSpec = infiniteRepeatable(
+      animation = tween(durationMillis = 950),
+      repeatMode = RepeatMode.Reverse
+    )
+  )
+  return pulse
+}
+
+@Composable
+private fun StreamingBubbleFrame(
+  streaming: Boolean,
+  motion: StreamingBubbleMotion,
+  accent: Color,
+  containerColor: Color,
+  contentColor: Color,
+  selected: Boolean,
+  shape: Shape,
+  modifier: Modifier = Modifier,
+  baseBorderColor: Color? = null,
+  baseBorderWidth: Dp = 1.dp,
+  selectedBorderColor: Color = MaterialTheme.colorScheme.primary,
+  content: @Composable () -> Unit
+) {
+  val animate = streaming && motion != StreamingBubbleMotion.OFF
+  val pulse = streamingPulse(animate)
+  val animatedContainer = if (animate && motion == StreamingBubbleMotion.STANDARD) {
+    mixColors(containerColor, accent, 0.025f + 0.045f * pulse)
+  } else {
+    containerColor
+  }
+  val streamingBorderColor = when {
+    !animate -> null
+    motion == StreamingBubbleMotion.STANDARD -> accent.copy(alpha = 0.46f + 0.42f * pulse)
+    else -> accent.copy(alpha = 0.26f + 0.24f * pulse)
+  }
+  val borderColor = when {
+    selected -> selectedBorderColor
+    streamingBorderColor != null -> streamingBorderColor
+    else -> baseBorderColor
+  }
+  val borderWidth = when {
+    selected -> 2.dp
+    animate && motion == StreamingBubbleMotion.STANDARD -> 2.dp
+    animate -> 1.dp
+    else -> baseBorderWidth
+  }
+  Surface(
+    color = animatedContainer,
+    contentColor = contentColor,
+    shape = shape,
+    modifier = modifier.then(
+      borderColor?.let { Modifier.border(borderWidth, it, shape) } ?: Modifier
+    )
+  ) {
+    content()
+  }
+}
+
+@Composable
+private fun StreamingStatusIndicator(
+  text: String,
+  accent: Color,
+  textColor: Color,
+  motion: StreamingBubbleMotion,
+  modifier: Modifier = Modifier,
+  animatedDots: Boolean = false
+) {
+  val animate = motion != StreamingBubbleMotion.OFF
+  if (!animate) {
+    Text(
+      text = text,
+      style = MaterialTheme.typography.bodySmall,
+      color = textColor,
+      fontWeight = FontWeight.SemiBold,
+      modifier = modifier
+    )
+    return
+  }
+  val pulse = streamingPulse(animate)
+  val dots = if (animatedDots) {
+    val transition = rememberInfiniteTransition()
+    val phase by transition.animateFloat(
+      initialValue = 0f,
+      targetValue = 3.99f,
+      animationSpec = infiniteRepeatable(
+        animation = tween(durationMillis = 1_050),
+        repeatMode = RepeatMode.Restart
+      )
+    )
+    ".".repeat((phase.toInt() % 4).coerceAtLeast(1))
+  } else {
+    ""
+  }
+  Row(
+    modifier = modifier,
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(6.dp)
+  ) {
+    Box(
+      modifier = Modifier
+        .size(if (animate) 7.dp + (2.dp * pulse) else 7.dp)
+        .background(accent.copy(alpha = if (animate) 0.52f + 0.38f * pulse else 0.62f), RoundedCornerShape(999.dp))
+    )
+    Text(
+      text = text + dots,
+      style = MaterialTheme.typography.bodySmall,
+      color = textColor,
+      fontWeight = FontWeight.SemiBold
+    )
+  }
+}
+
+@Composable
 private fun isDarkThemeColors(): Boolean {
   val onBackground = MaterialTheme.colorScheme.onBackground
   return onBackground.red > 0.75f &&
@@ -462,6 +592,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onShareImage = { viewModel.shareConversationLongImage(context) },
         onShareSelectedImage = { viewModel.shareSelectedMessagesLongImage(context) },
         onShareMarkdown = { viewModel.shareConversationMarkdownFile(context) },
+        onCompressContext = viewModel::compressSelectedConversationContext,
         onFavoriteSelected = {
           if (state.selectedMessageIds.isNotEmpty()) {
             favoriteDraftMessageIds = state.selectedMessageIds
@@ -545,6 +676,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onBotTurn = { viewModel.sendGroupBotTurn(it, summarize = false) },
         onSummarize = { viewModel.sendGroupBotTurn(it, summarize = true) },
         onToggleAutoPlay = viewModel::toggleGroupAutoPlay,
+        onCompressContext = viewModel::compressSelectedGroupContext,
         onStop = viewModel::stopGroupGenerating,
         onEditGroup = viewModel::openEditGroupChatDialog,
         onDeleteGroup = viewModel::deleteSelectedGroupChat,
@@ -616,6 +748,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onFontScale = viewModel::setFontScale,
         onDebugResponseLogging = viewModel::setDebugResponseLogging,
         onWebSearchMode = viewModel::setWebSearchMode,
+        onStreamingBubbleMotion = viewModel::setStreamingBubbleMotion,
         onAttachmentMaxFileMb = viewModel::setAttachmentMaxFileMb,
         onAttachmentMaxPendingMb = viewModel::setAttachmentMaxPendingMb,
         onAttachmentMaxImageSourceMb = viewModel::setAttachmentMaxImageSourceMb,
@@ -1426,6 +1559,89 @@ private fun ConversationDrawerRow(
   }
 }
 
+private data class TopMetadataItem(
+  val text: String,
+  val status: ContextCapacityStatus? = null
+)
+
+private fun conversationMetadataItems(state: ChatUiState, conversation: ChatConversation?): List<TopMetadataItem> {
+  if (conversation == null) return listOf(TopMetadataItem("未选择配置"))
+  val providerName = state.providers.firstOrNull { it.id == conversation.providerId }?.displayName ?: conversation.providerId
+  val items = mutableListOf<TopMetadataItem>()
+  if (conversation.type == ConversationType.IMAGE) {
+    items += TopMetadataItem("生图")
+  }
+  items += TopMetadataItem(conversationGroupLabel(conversation.groupName))
+  items += TopMetadataItem(providerName)
+  items += TopMetadataItem(conversation.model)
+  if (state.isSelectedConversationStreaming) {
+    items += TopMetadataItem("输出中")
+  }
+  formatContextCapacity(state.selectedContextCapacity)?.let {
+    items += TopMetadataItem(it, state.selectedContextCapacity?.status)
+  }
+  return items
+}
+
+private fun groupMetadataItems(state: ChatUiState, group: GroupChatRoom?, memberCount: Int): List<TopMetadataItem> {
+  if (group == null) return listOf(TopMetadataItem("选择或新建一个群聊"))
+  val items = mutableListOf(
+    TopMetadataItem(group.topic.ifBlank { "手动点名机器人轮流发言" }),
+    TopMetadataItem("$memberCount 个成员")
+  )
+  if (state.isSelectedGroupAutoPlaying) {
+    items += TopMetadataItem("轮流发言中")
+  } else if (state.isSelectedGroupStreaming) {
+    items += TopMetadataItem("输出中")
+  }
+  formatContextCapacity(state.selectedGroupContextCapacity)?.let {
+    items += TopMetadataItem(it, state.selectedGroupContextCapacity?.status)
+  }
+  return items
+}
+
+@Composable
+private fun TopMetadataStrip(items: List<TopMetadataItem>, modifier: Modifier = Modifier) {
+  if (items.isEmpty()) return
+  Row(
+    modifier = modifier
+      .fillMaxWidth()
+      .horizontalScroll(rememberScrollState()),
+    horizontalArrangement = Arrangement.spacedBy(6.dp),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    items.forEach { item ->
+      TopMetadataPill(item)
+    }
+  }
+}
+
+@Composable
+private fun TopMetadataPill(item: TopMetadataItem) {
+  val background = when (item.status) {
+    ContextCapacityStatus.CRITICAL -> MaterialTheme.colorScheme.errorContainer
+    ContextCapacityStatus.WARNING -> MaterialTheme.colorScheme.tertiaryContainer
+    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+  }
+  val content = when (item.status) {
+    ContextCapacityStatus.CRITICAL -> MaterialTheme.colorScheme.onErrorContainer
+    ContextCapacityStatus.WARNING -> MaterialTheme.colorScheme.onTertiaryContainer
+    else -> MaterialTheme.colorScheme.onSurfaceVariant
+  }
+  Surface(
+    color = background,
+    contentColor = content,
+    shape = RoundedCornerShape(8.dp)
+  ) {
+    Text(
+      text = item.text,
+      style = MaterialTheme.typography.bodySmall,
+      maxLines = 1,
+      modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+    )
+  }
+}
+
 @Composable
 private fun TopBar(
   state: ChatUiState,
@@ -1442,67 +1658,63 @@ private fun TopBar(
   onShareImage: () -> Unit,
   onShareSelectedImage: () -> Unit,
   onShareMarkdown: () -> Unit,
+  onCompressContext: () -> Unit,
   onFavoriteSelected: () -> Unit,
   onAppendSelectedToFavorite: () -> Unit
 ) {
   val selectedConversation = state.selectedConversation
   CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
-    Row(
-      modifier = Modifier
-        .fillMaxWidth()
-        .padding(horizontal = 10.dp, vertical = 6.dp),
-      verticalAlignment = Alignment.CenterVertically
-    ) {
-    IconButton(onClick = onOpenConversationDrawer) {
-      Icon(Icons.Outlined.Menu, contentDescription = "打开聊天列表")
-    }
-    Column(modifier = Modifier.weight(1f)) {
-      Text(
-        text = selectedConversation?.title ?: "AI 聊天",
-        style = MaterialTheme.typography.titleMedium,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onBackground,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis
+    Column(modifier = Modifier.fillMaxWidth()) {
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 10.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        IconButton(onClick = onOpenConversationDrawer) {
+          Icon(Icons.Outlined.Menu, contentDescription = "打开聊天列表")
+        }
+        Text(
+          text = selectedConversation?.title ?: "AI 聊天",
+          style = MaterialTheme.typography.titleMedium,
+          fontWeight = FontWeight.SemiBold,
+          color = MaterialTheme.colorScheme.onBackground,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f)
+        )
+        IconButton(onClick = onNewChat) {
+          Icon(Icons.Outlined.Add, contentDescription = "新建对话")
+        }
+        IconButton(onClick = onOpenSettings) {
+          Icon(Icons.Outlined.Settings, contentDescription = "设置")
+        }
+        if (selectedConversation != null) {
+          ConversationOverflowMenu(
+            conversation = selectedConversation,
+            selectionMode = state.messageSelectionMode,
+            selectedCount = state.selectedMessageIds.size,
+            onTogglePin = onTogglePin,
+            onArchive = onArchive,
+            onDelete = onDelete,
+            onRename = onRename,
+            onToggleSelectionMode = onToggleSelectionMode,
+            onShareText = onShareText,
+            onShareSelected = onShareSelected,
+            onShareImage = onShareImage,
+            onShareSelectedImage = onShareSelectedImage,
+            onShareMarkdown = onShareMarkdown,
+            onCompressContext = onCompressContext,
+            contextCompressionEnabled = selectedConversation.id !in state.compressingConversationIds,
+            onFavoriteSelected = onFavoriteSelected,
+            onAppendSelectedToFavorite = onAppendSelectedToFavorite
+          )
+        }
+      }
+      TopMetadataStrip(
+        items = conversationMetadataItems(state, selectedConversation),
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp)
       )
-      Text(
-        text = selectedConversation?.let { conversation ->
-          val providerName = state.providers.firstOrNull { it.id == conversation.providerId }?.displayName ?: conversation.providerId
-          val streaming = if (state.isSelectedConversationStreaming) " · 输出中" else ""
-          val mode = if (conversation.type == ConversationType.IMAGE) "生图 / " else ""
-          "$mode${conversationGroupLabel(conversation.groupName)} / $providerName / ${conversation.model}$streaming"
-        } ?: "未选择配置",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis
-      )
-    }
-    IconButton(onClick = onNewChat) {
-      Icon(Icons.Outlined.Add, contentDescription = "新建对话")
-    }
-    IconButton(onClick = onOpenSettings) {
-      Icon(Icons.Outlined.Settings, contentDescription = "设置")
-    }
-    if (selectedConversation != null) {
-      ConversationOverflowMenu(
-        conversation = selectedConversation,
-        selectionMode = state.messageSelectionMode,
-        selectedCount = state.selectedMessageIds.size,
-        onTogglePin = onTogglePin,
-        onArchive = onArchive,
-        onDelete = onDelete,
-        onRename = onRename,
-        onToggleSelectionMode = onToggleSelectionMode,
-        onShareText = onShareText,
-        onShareSelected = onShareSelected,
-        onShareImage = onShareImage,
-        onShareSelectedImage = onShareSelectedImage,
-        onShareMarkdown = onShareMarkdown,
-        onFavoriteSelected = onFavoriteSelected,
-        onAppendSelectedToFavorite = onAppendSelectedToFavorite
-      )
-    }
     }
   }
 }
@@ -1522,6 +1734,8 @@ private fun ConversationOverflowMenu(
   onShareImage: () -> Unit,
   onShareSelectedImage: () -> Unit,
   onShareMarkdown: () -> Unit,
+  onCompressContext: () -> Unit,
+  contextCompressionEnabled: Boolean,
   onFavoriteSelected: () -> Unit,
   onAppendSelectedToFavorite: () -> Unit
 ) {
@@ -1602,6 +1816,15 @@ private fun ConversationOverflowMenu(
         onClick = {
           menuOpen = false
           onShareMarkdown()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("立即压缩上下文") },
+        leadingIcon = { Icon(Icons.Outlined.Refresh, contentDescription = null) },
+        enabled = contextCompressionEnabled,
+        onClick = {
+          menuOpen = false
+          onCompressContext()
         }
       )
       DropdownMenuItem(
@@ -2501,6 +2724,32 @@ private fun defaultGroupFavoriteTitle(state: ChatUiState, messageIds: Set<String
     ?: "${state.selectedGroupChat?.title?.ifBlank { "群聊" } ?: "群聊"}（节选）"
 }
 
+@Composable
+private fun contextCapacityColor(capacity: ContextCapacity?): Color {
+  return when (capacity?.status) {
+    ContextCapacityStatus.WARNING -> MaterialTheme.colorScheme.tertiary
+    ContextCapacityStatus.CRITICAL -> MaterialTheme.colorScheme.error
+    else -> MaterialTheme.colorScheme.onSurfaceVariant
+  }
+}
+
+private fun formatContextCapacity(capacity: ContextCapacity?): String? {
+  if (capacity == null) return null
+  val percent = capacity.usedPercent
+  if (percent == null || capacity.windowTokens == null) return "上下文上限未知"
+  val remaining = capacity.remainingTokens ?: 0
+  val summary = if (capacity.hasSummary) " · 已压缩" else ""
+  return "约 $percent% · 剩余约 ${formatTokenCount(remaining)} tokens$summary"
+}
+
+private fun formatTokenCount(value: Int): String {
+  return when {
+    value >= 1_000_000 -> "${(value / 100_000) / 10.0}M"
+    value >= 1_000 -> "${(value / 100) / 10.0}k"
+    else -> value.toString()
+  }
+}
+
 private enum class GroupBotPickerMode {
   SPEAK,
   SUMMARIZE
@@ -2522,6 +2771,7 @@ private fun GroupChatPage(
   onBotTurn: (String) -> Unit,
   onSummarize: (String) -> Unit,
   onToggleAutoPlay: () -> Unit,
+  onCompressContext: () -> Unit,
   onStop: () -> Unit,
   onEditGroup: () -> Unit,
   onDeleteGroup: () -> Unit,
@@ -2558,63 +2808,63 @@ private fun GroupChatPage(
   ) {
     Column(modifier = Modifier.fillMaxSize()) {
       CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
-        Row(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-        IconButton(onClick = onOpenDrawer) {
-          Icon(Icons.Outlined.Menu, contentDescription = "打开聊天列表")
-        }
-        Column(modifier = Modifier.weight(1f)) {
-          Text(
-            text = selectedGroup?.title?.ifBlank { "AI 群聊" } ?: "AI 群聊",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+        Column(modifier = Modifier.fillMaxWidth()) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            IconButton(onClick = onOpenDrawer) {
+              Icon(Icons.Outlined.Menu, contentDescription = "打开聊天列表")
+            }
+            Text(
+              text = selectedGroup?.title?.ifBlank { "AI 群聊" } ?: "AI 群聊",
+              style = MaterialTheme.typography.titleMedium,
+              fontWeight = FontWeight.Bold,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onNewGroup) {
+              Icon(Icons.Outlined.Add, contentDescription = "新建群聊")
+            }
+            IconButton(
+              onClick = onToggleAutoPlay,
+              enabled = selectedGroup != null && groupBots.isNotEmpty()
+            ) {
+              Icon(
+                imageVector = if (state.isSelectedGroupAutoPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                contentDescription = if (state.isSelectedGroupAutoPlaying) "暂停轮流" else "开始轮流",
+                tint = if (state.isSelectedGroupAutoPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+              )
+            }
+            if (selectedGroup != null) {
+              GroupChatOverflowMenu(
+                selectionMode = selectionMode,
+                selectedCount = selectedMessageIds.size,
+                onToggleSelectionMode = onToggleSelectionMode,
+                onShareText = onShareText,
+                onShareSelected = onShareSelected,
+                onShareImage = onShareImage,
+                onShareSelectedImage = onShareSelectedImage,
+                onFavoriteSelected = onFavoriteSelected,
+                onAppendSelectedToFavorite = onAppendSelectedToFavorite,
+                onCompressContext = onCompressContext,
+                contextCompressionEnabled = selectedGroup.id !in state.compressingGroupIds,
+                onEditGroup = onEditGroup,
+                onDeleteGroup = onDeleteGroup,
+                onCopyGroup = onCopyGroup
+              )
+            }
+            IconButton(onClick = onClose) {
+              Icon(Icons.Outlined.Close, contentDescription = "关闭群聊")
+            }
+          }
+          TopMetadataStrip(
+            items = groupMetadataItems(state, selectedGroup, groupBots.size),
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp)
           )
-          Text(
-            text = selectedGroup?.topic?.ifBlank { "手动点名机器人轮流发言" } ?: "选择或新建一个群聊",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-          )
-        }
-        IconButton(onClick = onNewGroup) {
-          Icon(Icons.Outlined.Add, contentDescription = "新建群聊")
-        }
-        IconButton(
-          onClick = onToggleAutoPlay,
-          enabled = selectedGroup != null && groupBots.isNotEmpty()
-        ) {
-          Icon(
-            imageVector = if (state.isSelectedGroupAutoPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-            contentDescription = if (state.isSelectedGroupAutoPlaying) "暂停轮流" else "开始轮流",
-            tint = if (state.isSelectedGroupAutoPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-          )
-        }
-        if (selectedGroup != null) {
-          GroupChatOverflowMenu(
-            selectionMode = selectionMode,
-            selectedCount = selectedMessageIds.size,
-            onToggleSelectionMode = onToggleSelectionMode,
-            onShareText = onShareText,
-            onShareSelected = onShareSelected,
-            onShareImage = onShareImage,
-            onShareSelectedImage = onShareSelectedImage,
-            onFavoriteSelected = onFavoriteSelected,
-            onAppendSelectedToFavorite = onAppendSelectedToFavorite,
-            onEditGroup = onEditGroup,
-            onDeleteGroup = onDeleteGroup,
-            onCopyGroup = onCopyGroup
-          )
-        }
-        IconButton(onClick = onClose) {
-          Icon(Icons.Outlined.Close, contentDescription = "关闭群聊")
-        }
         }
       }
 
@@ -2684,6 +2934,7 @@ private fun GroupChatPage(
         GroupMessageList(
           messages = state.groupMessages,
           bots = state.aiBots,
+          streamingBubbleMotion = state.appSettings.streamingBubbleMotion,
           selectedMessageIds = selectedMessageIds,
           selectionMode = selectionMode,
           onToggleMessageSelected = onToggleMessageSelected,
@@ -2783,6 +3034,8 @@ private fun GroupChatOverflowMenu(
   onShareSelectedImage: () -> Unit,
   onFavoriteSelected: () -> Unit,
   onAppendSelectedToFavorite: () -> Unit,
+  onCompressContext: () -> Unit,
+  contextCompressionEnabled: Boolean,
   onEditGroup: () -> Unit,
   onDeleteGroup: () -> Unit,
   onCopyGroup: () -> Unit
@@ -2854,6 +3107,15 @@ private fun GroupChatOverflowMenu(
         }
       )
       DropdownMenuItem(
+        text = { Text("立即压缩上下文") },
+        leadingIcon = { Icon(Icons.Outlined.Refresh, contentDescription = null) },
+        enabled = contextCompressionEnabled,
+        onClick = {
+          menuOpen = false
+          onCompressContext()
+        }
+      )
+      DropdownMenuItem(
         text = { Text("编辑群聊") },
         leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
         onClick = {
@@ -2885,6 +3147,7 @@ private fun GroupChatOverflowMenu(
 private fun GroupMessageList(
   messages: List<GroupChatMessage>,
   bots: List<AiBot>,
+  streamingBubbleMotion: StreamingBubbleMotion,
   selectedMessageIds: Set<String>,
   selectionMode: Boolean,
   onToggleMessageSelected: (String) -> Unit,
@@ -3021,7 +3284,8 @@ private fun GroupMessageList(
               onShareText = { onShareMessageText(message.id) },
               onShareImage = { onShareMessageImage(message.id) },
               onOpenAttachment = onOpenAttachment,
-              onFavorite = { onFavoriteMessage(message.id) }
+              onFavorite = { onFavoriteMessage(message.id) },
+              streamingBubbleMotion = streamingBubbleMotion
             )
           }
           is GroupMessageListItem.ToolGroup -> {
@@ -3054,7 +3318,8 @@ private fun GroupMessageList(
               onSelectRangeTo = { onSelectRangeTo(first.id) },
               onShareText = { shareText(context, item.messages.joinToString("\n\n") { it.content }, "分享工具调用") },
               onShareImage = { onShareMessageImage(first.id) },
-              onFavorite = { onFavoriteMessages(toolIds) }
+              onFavorite = { onFavoriteMessages(toolIds) },
+              streamingBubbleMotion = streamingBubbleMotion
             )
           }
         }
@@ -3391,7 +3656,8 @@ private fun GroupMessageBubble(
   onShareText: () -> Unit,
   onShareImage: () -> Unit,
   onOpenAttachment: (ChatAttachment) -> Unit,
-  onFavorite: () -> Unit
+  onFavorite: () -> Unit,
+  streamingBubbleMotion: StreamingBubbleMotion
 ) {
   val context = LocalContext.current
   var shareMenuOpen by remember(message.id) { mutableStateOf(false) }
@@ -3426,33 +3692,31 @@ private fun GroupMessageBubble(
     isBot -> botColors.content.copy(alpha = 0.74f)
     else -> MaterialTheme.colorScheme.onSurfaceVariant
   }
+  val bubbleShape = RoundedCornerShape(8.dp)
+  val bubbleContainerColor = when {
+    selected -> MaterialTheme.colorScheme.secondaryContainer
+    isUser -> userColors.container
+    message.status == MessageStatus.FAILED -> MaterialTheme.colorScheme.errorContainer
+    isBot -> botColors.container
+    else -> MaterialTheme.colorScheme.surface
+  }
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .then(if (selectionMode) Modifier.clickable(onClick = onToggleSelected) else Modifier),
     horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
   ) {
-    Surface(
-      color = when {
-        selected -> MaterialTheme.colorScheme.secondaryContainer
-        isUser -> userColors.container
-        message.status == MessageStatus.FAILED -> MaterialTheme.colorScheme.errorContainer
-        isBot -> botColors.container
-        else -> MaterialTheme.colorScheme.surface
-      },
+    StreamingBubbleFrame(
+      streaming = isBot && message.status == MessageStatus.STREAMING,
+      motion = streamingBubbleMotion,
+      accent = botColors.accent,
+      containerColor = bubbleContainerColor,
       contentColor = contentColor,
-      shape = RoundedCornerShape(8.dp),
+      selected = selected,
+      shape = bubbleShape,
       modifier = Modifier
-        .fillMaxWidth(if (isUser) 0.84f else 0.92f)
-        .then(
-          if (isBot) {
-            Modifier.border(if (selected) 2.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else botColors.accent, RoundedCornerShape(8.dp))
-          } else if (selected) {
-            Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
-          } else {
-            Modifier
-          }
-        )
+        .fillMaxWidth(if (isUser) 0.84f else 0.92f),
+      baseBorderColor = if (isBot) botColors.accent else null
     ) {
       Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -3529,11 +3793,21 @@ private fun GroupMessageBubble(
             color = contentColor
           )
         } else {
-          SelectionContainer {
-            MarkdownPreview(
-              content = message.content.ifBlank { if (message.status == MessageStatus.STREAMING) "..." else "" },
-              colors = markdownColors
+          if (message.content.isBlank() && message.status == MessageStatus.STREAMING) {
+            StreamingStatusIndicator(
+              text = "正在输出",
+              accent = botColors.accent,
+              textColor = metadataColor,
+              motion = streamingBubbleMotion,
+              animatedDots = true
             )
+          } else {
+            SelectionContainer {
+              MarkdownPreview(
+                content = message.content,
+                colors = markdownColors
+              )
+            }
           }
         }
         if (message.attachments.isNotEmpty()) {
@@ -3551,7 +3825,15 @@ private fun GroupMessageBubble(
             style = MaterialTheme.typography.bodySmall
           )
         }
-        formatGroupMessageMetadata(message)?.let { metadata ->
+        if (isBot && message.status == MessageStatus.STREAMING && message.content.isNotBlank()) {
+          StreamingStatusIndicator(
+            text = "输出中",
+            accent = botColors.accent,
+            textColor = metadataColor,
+            motion = streamingBubbleMotion
+          )
+        }
+        formatGroupMessageMetadata(message, includeStreaming = false)?.let { metadata ->
           Text(
             text = metadata,
             style = MaterialTheme.typography.bodySmall,
@@ -3594,7 +3876,8 @@ private fun GroupToolMessageBubble(
   onSelectRangeTo: () -> Unit,
   onShareText: () -> Unit,
   onShareImage: () -> Unit,
-  onFavorite: () -> Unit
+  onFavorite: () -> Unit,
+  streamingBubbleMotion: StreamingBubbleMotion
 ) {
   if (messages.isEmpty()) return
   val context = LocalContext.current
@@ -3620,7 +3903,8 @@ private fun GroupToolMessageBubble(
     colors = defaultToolCallBubbleColors(colors),
     expanded = expanded,
     canToggleExpanded = canToggleExpanded,
-    onToggleExpanded = onToggleExpanded
+    onToggleExpanded = onToggleExpanded,
+    streamingBubbleMotion = streamingBubbleMotion
   )
 }
 
@@ -3675,9 +3959,9 @@ private fun groupToolSummary(details: List<ToolCallDetails>, count: Int, streami
   }
 }
 
-private fun formatGroupMessageMetadata(message: GroupChatMessage): String? {
+private fun formatGroupMessageMetadata(message: GroupChatMessage, includeStreaming: Boolean = true): String? {
   val parts = mutableListOf<String>()
-  if (message.status == MessageStatus.STREAMING) parts += "输出中"
+  if (includeStreaming && message.status == MessageStatus.STREAMING) parts += "输出中"
   message.firstTokenDurationMs?.let { parts += "首 token ${formatDuration(it)}" }
   message.totalDurationMs?.let { parts += "耗时 ${formatDuration(it)}" }
   if (message.totalTokens != null) {
@@ -4208,6 +4492,7 @@ private fun AppSettingsPage(
   onFontScale: (Float) -> Unit,
   onDebugResponseLogging: (Boolean) -> Unit,
   onWebSearchMode: (WebSearchMode) -> Unit,
+  onStreamingBubbleMotion: (StreamingBubbleMotion) -> Unit,
   onAttachmentMaxFileMb: (Int) -> Unit,
   onAttachmentMaxPendingMb: (Int) -> Unit,
   onAttachmentMaxImageSourceMb: (Int) -> Unit,
@@ -4284,6 +4569,21 @@ private fun AppSettingsPage(
             valueRange = 0.85f..1.25f,
             steps = 7
           )
+          Text("输出中气泡动效", fontWeight = FontWeight.SemiBold)
+          Text(
+            "用于提示 AI 气泡仍在流式输出，卡顿时也能看出尚未完成。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+          )
+          LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(items = StreamingBubbleMotion.values().toList(), key = { motion: StreamingBubbleMotion -> motion.name }) { motion: StreamingBubbleMotion ->
+              FilterChip(
+                selected = state.appSettings.streamingBubbleMotion == motion,
+                onClick = { onStreamingBubbleMotion(motion) },
+                label = { Text(motion.label) }
+              )
+            }
+          }
         }
 
         SettingsSection(title = "附件限制") {
@@ -5480,7 +5780,8 @@ private fun MessageList(
               onCopy = { copyToClipboard(context, item.messages.joinToString("\n\n") { it.content }) },
               onShareText = { shareText(context, item.messages.joinToString("\n\n") { it.content }, "分享工具调用") },
               onShareImage = { onShareMessageImage(item.messages.first().id) },
-              onFavorite = { onFavoriteMessages(toolIds) }
+              onFavorite = { onFavoriteMessages(toolIds) },
+              streamingBubbleMotion = state.appSettings.streamingBubbleMotion
             )
           }
           is ChatMessageListItem.Message -> {
@@ -5500,7 +5801,8 @@ private fun MessageList(
               onEditResend = { onEditResend(message.content) },
               onOpenAttachment = onOpenAttachment,
               onFork = { onForkMessage(message.id) },
-              imageMode = imageMode
+              imageMode = imageMode,
+              streamingBubbleMotion = state.appSettings.streamingBubbleMotion
             )
           }
         }
@@ -5829,7 +6131,8 @@ private fun ToolCallGroupBubble(
   colors: ToolCallBubbleColors? = null,
   expanded: Boolean? = null,
   canToggleExpanded: Boolean = true,
-  onToggleExpanded: (() -> Unit)? = null
+  onToggleExpanded: (() -> Unit)? = null,
+  streamingBubbleMotion: StreamingBubbleMotion = StreamingBubbleMotion.STANDARD
 ) {
   if (messages.isEmpty()) return
   val resolvedColors = colors ?: defaultToolCallBubbleColors()
@@ -5851,18 +6154,18 @@ private fun ToolCallGroupBubble(
       .then(if (selectionMode) Modifier.clickable(onClick = onToggleSelected) else Modifier),
     horizontalArrangement = Arrangement.Start
   ) {
-    Surface(
-      color = if (selected) MaterialTheme.colorScheme.secondaryContainer else resolvedColors.container,
+    StreamingBubbleFrame(
+      streaming = isStreaming,
+      motion = streamingBubbleMotion,
+      accent = resolvedColors.accent,
+      containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else resolvedColors.container,
       contentColor = resolvedColors.content,
+      selected = selected,
       shape = RoundedCornerShape(8.dp),
       modifier = Modifier
         .fillMaxWidth(0.86f)
-        .height(IntrinsicSize.Min)
-        .border(
-          width = if (selected) 2.dp else 1.dp,
-          color = if (selected) MaterialTheme.colorScheme.primary else resolvedColors.accent.copy(alpha = 0.55f),
-          shape = RoundedCornerShape(8.dp)
-        )
+        .height(IntrinsicSize.Min),
+      baseBorderColor = resolvedColors.accent.copy(alpha = 0.55f)
     ) {
       Box {
         Icon(
@@ -5879,7 +6182,14 @@ private fun ToolCallGroupBubble(
           modifier = Modifier
             .fillMaxHeight()
             .width(4.dp)
-            .background(resolvedColors.accent)
+            .background(
+              if (isStreaming && streamingBubbleMotion != StreamingBubbleMotion.OFF) {
+                val pulse = streamingPulse(true)
+                resolvedColors.accent.copy(alpha = 0.58f + 0.42f * pulse)
+              } else {
+                resolvedColors.accent
+              }
+            )
         )
         Column(
           modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 5.dp),
@@ -5960,7 +6270,12 @@ private fun ToolCallGroupBubble(
           }
 
           if (isStreaming) {
-            Text("工具调用中", style = MaterialTheme.typography.bodySmall, color = resolvedColors.metadata)
+            StreamingStatusIndicator(
+              text = "工具调用中",
+              accent = resolvedColors.accent,
+              textColor = resolvedColors.metadata,
+              motion = streamingBubbleMotion
+            )
           }
 
           if (selectionMode) {
@@ -6354,34 +6669,36 @@ private fun MessageBubble(
   onEditResend: () -> Unit,
   onOpenAttachment: (ChatAttachment) -> Unit,
   onFork: () -> Unit,
-  imageMode: Boolean = false
+  imageMode: Boolean = false,
+  streamingBubbleMotion: StreamingBubbleMotion
 ) {
   val isUser = message.role == MessageRole.USER
   val userColors = userBubbleColors()
   var shareMenuOpen by remember { mutableStateOf(false) }
+  val isStreamingAssistant = !isUser && message.status == MessageStatus.STREAMING
+  val bubbleShape = RoundedCornerShape(8.dp)
+  val bubbleContainerColor = when {
+    selected -> MaterialTheme.colorScheme.secondaryContainer
+    isUser -> userColors.container
+    else -> MaterialTheme.colorScheme.surface
+  }
+  val assistantAccent = MaterialTheme.colorScheme.primary
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .then(if (selectionMode) Modifier.clickable(onClick = onToggleSelected) else Modifier),
     horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
   ) {
-    Surface(
-      color = when {
-        selected -> MaterialTheme.colorScheme.secondaryContainer
-        isUser -> userColors.container
-        else -> MaterialTheme.colorScheme.surface
-      },
+    StreamingBubbleFrame(
+      streaming = isStreamingAssistant,
+      motion = streamingBubbleMotion,
+      accent = assistantAccent,
+      containerColor = bubbleContainerColor,
       contentColor = if (isUser) userColors.content else MaterialTheme.colorScheme.onSurface,
-      shape = RoundedCornerShape(8.dp),
+      selected = selected,
+      shape = bubbleShape,
       modifier = Modifier
         .fillMaxWidth(if (isUser) 0.84f else 0.92f)
-        .then(
-          if (selected) {
-            Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
-          } else {
-            Modifier
-          }
-        )
     ) {
       Column(modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 8.dp)) {
         Text(
@@ -6392,9 +6709,17 @@ private fun MessageBubble(
         Spacer(Modifier.height(6.dp))
         if (isUser) {
           Text(message.content.ifBlank { if (message.status == MessageStatus.STREAMING) "..." else "" })
+        } else if (message.content.isBlank() && message.status == MessageStatus.STREAMING) {
+          StreamingStatusIndicator(
+            text = "正在输出",
+            accent = assistantAccent,
+            textColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            motion = streamingBubbleMotion,
+            animatedDots = true
+          )
         } else {
           SelectionContainer {
-            MarkdownPreview(message.content.ifBlank { if (message.status == MessageStatus.STREAMING) "..." else "" })
+            MarkdownPreview(message.content)
           }
         }
         if (message.attachments.isNotEmpty()) {
@@ -6431,6 +6756,15 @@ private fun MessageBubble(
             } else {
               MaterialTheme.colorScheme.onSurfaceVariant
             }
+          )
+        }
+        if (isStreamingAssistant && message.content.isNotBlank()) {
+          Spacer(Modifier.height(8.dp))
+          StreamingStatusIndicator(
+            text = "输出中",
+            accent = assistantAccent,
+            textColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            motion = streamingBubbleMotion
           )
         }
         Spacer(Modifier.height(4.dp))
@@ -7575,6 +7909,7 @@ private fun ProviderSettingsDialog(
   var displayName by remember(provider.id) { mutableStateOf(provider.displayName) }
   var baseUrl by remember(provider.id) { mutableStateOf(provider.baseUrl) }
   var model by remember(provider.id) { mutableStateOf(provider.defaultModel) }
+  var contextWindowTokens by remember(provider.id) { mutableStateOf(provider.contextWindowTokensOverride?.toString().orEmpty()) }
   var reasoningEffort by remember(provider.id) { mutableStateOf(provider.reasoningEffort) }
   var supportsAttachments by remember(provider.id) { mutableStateOf(provider.supportsAttachments) }
   var supportsImageGeneration by remember(provider.id) { mutableStateOf(provider.supportsImageGeneration) }
@@ -7633,6 +7968,14 @@ private fun ProviderSettingsDialog(
             value = model,
             onValueChange = { model = it },
             label = { Text("默认模型") },
+            modifier = Modifier.fillMaxWidth()
+          )
+          OutlinedTextField(
+            value = contextWindowTokens,
+            onValueChange = { value -> contextWindowTokens = value.filter { it.isDigit() }.take(9) },
+            label = { Text("上下文上限 tokens（可选）") },
+            placeholder = { Text("留空则使用内置模型表") },
+            supportingText = { Text("用于显示约剩余容量和启用自动压缩；自定义模型建议填写。") },
             modifier = Modifier.fillMaxWidth()
           )
           if (provider.type == ProviderType.OPENAI_RESPONSES) {
@@ -7740,6 +8083,7 @@ private fun ProviderSettingsDialog(
                   displayName = displayName.trim(),
                   baseUrl = baseUrl.trim().trimEnd('/'),
                   defaultModel = model.trim(),
+                  contextWindowTokensOverride = contextWindowTokens.toIntOrNull()?.takeIf { it > 0 },
                   enabled = true,
                   supportsAttachments = supportsAttachments,
                   supportsImageGeneration = supportsImageGeneration && provider.type == ProviderType.OPENAI_RESPONSES,

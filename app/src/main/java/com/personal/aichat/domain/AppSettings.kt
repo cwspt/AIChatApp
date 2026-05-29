@@ -18,6 +18,12 @@ enum class WebSearchMode(val label: String) {
   REQUIRED("强制搜索")
 }
 
+enum class StreamingBubbleMotion(val label: String) {
+  STANDARD("明显"),
+  SUBTLE("轻量"),
+  OFF("关闭")
+}
+
 const val DEFAULT_ATTACHMENT_MAX_FILE_MB = 20
 const val DEFAULT_ATTACHMENT_MAX_PENDING_MB = 50
 const val DEFAULT_ATTACHMENT_MAX_IMAGE_SOURCE_MB = 80
@@ -37,6 +43,7 @@ data class AppSettings(
   val fontScale: Float = 1.0f,
   val debugResponseLogging: Boolean = false,
   val webSearchMode: WebSearchMode = WebSearchMode.OFF,
+  val streamingBubbleMotion: StreamingBubbleMotion = StreamingBubbleMotion.STANDARD,
   val attachmentMaxFileMb: Int = DEFAULT_ATTACHMENT_MAX_FILE_MB,
   val attachmentMaxPendingMb: Int = DEFAULT_ATTACHMENT_MAX_PENDING_MB,
   val attachmentMaxImageSourceMb: Int = DEFAULT_ATTACHMENT_MAX_IMAGE_SOURCE_MB,

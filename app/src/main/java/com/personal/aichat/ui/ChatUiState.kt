@@ -5,6 +5,7 @@ import com.personal.aichat.domain.ChatAttachment
 import com.personal.aichat.domain.ChatConversationGroup
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
+import com.personal.aichat.domain.ContextCapacity
 import com.personal.aichat.domain.FavoriteSnippet
 import com.personal.aichat.domain.AiBot
 import com.personal.aichat.domain.GroupChatMember
@@ -65,6 +66,10 @@ data class ChatUiState(
   val streamingConversationIds: Set<String> = emptySet(),
   val streamingGroupIds: Set<String> = emptySet(),
   val autoPlayingGroupIds: Set<String> = emptySet(),
+  val compressingConversationIds: Set<String> = emptySet(),
+  val compressingGroupIds: Set<String> = emptySet(),
+  val selectedContextCapacity: ContextCapacity? = null,
+  val selectedGroupContextCapacity: ContextCapacity? = null,
   val deleteConfirmOpen: Boolean = false,
   val deleteTargetConversationId: String? = null,
   val providerRebindDeleteSourceId: String? = null,

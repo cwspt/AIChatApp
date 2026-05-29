@@ -33,14 +33,20 @@ import com.personal.aichat.domain.GroupTurnTrigger
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ChatStreamEvent
+import com.personal.aichat.domain.ContextCapacity
+import com.personal.aichat.domain.ContextCompressionResult
+import com.personal.aichat.domain.ContextTokenEstimator
 import com.personal.aichat.domain.ConversationType
 import com.personal.aichat.domain.ImageGenerationApiMode
 import com.personal.aichat.domain.ImageGenerationOptions
+import com.personal.aichat.domain.KnownContextWindows
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderAdapter
 import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.ReasoningEffort
+import com.personal.aichat.domain.contextCapacity
+import com.personal.aichat.domain.responseReserveTokens
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -52,6 +58,9 @@ import java.util.UUID
 
 private const val MaxRawResponseLogChars = 64_000
 private const val GroupRecentMessageLimit = 20
+private const val AutoCompressionTriggerPercent = 85
+private const val CompressionTargetPercent = 60
+private const val CompressionRecentMessageKeep = 12
 
 private data class ProviderConfigExport(
   val version: Int = 1,
@@ -73,6 +82,7 @@ private data class ProviderConfigExportItem(
   val imageGenerationModel: String = "",
   val extraHeadersJson: String = "",
   val reasoningEffort: String = ReasoningEffort.AUTO.name,
+  val contextWindowTokensOverride: Int? = null,
   val apiKey: String? = null
 )
 
@@ -985,6 +995,7 @@ class ChatRepository(
         type = provider.type.name,
         baseUrl = provider.baseUrl.trimEnd('/'),
         defaultModel = provider.defaultModel,
+        contextWindowTokensOverride = provider.contextWindowTokensOverride?.takeIf { it > 0 },
         enabled = provider.enabled,
         supportsStreaming = provider.supportsStreaming,
         supportsAttachments = provider.supportsAttachments,
@@ -1518,6 +1529,7 @@ class ChatRepository(
           type = provider.type.name,
           baseUrl = provider.baseUrl,
           defaultModel = provider.defaultModel,
+          contextWindowTokensOverride = provider.contextWindowTokensOverride,
           enabled = provider.enabled,
           supportsStreaming = provider.supportsStreaming,
           supportsAttachments = provider.supportsAttachments,
@@ -1553,6 +1565,7 @@ class ChatRepository(
           type = type,
           baseUrl = item.baseUrl.trimEnd('/'),
           defaultModel = item.defaultModel,
+          contextWindowTokensOverride = item.contextWindowTokensOverride?.takeIf { it > 0 },
           enabled = item.enabled,
           supportsStreaming = item.supportsStreaming,
           supportsAttachments = item.supportsAttachments,
@@ -1568,6 +1581,338 @@ class ChatRepository(
       imported += 1
     }
     return imported
+  }
+
+  suspend fun estimateConversationContextCapacity(conversationId: String): ContextCapacity? {
+    val conversation = dao.conversationById(conversationId) ?: return null
+    val provider = dao.providerById(conversation.providerId)?.toDomain() ?: return null
+    val messages = dao.messagesForConversation(conversationId)
+      .filter { it.role != MessageRole.TOOL.name }
+      .filterNot { it.role == MessageRole.ASSISTANT.name && it.status == MessageStatus.STREAMING.name && it.content.isBlank() }
+      .map { it.toDomain() }
+    val context = buildConversationContext(conversation, provider, conversation.model, messages)
+    return contextCapacity(
+      windowTokens = KnownContextWindows.resolve(provider, conversation.model),
+      usedTokens = ContextTokenEstimator.estimateMessages(context),
+      hasSummary = conversation.contextSummary.isNotBlank()
+    )
+  }
+
+  suspend fun estimateGroupContextCapacity(groupId: String, botIdForModel: String? = null): ContextCapacity? {
+    val room = dao.groupChatRoomById(groupId) ?: return null
+    val bot = botIdForModel
+      ?.let { dao.aiBotById(it)?.toDomain() }
+      ?: dao.groupChatMembers(groupId).firstOrNull()?.let { dao.aiBotById(it.botId)?.toDomain() }
+      ?: return null
+    val provider = dao.providerById(bot.providerId)?.toDomain() ?: return null
+    val members = dao.groupChatMembers(groupId).mapNotNull { dao.aiBotById(it.botId)?.toDomain() }
+    val messages = dao.groupMessages(groupId)
+      .filterNot { it.senderType == GroupMessageSenderType.BOT.name && it.status == MessageStatus.STREAMING.name && it.content.isBlank() }
+      .map { it.toDomain() }
+    val context = buildGroupContextMessages(
+      room = room.toDomain(),
+      bot = bot,
+      members = members,
+      messages = messages,
+      providerSupportsAttachments = provider.supportsAttachments,
+      summarize = false,
+      applyBudget = true,
+      provider = provider
+    )
+    return contextCapacity(
+      windowTokens = KnownContextWindows.resolve(provider, bot.model),
+      usedTokens = ContextTokenEstimator.estimateMessages(context),
+      hasSummary = room.contextSummary.isNotBlank()
+    )
+  }
+
+  suspend fun compressConversationContext(conversationId: String): ContextCompressionResult {
+    val conversation = dao.conversationById(conversationId)
+      ?: throw IllegalArgumentException("Conversation not found")
+    val provider = dao.providerById(conversation.providerId)?.toDomain()
+      ?: throw IllegalStateException("Provider not found")
+    val allMessages = dao.messagesForConversation(conversationId)
+      .filter { it.role != MessageRole.TOOL.name }
+      .filterNot { it.role == MessageRole.ASSISTANT.name && it.status == MessageStatus.STREAMING.name && it.content.isBlank() }
+      .map { it.toDomain() }
+    return compressConversationMessages(conversation, provider, conversation.model, allMessages)
+  }
+
+  suspend fun compressGroupContext(groupId: String, botIdForModel: String? = null): ContextCompressionResult {
+    val room = dao.groupChatRoomById(groupId)
+      ?: throw IllegalArgumentException("Group chat not found")
+    val bot = botIdForModel
+      ?.let { dao.aiBotById(it)?.toDomain() }
+      ?: dao.groupChatMembers(groupId).firstOrNull()?.let { dao.aiBotById(it.botId)?.toDomain() }
+      ?: throw IllegalStateException("群聊没有可用机器人，无法压缩上下文")
+    val provider = dao.providerById(bot.providerId)?.toDomain()
+      ?: throw IllegalStateException("Provider not found")
+    val messages = dao.groupMessages(groupId)
+      .filterNot { it.senderType == GroupMessageSenderType.BOT.name && it.status == MessageStatus.STREAMING.name && it.content.isBlank() }
+      .map { it.toDomain() }
+    return compressGroupMessages(room, bot, provider, messages)
+  }
+
+  private suspend fun compressConversationMessages(
+    conversation: ConversationEntity,
+    provider: ChatProviderConfig,
+    model: String,
+    messages: List<ChatMessage>
+  ): ContextCompressionResult {
+    KnownContextWindows.resolve(provider, model)
+      ?: throw IllegalStateException("当前模型上下文上限未知，请先在 API 配置中填写上下文上限。")
+    val beforeTokens = ContextTokenEstimator.estimateMessages(buildConversationContext(conversation, provider, model, messages))
+    val startIndex = conversation.contextSummaryCutoffMessageId
+      ?.let { cutoff -> messages.indexOfFirst { it.id == cutoff } + 1 }
+      ?.coerceAtLeast(0)
+      ?: 0
+    val recentStart = (messages.size - CompressionRecentMessageKeep).coerceAtLeast(startIndex)
+    val compressible = messages.subList(startIndex, recentStart)
+      .filter { it.content.isNotBlank() || it.attachments.isNotEmpty() }
+    if (compressible.isEmpty()) {
+      return ContextCompressionResult(false, conversation.contextSummary, conversation.contextSummaryCutoffMessageId, beforeTokens, beforeTokens)
+    }
+    val summary = summarizeTranscript(
+      provider = provider,
+      model = model,
+      existingSummary = conversation.contextSummary,
+      transcript = formatConversationTranscript(compressible),
+      subject = "单聊对话"
+    )
+    val cutoff = compressible.lastOrNull()?.id
+    val updatedAt = System.currentTimeMillis()
+    dao.updateConversationContextSummary(conversation.id, summary, cutoff, updatedAt)
+    val updatedConversation = conversation.copy(
+      contextSummary = summary,
+      contextSummaryCutoffMessageId = cutoff,
+      contextSummaryUpdatedAt = updatedAt
+    )
+    val afterTokens = ContextTokenEstimator.estimateMessages(buildConversationContext(updatedConversation, provider, model, messages))
+    return ContextCompressionResult(true, summary, cutoff, beforeTokens, afterTokens)
+  }
+
+  private suspend fun compressGroupMessages(
+    room: GroupChatRoomEntity,
+    bot: AiBot,
+    provider: ChatProviderConfig,
+    messages: List<GroupChatMessage>
+  ): ContextCompressionResult {
+    KnownContextWindows.resolve(provider, bot.model)
+      ?: throw IllegalStateException("当前模型上下文上限未知，请先在 API 配置中填写上下文上限。")
+    val members = dao.groupChatMembers(room.id).mapNotNull { dao.aiBotById(it.botId)?.toDomain() }
+    val beforeContext = buildGroupContextMessages(room.toDomain(), bot, members, messages, provider.supportsAttachments, summarize = false, applyBudget = true, provider = provider)
+    val beforeTokens = ContextTokenEstimator.estimateMessages(beforeContext)
+    val startIndex = room.contextSummaryCutoffMessageId
+      ?.let { cutoff -> messages.indexOfFirst { it.id == cutoff } + 1 }
+      ?.coerceAtLeast(0)
+      ?: 0
+    val recentStart = (messages.size - CompressionRecentMessageKeep).coerceAtLeast(startIndex)
+    val compressible = messages.subList(startIndex, recentStart)
+      .filter { it.content.isNotBlank() || it.attachments.isNotEmpty() }
+    if (compressible.isEmpty()) {
+      return ContextCompressionResult(false, room.contextSummary, room.contextSummaryCutoffMessageId, beforeTokens, beforeTokens)
+    }
+    val summary = summarizeTranscript(
+      provider = provider,
+      model = bot.model,
+      existingSummary = room.contextSummary,
+      transcript = formatGroupTranscript(compressible),
+      subject = "群聊「${room.title}」"
+    )
+    val cutoff = compressible.lastOrNull()?.id
+    val updatedAt = System.currentTimeMillis()
+    dao.updateGroupContextSummary(room.id, summary, cutoff, updatedAt)
+    val updatedRoom = room.copy(
+      contextSummary = summary,
+      contextSummaryCutoffMessageId = cutoff,
+      contextSummaryUpdatedAt = updatedAt
+    )
+    val afterContext = buildGroupContextMessages(updatedRoom.toDomain(), bot, members, messages, provider.supportsAttachments, summarize = false, applyBudget = true, provider = provider)
+    val afterTokens = ContextTokenEstimator.estimateMessages(afterContext)
+    return ContextCompressionResult(true, summary, cutoff, beforeTokens, afterTokens)
+  }
+
+  private suspend fun summarizeTranscript(
+    provider: ChatProviderConfig,
+    model: String,
+    existingSummary: String,
+    transcript: String,
+    subject: String
+  ): String {
+    val adapter = adapters[provider.type] ?: throw IllegalStateException("Provider ${provider.type} is not implemented yet")
+    val apiKey = apiKeyStore.read(provider.secretRef)
+    if (apiKey.isNullOrBlank() && provider.type != ProviderType.TOKENHUB_PROXY) {
+      throw IllegalStateException("当前 API 配置还没有保存 Key，请在 API 配置中填写后再压缩上下文。")
+    }
+    val messages = listOf(
+      ChatMessage(
+        id = "context-compressor-system",
+        conversationId = "context-compressor",
+        role = MessageRole.SYSTEM,
+        content = """
+          你是对话上下文压缩器。请把提供的旧消息压缩成后续模型可直接使用的中文摘要。
+          保留用户目标、关键结论、未解决问题、重要事实、约束、链接、代码名词和后续行动。
+          不要输出寒暄，不要模拟继续对话，只输出摘要正文。
+        """.trimIndent(),
+        status = MessageStatus.COMPLETE,
+        providerId = provider.id,
+        model = model,
+        createdAt = 0L,
+        updatedAt = 0L,
+        errorMessage = null
+      ),
+      ChatMessage(
+        id = "context-compressor-user",
+        conversationId = "context-compressor",
+        role = MessageRole.USER,
+        content = buildString {
+          appendLine("对象：$subject")
+          if (existingSummary.isNotBlank()) {
+            appendLine()
+            appendLine("已有压缩摘要：")
+            appendLine(existingSummary)
+          }
+          appendLine()
+          appendLine("需要合并压缩的旧消息：")
+          appendLine(transcript)
+        },
+        status = MessageStatus.COMPLETE,
+        providerId = provider.id,
+        model = model,
+        createdAt = 1L,
+        updatedAt = 1L,
+        errorMessage = null
+      )
+    )
+    val output = StringBuilder()
+    adapter.streamChat(
+      config = provider,
+      apiKey = apiKey,
+      messages = messages,
+      options = ChatCompletionOptions(
+        model = model,
+        stream = provider.supportsStreaming,
+        captureRawResponseLog = false,
+        webSearchMode = com.personal.aichat.domain.WebSearchMode.OFF
+      )
+    ).collect { event ->
+      when (event) {
+        is ChatStreamEvent.TextDelta -> output.append(event.text)
+        is ChatStreamEvent.Failed -> throw IllegalStateException(event.message)
+        else -> Unit
+      }
+    }
+    return output.toString().trim().ifBlank { throw IllegalStateException("模型没有返回压缩摘要") }
+  }
+
+  private fun buildConversationContext(
+    conversation: ConversationEntity,
+    provider: ChatProviderConfig,
+    model: String,
+    messages: List<ChatMessage>
+  ): List<ChatMessage> {
+    val cutoffIndex = conversation.contextSummaryCutoffMessageId
+      ?.let { cutoff -> messages.indexOfFirst { it.id == cutoff } + 1 }
+      ?.coerceAtLeast(0)
+      ?: 0
+    val result = mutableListOf<ChatMessage>()
+    if (conversation.contextSummary.isNotBlank()) {
+      result += contextSummaryMessage(
+        id = "context-summary-${conversation.id}",
+        conversationId = conversation.id,
+        providerId = provider.id,
+        model = model,
+        content = "以下是较早对话的压缩摘要：\n${conversation.contextSummary}"
+      )
+    }
+    result += messages.drop(cutoffIndex)
+    return trimChatContextToBudget(result, provider, model)
+  }
+
+  private fun trimChatContextToBudget(
+    messages: List<ChatMessage>,
+    provider: ChatProviderConfig,
+    model: String
+  ): List<ChatMessage> {
+    val window = KnownContextWindows.resolve(provider, model) ?: return messages
+    val budget = (window - responseReserveTokens(window)).coerceAtLeast(1)
+    val kept = messages.toMutableList()
+    fun overBudget(): Boolean = ContextTokenEstimator.estimateMessages(kept) > budget
+    while (kept.size > 1 && overBudget()) {
+      val removeIndex = kept.indexOfFirst { it.id.startsWith("context-summary-").not() }
+      if (removeIndex < 0 || removeIndex == kept.lastIndex) break
+      kept.removeAt(removeIndex)
+    }
+    return kept
+  }
+
+  private fun contextSummaryMessage(
+    id: String,
+    conversationId: String,
+    providerId: String,
+    model: String,
+    content: String
+  ): ChatMessage = ChatMessage(
+    id = id,
+    conversationId = conversationId,
+    role = MessageRole.SYSTEM,
+    content = content,
+    status = MessageStatus.COMPLETE,
+    providerId = providerId,
+    model = model,
+    createdAt = 0L,
+    updatedAt = 0L,
+    errorMessage = null
+  )
+
+  private fun formatConversationTranscript(messages: List<ChatMessage>): String {
+    return messages.joinToString("\n\n") { message ->
+      val role = when (message.role) {
+        MessageRole.USER -> "用户"
+        MessageRole.ASSISTANT -> "助手"
+        MessageRole.SYSTEM -> "系统"
+        MessageRole.TOOL -> "工具"
+      }
+      "[$role]\n${message.content}${formatAttachmentSummary(message.attachments)}"
+    }
+  }
+
+  private fun formatGroupTranscript(messages: List<GroupChatMessage>): String {
+    return messages.joinToString("\n\n") { message ->
+      "[${message.senderName.ifBlank { message.senderType.name }}]\n${message.content}${formatAttachmentSummary(message.attachments)}"
+    }
+  }
+
+  private fun formatAttachmentSummary(attachments: List<ChatAttachment>): String {
+    if (attachments.isEmpty()) return ""
+    return attachments.joinToString(prefix = "\n附件：\n", separator = "\n") {
+      "- ${it.displayName} (${it.mimeType}, ${it.sizeBytes} bytes)"
+    }
+  }
+
+  private suspend fun ensureConversationContextReady(
+    conversationId: String,
+    provider: ChatProviderConfig,
+    model: String
+  ) {
+    KnownContextWindows.resolve(provider, model) ?: return
+    val current = estimateConversationContextCapacity(conversationId) ?: return
+    if ((current.usedPercent ?: 0) < AutoCompressionTriggerPercent) return
+    compressConversationContext(conversationId)
+    val after = estimateConversationContextCapacity(conversationId) ?: return
+    if ((after.usedPercent ?: 0) >= 100) {
+      throw IllegalStateException("压缩后上下文仍超过模型上限，请手动减少最近消息或调高模型上下文上限。")
+    }
+  }
+
+  private suspend fun ensureGroupContextReady(groupId: String, botId: String) {
+    val current = estimateGroupContextCapacity(groupId, botId) ?: return
+    if ((current.usedPercent ?: 0) < AutoCompressionTriggerPercent) return
+    compressGroupContext(groupId, botId)
+    val after = estimateGroupContextCapacity(groupId, botId) ?: return
+    if ((after.usedPercent ?: 0) >= 100) {
+      throw IllegalStateException("压缩后群聊上下文仍超过模型上限，请手动减少最近消息或调高模型上下文上限。")
+    }
   }
 
   private suspend fun streamAssistant(
@@ -1589,10 +1934,6 @@ class ChatRepository(
     }
     val allMessages = dao.messagesForConversation(conversationId)
     val assistantMessage = allMessages.firstOrNull { it.id == assistantMessageId }
-    val messages = allMessages
-      .filter { it.id != assistantMessageId }
-      .filter { it.role != MessageRole.TOOL.name }
-      .map { it.toDomain() }
     val apiKey = apiKeyStore.read(provider.secretRef)
     val appSettings = preferencesRepository.appSettings.first()
     val captureRawResponseLog = appSettings.debugResponseLogging
@@ -1680,6 +2021,21 @@ class ChatRepository(
     }
 
     try {
+      try {
+        ensureConversationContextReady(conversationId, provider, model)
+      } catch (error: Exception) {
+        throw IllegalStateException("上下文压缩失败：${error.message ?: friendlyNetworkErrorMessage(error)}", error)
+      }
+      val refreshedMessages = dao.messagesForConversation(conversationId)
+      val messages = buildConversationContext(
+        conversation = dao.conversationById(conversationId) ?: return,
+        provider = provider,
+        model = model,
+        messages = refreshedMessages
+          .filter { it.id != assistantMessageId }
+          .filter { it.role != MessageRole.TOOL.name }
+          .map { it.toDomain() }
+      )
       adapter.streamChat(
         config = provider,
         apiKey = apiKey,
@@ -1792,16 +2148,6 @@ class ChatRepository(
       )
       return MessageStatus.FAILED
     }
-    val members = dao.groupChatMembers(room.id).mapNotNull { dao.aiBotById(it.botId)?.toDomain() }
-    val groupMessages = dao.groupMessages(room.id).filter { it.id != botMessageId }.map { it.toDomain() }
-    val contextMessages = buildGroupContextMessages(
-      room = room.toDomain(),
-      bot = bot,
-      members = members,
-      messages = groupMessages,
-      providerSupportsAttachments = provider.supportsAttachments,
-      summarize = summarize
-    )
     val appSettings = preferencesRepository.appSettings.first()
     var output = ""
     val startedAt = System.currentTimeMillis()
@@ -1876,6 +2222,24 @@ class ChatRepository(
 
     var finalStatus = MessageStatus.FAILED
     try {
+      try {
+        ensureGroupContextReady(room.id, bot.id)
+      } catch (error: Exception) {
+        throw IllegalStateException("上下文压缩失败：${error.message ?: friendlyNetworkErrorMessage(error)}", error)
+      }
+      val refreshedRoom = dao.groupChatRoomById(room.id) ?: room
+      val members = dao.groupChatMembers(room.id).mapNotNull { dao.aiBotById(it.botId)?.toDomain() }
+      val groupMessages = dao.groupMessages(room.id).filter { it.id != botMessageId }.map { it.toDomain() }
+      val contextMessages = buildGroupContextMessages(
+        room = refreshedRoom.toDomain(),
+        bot = bot,
+        members = members,
+        messages = groupMessages,
+        providerSupportsAttachments = provider.supportsAttachments,
+        summarize = summarize,
+        applyBudget = true,
+        provider = provider
+      )
       adapter.streamChat(
         config = provider,
         apiKey = apiKey,
@@ -1931,7 +2295,9 @@ class ChatRepository(
     members: List<AiBot>,
     messages: List<GroupChatMessage>,
     providerSupportsAttachments: Boolean,
-    summarize: Boolean
+    summarize: Boolean,
+    applyBudget: Boolean = false,
+    provider: ChatProviderConfig? = null
   ): List<ChatMessage> {
     val participantLines = members.joinToString("\n") { "- ${it.name} (${it.model})" }
     val systemPrompt = buildString {
@@ -1957,6 +2323,11 @@ class ChatRepository(
         appendLine("群聊摘要：")
         appendLine(room.summary)
       }
+      if (room.contextSummary.isNotBlank()) {
+        appendLine()
+        appendLine("较早群聊上下文压缩摘要：")
+        appendLine(room.contextSummary)
+      }
     }
     val result = mutableListOf(
       ChatMessage(
@@ -1972,7 +2343,15 @@ class ChatRepository(
         errorMessage = null
       )
     )
-    val recentMessages = messages.takeLast(GroupRecentMessageLimit)
+    val cutoffIndex = room.contextSummaryCutoffMessageId
+      ?.let { cutoff -> messages.indexOfFirst { it.id == cutoff } + 1 }
+      ?.coerceAtLeast(0)
+      ?: 0
+    val recentMessages = if (room.contextSummary.isNotBlank()) {
+      messages.drop(cutoffIndex)
+    } else {
+      messages.takeLast(GroupRecentMessageLimit)
+    }
     if (recentMessages.isEmpty()) {
       result += ChatMessage(
         id = "group-initial-task-${room.id}-${bot.id}",
@@ -2002,7 +2381,7 @@ class ChatRepository(
         attachments = if (providerSupportsAttachments) message.attachments else emptyList()
       )
     }
-    return result
+    return if (applyBudget && provider != null) trimChatContextToBudget(result, provider, bot.model) else result
   }
 
   private fun buildInitialGroupTaskContent(room: GroupChatRoom, bot: AiBot, summarize: Boolean): String {

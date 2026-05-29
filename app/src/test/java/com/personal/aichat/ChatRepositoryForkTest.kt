@@ -31,6 +31,7 @@ import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderAdapter
 import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.ReasoningEffort
+import com.personal.aichat.domain.StreamingBubbleMotion
 import com.personal.aichat.domain.WebSearchMode
 import com.personal.aichat.ui.collapsedGroupMessageSummary
 import com.personal.aichat.ui.ChatMessageListItem
@@ -148,6 +149,88 @@ class ChatRepositoryForkTest {
     val messages = dao.messagesForConversation("conv")
     assertEquals("conversation-fixed", messages[0].model)
     assertEquals("conversation-fixed", messages[1].model)
+  }
+
+  @Test
+  fun contextCapacityUsesProviderOverrideBeforeKnownModelTable() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "gpt-4.1-mini").copy(contextWindowTokensOverride = 4096))
+    dao.upsertConversation(conversation("conv", providerId = "provider", model = "gpt-4.1-mini"))
+    dao.upsertMessage(message("u1", "conv", MessageRole.USER, "hello", "provider", "gpt-4.1-mini", 1))
+
+    val capacity = repository.estimateConversationContextCapacity("conv")
+
+    assertEquals(4096, capacity?.windowTokens)
+    assertNotNull(capacity?.usedPercent)
+  }
+
+  @Test
+  fun sendMessageCompressesOldConversationContextAndKeepsVisibleHistory() = runTest {
+    val dao = FakeChatDao()
+    val adapter = RecordingAdapter()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = mapOf(ProviderType.TOKENHUB_PROXY to adapter)
+    )
+    dao.upsertProvider(provider("provider", "tiny-model").copy(contextWindowTokensOverride = 4096))
+    dao.upsertConversation(conversation("conv", providerId = "provider", model = "tiny-model"))
+    repeat(24) { index ->
+      val role = if (index % 2 == 0) MessageRole.USER else MessageRole.ASSISTANT
+      dao.upsertMessage(message("m$index", "conv", role, "长消息 $index " + "上下文".repeat(260), "provider", "tiny-model", index.toLong()))
+    }
+
+    repository.sendMessage("conv", "继续")
+
+    val conversation = dao.conversationById("conv")
+    assertTrue(conversation?.contextSummary?.contains("fake response") == true)
+    assertNotNull(conversation?.contextSummaryCutoffMessageId)
+    assertTrue(dao.messagesForConversation("conv").size >= 26)
+    assertTrue(adapter.lastMessages.none { it.id == "m0" })
+  }
+
+  @Test
+  fun groupContextCompressionDoesNotOverwriteGroupSummary() = runTest {
+    val dao = FakeChatDao()
+    val adapter = RecordingAdapter()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = mapOf(ProviderType.TOKENHUB_PROXY to adapter)
+    )
+    dao.upsertProvider(provider("provider", "tiny-model").copy(contextWindowTokensOverride = 4096))
+    val bot = AiBotEntity("bot", "GPT", "provider", "tiny-model", "", "AUTO", true, 1, 1)
+    dao.upsertAiBot(bot)
+    val group = GroupChatRoomEntity(
+      id = "group",
+      title = "研究群",
+      topic = "讨论主题",
+      summary = "原有群摘要",
+      createdAt = 1,
+      updatedAt = 1,
+      isArchived = false,
+      isDeleted = false
+    )
+    dao.upsertGroupChatRoom(group)
+    dao.upsertGroupChatMember(GroupChatMemberEntity("group", "bot", 0, true, 1, 1))
+    repeat(24) { index ->
+      dao.upsertGroupMessage(groupMessage("gm$index", "group", GroupMessageSenderType.USER, null, "我", "群聊长消息 $index " + "上下文".repeat(260), index.toLong()))
+    }
+
+    repository.sendGroupBotTurn("group", "bot")
+
+    val updated = dao.groupChatRoomById("group")
+    assertEquals("原有群摘要", updated?.summary)
+    assertTrue(updated?.contextSummary?.contains("fake response") == true)
+    assertTrue(adapter.lastMessages.none { it.id == "gm0" })
   }
 
   @Test
@@ -1067,6 +1150,30 @@ class ChatRepositoryForkTest {
     errorMessage = null
   )
 
+  private fun groupMessage(
+    id: String,
+    groupId: String,
+    senderType: GroupMessageSenderType,
+    botId: String?,
+    senderName: String,
+    content: String,
+    createdAt: Long
+  ): GroupMessageEntity = GroupMessageEntity(
+    id = id,
+    groupId = groupId,
+    senderType = senderType.name,
+    botId = botId,
+    senderName = senderName,
+    role = if (senderType == GroupMessageSenderType.USER) MessageRole.USER.name else MessageRole.ASSISTANT.name,
+    content = content,
+    status = MessageStatus.COMPLETE.name,
+    providerId = "provider",
+    model = "model",
+    createdAt = createdAt,
+    updatedAt = createdAt,
+    errorMessage = null
+  )
+
   private fun testChatMessage(
     id: String,
     role: MessageRole,
@@ -1190,6 +1297,10 @@ private class FakeSelectionStore : ChatSelectionStore {
     appSettings.value = appSettings.value.copy(webSearchMode = mode)
   }
 
+  override suspend fun setStreamingBubbleMotion(motion: StreamingBubbleMotion) {
+    appSettings.value = appSettings.value.copy(streamingBubbleMotion = motion)
+  }
+
   override suspend fun setAttachmentLimits(maxFileMb: Int, maxPendingMb: Int, maxImageSourceMb: Int) {
     appSettings.value = appSettings.value.copy(
       attachmentMaxFileMb = maxFileMb,
@@ -1295,6 +1406,22 @@ private class FakeChatDao : ChatDao {
 
   override suspend fun touchConversation(id: String, updatedAt: Long) {
     conversations[id]?.let { conversations[id] = it.copy(updatedAt = updatedAt) }
+  }
+
+  override suspend fun updateConversationContextSummary(
+    id: String,
+    summary: String,
+    cutoffMessageId: String?,
+    updatedAt: Long
+  ) {
+    conversations[id]?.let {
+      conversations[id] = it.copy(
+        contextSummary = summary,
+        contextSummaryCutoffMessageId = cutoffMessageId,
+        contextSummaryUpdatedAt = updatedAt,
+        updatedAt = updatedAt
+      )
+    }
   }
 
   override suspend fun setConversationPinned(id: String, isPinned: Boolean, updatedAt: Long) {
@@ -1416,6 +1543,22 @@ private class FakeChatDao : ChatDao {
 
   override suspend fun updateGroupChatSummary(id: String, summary: String, updatedAt: Long) {
     groupRooms[id]?.let { groupRooms[id] = it.copy(summary = summary, updatedAt = updatedAt) }
+  }
+
+  override suspend fun updateGroupContextSummary(
+    id: String,
+    summary: String,
+    cutoffMessageId: String?,
+    updatedAt: Long
+  ) {
+    groupRooms[id]?.let {
+      groupRooms[id] = it.copy(
+        contextSummary = summary,
+        contextSummaryCutoffMessageId = cutoffMessageId,
+        contextSummaryUpdatedAt = updatedAt,
+        updatedAt = updatedAt
+      )
+    }
   }
 
   override suspend fun touchGroupChatRoom(id: String, updatedAt: Long) {

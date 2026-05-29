@@ -21,6 +21,22 @@
 - Planned: vary grouped tool card watermarks by tool type, such as search for web_search and page/file icons for open or web_fetch.
 - Planned: extend image-generation mode with masks/local edit regions, reusable generation parameters, richer image export layouts, and DeepSeek support only if an official image-generation API becomes available.
 - Validation: `:app:testDebugUnitTest`, `:app:compileDebugKotlin`, and `:app:assembleDebug` passed after the GPT image-generation mode changes; `:app:compileDebugKotlin` and `:app:assembleDebug` also passed after the generated-image external-open fix.
+- Done: context capacity is estimated per provider/model and displayed in single-chat and group-chat headers. Provider settings now allow a manual context-window override for custom or proxy models.
+- Done: single-chat and group-chat sends can automatically compress older context into persistent summaries before continuing, while leaving the visible message history unchanged.
+- Done: mobile top bars now keep the title row compact and move group/provider/model/context capacity into a horizontally scrollable metadata strip, avoiding truncation on narrow screens.
+- Done: streaming AI and tool bubbles now show configurable in-progress motion, with breathing borders/status dots for single chat, group chat, and tool cards.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest` passed after the context capacity and auto-compression changes.
+
+## 2026-05-29 Context Capacity Update
+
+- CONTEXT-001: Added Room v15 context fields for provider context-window overrides, single-chat compression summaries, and group-chat compression summaries.
+- CONTEXT-002: Added local approximate token estimation and known model context-window lookup. The UI labels the capacity as approximate and falls back to "unknown" when no window is known.
+- CONTEXT-003: Single chats now build request context from "compressed summary + messages after cutoff", and can auto-compress when estimated usage crosses the safety threshold.
+- CONTEXT-004: Group chats now keep a separate compression summary from the existing group summary, and point/manual/auto bot turns can compress before continuing.
+- CONTEXT-005: Added manual "compress context now" actions in single-chat and group-chat overflow menus.
+- UI-015: Moved long provider/model/context labels out of the constrained title row into a scrollable metadata strip for narrow phone screens.
+- UI-016: Added configurable streaming bubble motion (`standard`, `subtle`, `off`) so partial AI/tool output remains visibly in progress during stream stalls.
+- RISK-014: Context capacity uses local approximate estimation rather than model-specific tokenizers. Keep the "approximate" UI wording and prefer provider overrides for custom/proxy models.
 
 更新时间：2026-05-29
 
