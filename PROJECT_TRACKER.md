@@ -12,6 +12,7 @@
 - Done: GPT image-generation mode adds dedicated IMAGE conversations, Room v13/v14 fields, OpenAI Responses `image_generation` support, Images API `/images/generations` and `/images/edits` support for compatible middlemen, reference-image input, local generated-image attachments, image-mode composer controls for size/quality/count/format/background, and debug raw-response logging.
 - Done: generated-image previews can now open with system apps without crashing; `chat_generated_images` is covered by FileProvider and external open failures show a lightweight toast.
 - Done: provider/network errors now surface clearer Chinese guidance for invalid requests, API keys, permissions, model/Base URL mismatches, rate limits, quota/billing issues, and 5xx upstream failures.
+- Done: large image attachments now keep the original local preview while sending a downscaled/compressed payload to providers; pending upload limits are calculated from the provider payload size.
 - Planned: improve full long-image export for grouped tool cards, structure tool source URLs more explicitly, and consider persistent single-chat turn ids if UI-order grouping is not enough later.
 - Planned: vary grouped tool card watermarks by tool type, such as search for web_search and page/file icons for open or web_fetch.
 - Planned: extend image-generation mode with masks/local edit regions, reusable generation parameters, richer image export layouts, and DeepSeek support only if an official image-generation API becomes available.
@@ -237,7 +238,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 
 | ID | 任务 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
-| NEXT-P1-001 | 图片发送前压缩 | Planned | 大图自动压缩到合理分辨率，保留原图查看 |
+| NEXT-P1-001 | 图片发送前压缩 | Done | 大图导入后保留原图本地预览，并生成最大边 2048px、优先低体积的发送副本；Provider 请求优先使用发送副本 |
 | NEXT-P1-002 | 附件限制设置项 | Planned | 后续允许用户按 provider 或全局调整单文件和总量上限 |
 | NEXT-P1-003 | OpenAI Files API 上传路径 | Planned | 大 PDF/文件不走 Base64，改用 `file_id` |
 | NEXT-P1-004 | 搜索工具卡片细节优化 | Planned | 显示查询词、打开网页 URL、citation URL 的层级关系 |

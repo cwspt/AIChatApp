@@ -32,6 +32,7 @@ import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
@@ -200,6 +201,59 @@ class ProviderAdapterTest {
   }
 
   @Test
+  fun openAiResponsesAdapterUsesCompressedAttachmentPayloadWhenPresent() = runTest {
+    val originalFile = Files.createTempFile("aichat-original-image", ".png").toFile().apply {
+      writeBytes(byteArrayOf(9, 9, 9, 9))
+      deleteOnExit()
+    }
+    val compressedFile = Files.createTempFile("aichat-compressed-image", ".jpg").toFile().apply {
+      writeBytes(byteArrayOf(1, 2, 3, 4))
+      deleteOnExit()
+    }
+    val server = MockWebServer()
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody("event: response.completed\ndata: {\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"total_tokens\":3}}\n\n")
+    )
+    server.start()
+    try {
+      val adapter = OpenAiResponsesAdapter()
+      adapter.streamChat(
+        config = providerConfig(
+          type = ProviderType.OPENAI_RESPONSES,
+          baseUrl = server.url("/v1").toString().trimEnd('/')
+        ),
+        apiKey = "test-key",
+        messages = listOf(
+          userMessage("describe this").copy(
+            attachments = listOf(
+              ChatAttachment(
+                id = "att_image",
+                displayName = "image.png",
+                mimeType = "image/png",
+                sizeBytes = originalFile.length(),
+                localPath = originalFile.absolutePath,
+                transmitLocalPath = compressedFile.absolutePath,
+                transmitMimeType = "image/jpeg",
+                transmitSizeBytes = compressedFile.length()
+              )
+            )
+          )
+        ),
+        options = ChatCompletionOptions(model = "gpt-test")
+      ).toList()
+
+      val requestBody = server.takeRequest().body.readUtf8()
+      assertTrue(requestBody.contains("\"image_url\":\"data:image/jpeg;base64,AQIDBA"))
+      assertFalse(requestBody.contains("data:image/png;base64,CQkJCQ"))
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
   fun openAiResponsesAdapterEmitsHostedWebSearchToolEvents() = runTest {
     val server = MockWebServer()
     server.enqueue(
@@ -293,6 +347,9 @@ class ProviderAdapterTest {
     val imageFile = Files.createTempFile("aichat_reference", ".png").toFile().apply {
       writeBytes(byteArrayOf(1, 2, 3))
     }
+    val compressedFile = Files.createTempFile("aichat_reference_upload", ".jpg").toFile().apply {
+      writeText("compressed-reference")
+    }
     try {
       val adapter = OpenAiResponsesAdapter()
       adapter.generateImages(
@@ -309,7 +366,10 @@ class ProviderAdapterTest {
                 displayName = "reference.png",
                 mimeType = "image/png",
                 sizeBytes = imageFile.length(),
-                localPath = imageFile.absolutePath
+                localPath = imageFile.absolutePath,
+                transmitLocalPath = compressedFile.absolutePath,
+                transmitMimeType = "image/jpeg",
+                transmitSizeBytes = compressedFile.length()
               )
             )
           )
@@ -322,10 +382,12 @@ class ProviderAdapterTest {
       assertEquals("/v1/images/edits", request.path)
       assertTrue(request.getHeader("Content-Type")?.startsWith("multipart/form-data") == true)
       assertTrue(body.contains("name=\"image[]\""))
+      assertTrue(body.contains("compressed-reference"))
       assertTrue(body.contains("name=\"model\""))
       assertTrue(body.contains("gpt-image-2"))
     } finally {
       imageFile.delete()
+      compressedFile.delete()
       server.shutdown()
     }
   }

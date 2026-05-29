@@ -7,6 +7,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
@@ -51,6 +53,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.max
+import kotlin.math.roundToInt
 import java.util.UUID
 
 class ChatViewModel(
@@ -156,7 +160,7 @@ class ChatViewModel(
   fun removePendingAttachment(id: String) {
     localState.update { state ->
       state.pendingAttachments.firstOrNull { it.id == id }?.let { attachment ->
-        runCatching { File(attachment.localPath).delete() }
+        deleteAttachmentFiles(attachment)
       }
       state.copy(pendingAttachments = state.pendingAttachments.filterNot { it.id == id })
     }
@@ -224,7 +228,7 @@ class ChatViewModel(
   fun dismissIncomingShareDraft() {
     localState.update { state ->
       state.incomingShareDraft?.attachments.orEmpty().forEach { attachment ->
-        runCatching { File(attachment.localPath).delete() }
+        deleteAttachmentFiles(attachment)
       }
       state.copy(incomingShareDraft = null)
     }
@@ -432,11 +436,19 @@ class ChatViewModel(
           AttachmentImportInfo(null, null)
         }
       } ?: AttachmentImportInfo(null, null)
-      val mimeType = resolver.getType(uri) ?: "application/octet-stream"
+      val resolvedMimeType = resolver.getType(uri).orEmpty()
+      val guessedMimeType = guessMimeType(info.displayName)
+      val mimeType = when {
+        resolvedMimeType.isBlank() -> guessedMimeType ?: "application/octet-stream"
+        resolvedMimeType == "application/octet-stream" && guessedMimeType?.startsWith("image/") == true -> guessedMimeType
+        else -> resolvedMimeType
+      }
       val id = "att_${UUID.randomUUID().toString().replace("-", "")}"
       val displayName = info.displayName?.takeIf { it.isNotBlank() } ?: "$id.${mimeType.substringAfter('/', "bin")}"
-      if ((info.sizeBytes ?: 0L) > MaxAttachmentBytes) {
-        return@runCatching AttachmentImportAttempt(errorMessage = "${displayName} 超过 ${formatImportLimit(MaxAttachmentBytes)}")
+      val isImageAttachment = isImageAttachment(mimeType, displayName)
+      val maxSourceBytes = if (isImageAttachment) MaxImageSourceBytes else MaxAttachmentBytes
+      if ((info.sizeBytes ?: 0L) > maxSourceBytes) {
+        return@runCatching AttachmentImportAttempt(errorMessage = "${displayName} 超过 ${formatImportLimit(maxSourceBytes)}")
       }
       val dir = File(context.filesDir, "chat_attachments").apply { mkdirs() }
       val safeName = displayName.replace(Regex("""[\\/:*?"<>|]"""), "_")
@@ -445,8 +457,19 @@ class ChatViewModel(
         target.outputStream().use { output -> input.copyTo(output) }
       } ?: return@runCatching AttachmentImportAttempt(errorMessage = "${displayName} 导入失败")
       val actualSize = target.length()
-      if (actualSize > MaxAttachmentBytes) {
+      if (actualSize > maxSourceBytes) {
         runCatching { target.delete() }
+        return@runCatching AttachmentImportAttempt(errorMessage = "${displayName} 超过 ${formatImportLimit(maxSourceBytes)}")
+      }
+      val compressedPayload = if (isImageAttachment) {
+        compressedImagePayload(target, id)
+      } else {
+        null
+      }
+      val payloadSize = compressedPayload?.sizeBytes ?: actualSize
+      if (payloadSize > MaxAttachmentBytes) {
+        runCatching { target.delete() }
+        compressedPayload?.let { payload -> runCatching { payload.file.delete() } }
         return@runCatching AttachmentImportAttempt(errorMessage = "${displayName} 超过 ${formatImportLimit(MaxAttachmentBytes)}")
       }
       AttachmentImportAttempt(
@@ -454,27 +477,125 @@ class ChatViewModel(
           id = id,
           displayName = displayName,
           mimeType = mimeType,
-          sizeBytes = info.sizeBytes ?: actualSize,
-          localPath = target.absolutePath
+          sizeBytes = actualSize,
+          localPath = target.absolutePath,
+          transmitLocalPath = compressedPayload?.file?.absolutePath,
+          transmitMimeType = compressedPayload?.mimeType,
+          transmitSizeBytes = compressedPayload?.sizeBytes
         )
       )
     }.getOrDefault(AttachmentImportAttempt(errorMessage = "附件导入失败"))
+  }
+
+  private fun compressedImagePayload(source: File, id: String): CompressedImagePayload? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(source.absolutePath, bounds)
+    val width = bounds.outWidth
+    val height = bounds.outHeight
+    if (width <= 0 || height <= 0) return null
+    val longestEdge = max(width, height)
+    val shouldCompress = longestEdge > MaxImageUploadEdgePx || source.length() > PreferredImageUploadBytes
+    if (!shouldCompress) return null
+
+    val sampleSize = imageSampleSize(width, height, MaxImageUploadEdgePx)
+    val decoded = BitmapFactory.decodeFile(
+      source.absolutePath,
+      BitmapFactory.Options().apply { inSampleSize = sampleSize }
+    ) ?: return null
+    val scaled = if (max(decoded.width, decoded.height) > MaxImageUploadEdgePx) {
+      val scale = MaxImageUploadEdgePx.toFloat() / max(decoded.width, decoded.height).toFloat()
+      Bitmap.createScaledBitmap(
+        decoded,
+        (decoded.width * scale).roundToInt().coerceAtLeast(1),
+        (decoded.height * scale).roundToInt().coerceAtLeast(1),
+        true
+      )
+    } else {
+      decoded
+    }
+
+    val hasAlpha = scaled.hasAlpha()
+    val format = if (hasAlpha) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
+    val outputMimeType = if (hasAlpha) "image/png" else "image/jpeg"
+    val extension = if (hasAlpha) "png" else "jpg"
+    val output = File(source.parentFile, "${id}_upload.$extension")
+    val qualities = if (format == Bitmap.CompressFormat.JPEG) listOf(86, 78, 70, 62) else listOf(100)
+    qualities.forEach { quality ->
+      output.outputStream().use { stream ->
+        scaled.compress(format, quality, stream)
+      }
+      if (output.length() <= MaxAttachmentBytes || quality == qualities.last()) {
+        if (scaled !== decoded) scaled.recycle()
+        decoded.recycle()
+        return if (output.length() < source.length() || source.length() > MaxAttachmentBytes) {
+          CompressedImagePayload(output, outputMimeType, output.length())
+        } else {
+          runCatching { output.delete() }
+          null
+        }
+      }
+    }
+    if (scaled !== decoded) scaled.recycle()
+    decoded.recycle()
+    runCatching { output.delete() }
+    return null
+  }
+
+  private fun imageSampleSize(width: Int, height: Int, maxEdge: Int): Int {
+    var sampleSize = 1
+    while (max(width / sampleSize, height / sampleSize) > maxEdge * 2) {
+      sampleSize *= 2
+    }
+    return sampleSize
+  }
+
+  private fun isImageAttachment(mimeType: String, displayName: String): Boolean {
+    if (mimeType.startsWith("image/")) return true
+    val lowerName = displayName.lowercase()
+    return lowerName.endsWith(".jpg") ||
+      lowerName.endsWith(".jpeg") ||
+      lowerName.endsWith(".png") ||
+      lowerName.endsWith(".webp") ||
+      lowerName.endsWith(".heic") ||
+      lowerName.endsWith(".heif")
+  }
+
+  private fun guessMimeType(displayName: String?): String? {
+    val lowerName = displayName?.lowercase().orEmpty()
+    return when {
+      lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") -> "image/jpeg"
+      lowerName.endsWith(".png") -> "image/png"
+      lowerName.endsWith(".webp") -> "image/webp"
+      lowerName.endsWith(".heic") -> "image/heic"
+      lowerName.endsWith(".heif") -> "image/heif"
+      lowerName.endsWith(".pdf") -> "application/pdf"
+      lowerName.endsWith(".txt") -> "text/plain"
+      lowerName.endsWith(".md") -> "text/markdown"
+      else -> null
+    }
+  }
+
+  private fun deleteAttachmentFiles(attachment: ChatAttachment) {
+    runCatching { File(attachment.localPath).delete() }
+    attachment.transmitLocalPath
+      ?.takeIf { it.isNotBlank() && it != attachment.localPath }
+      ?.let { path -> runCatching { File(path).delete() } }
   }
 
   private fun appendAttachmentsWithinLimit(
     existing: List<ChatAttachment>,
     incoming: List<ChatAttachment>
   ): AttachmentAppendResult {
-    var totalSize = existing.sumOf { it.sizeBytes }
+    var totalSize = existing.sumOf { it.payloadSizeBytes }
     val accepted = existing.toMutableList()
     var skipped = 0
     incoming.forEach { attachment ->
-      if (totalSize + attachment.sizeBytes <= MaxPendingAttachmentBytes) {
+      if (totalSize + attachment.payloadSizeBytes <= MaxPendingAttachmentBytes) {
         accepted += attachment
-        totalSize += attachment.sizeBytes
+        totalSize += attachment.payloadSizeBytes
       } else {
         skipped += 1
-        runCatching { File(attachment.localPath).delete() }
+        deleteAttachmentFiles(attachment)
       }
     }
     return AttachmentAppendResult(accepted, skipped)
@@ -483,9 +604,9 @@ class ChatViewModel(
   private fun attachmentImportMessage(failedCount: Int, totalCount: Int): String? {
     if (failedCount <= 0) return null
     return if (failedCount == totalCount) {
-      "附件过大或导入失败。单个附件上限 ${formatImportLimit(MaxAttachmentBytes)}，待发送总量上限 ${formatImportLimit(MaxPendingAttachmentBytes)}。"
+      "附件过大或导入失败。单个附件上传上限 ${formatImportLimit(MaxAttachmentBytes)}，图片原图导入上限 ${formatImportLimit(MaxImageSourceBytes)}，待发送总量上限 ${formatImportLimit(MaxPendingAttachmentBytes)}。"
     } else {
-      "已跳过 $failedCount 个过大或导入失败的附件。单个附件上限 ${formatImportLimit(MaxAttachmentBytes)}。"
+      "已跳过 $failedCount 个过大或导入失败的附件。单个附件上传上限 ${formatImportLimit(MaxAttachmentBytes)}，图片原图导入上限 ${formatImportLimit(MaxImageSourceBytes)}。"
     }
   }
 
@@ -569,6 +690,12 @@ class ChatViewModel(
   private data class AttachmentImportAttempt(
     val attachment: ChatAttachment? = null,
     val errorMessage: String? = null
+  )
+
+  private data class CompressedImagePayload(
+    val file: File,
+    val mimeType: String,
+    val sizeBytes: Long
   )
 
   private data class AttachmentAppendResult(
@@ -1568,6 +1695,9 @@ class ChatViewModel(
   companion object {
     private const val MaxAttachmentBytes = 20L * 1024L * 1024L
     private const val MaxPendingAttachmentBytes = 50L * 1024L * 1024L
+    private const val MaxImageSourceBytes = 80L * 1024L * 1024L
+    private const val PreferredImageUploadBytes = 4L * 1024L * 1024L
+    private const val MaxImageUploadEdgePx = 2048
 
     fun factory(
       repository: ChatRepository,

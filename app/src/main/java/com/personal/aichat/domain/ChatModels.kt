@@ -137,10 +137,22 @@ data class ChatAttachment(
   val displayName: String,
   val mimeType: String,
   val sizeBytes: Long,
-  val localPath: String
+  val localPath: String,
+  val transmitLocalPath: String? = null,
+  val transmitMimeType: String? = null,
+  val transmitSizeBytes: Long? = null
 ) {
   val isImage: Boolean
-    get() = mimeType.startsWith("image/")
+    get() = mimeType.startsWith("image/") || transmitMimeType?.startsWith("image/") == true
+
+  val payloadLocalPath: String
+    get() = transmitLocalPath?.takeIf { it.isNotBlank() } ?: localPath
+
+  val payloadMimeType: String
+    get() = transmitMimeType?.takeIf { it.isNotBlank() } ?: mimeType
+
+  val payloadSizeBytes: Long
+    get() = transmitSizeBytes?.takeIf { it > 0L } ?: sizeBytes
 }
 
 data class FavoriteSnippet(

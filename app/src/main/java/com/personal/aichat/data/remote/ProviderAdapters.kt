@@ -294,11 +294,11 @@ class OpenAiResponsesAdapter(
         .addFormDataPart("background", options.background.apiValue)
         .addFormDataPart("output_format", options.outputFormat.apiValue)
       referenceImages.forEach { attachment ->
-        val file = File(attachment.localPath)
+        val file = File(attachment.payloadLocalPath)
         multipart.addFormDataPart(
           "image[]",
           attachment.displayName,
-          file.asRequestBody(attachment.mimeType.toMediaTypeOrNull())
+          file.asRequestBody(attachment.payloadMimeType.toMediaTypeOrNull())
         )
       }
       Request.Builder()
@@ -765,10 +765,10 @@ private fun ChatMessage.toCompatibleContent(): String {
 }
 
 private fun com.personal.aichat.domain.ChatAttachment.toDataUrl(): String? {
-  val file = File(localPath)
+  val file = File(payloadLocalPath)
   if (!file.exists() || !file.isFile) return null
   val encoded = Base64.getEncoder().encodeToString(file.readBytes())
-  return "data:$mimeType;base64,$encoded"
+  return "data:$payloadMimeType;base64,$encoded"
 }
 
 fun defaultAiHttpClient(): OkHttpClient {
