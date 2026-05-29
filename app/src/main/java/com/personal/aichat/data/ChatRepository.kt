@@ -382,6 +382,52 @@ class ChatRepository(
     dao.deleteFavoriteSnippet(favoriteId)
   }
 
+  suspend fun renameFavoriteTag(oldTag: String, newTagInput: String): Int {
+    val cleanOldTag = oldTag.trim().trimStart('#')
+    val cleanNewTag = normalizeTags(newTagInput).firstOrNull() ?: error("新标签不能为空")
+    require(cleanOldTag.isNotBlank()) { "请选择要重命名的标签" }
+    return updateFavoriteTags { tags ->
+      if (tags.none { it.equals(cleanOldTag, ignoreCase = true) }) return@updateFavoriteTags tags
+      tags.map { tag -> if (tag.equals(cleanOldTag, ignoreCase = true)) cleanNewTag else tag }
+        .distinctBy { it.lowercase() }
+    }
+  }
+
+  suspend fun deleteFavoriteTag(tag: String): Int {
+    val cleanTag = tag.trim().trimStart('#')
+    require(cleanTag.isNotBlank()) { "请选择要删除的标签" }
+    return updateFavoriteTags { tags ->
+      tags.filterNot { it.equals(cleanTag, ignoreCase = true) }
+    }
+  }
+
+  private suspend fun updateFavoriteTags(transform: (List<String>) -> List<String>): Int {
+    val favorites = dao.observeFavoriteSnippets().first().map { it.toDomain() }
+    val now = System.currentTimeMillis()
+    var changedCount = 0
+    favorites.forEach { favorite ->
+      val nextTags = transform(favorite.tags).distinctBy { it.lowercase() }
+      if (nextTags != favorite.tags) {
+        val updated = favorite.copy(
+          tags = nextTags,
+          searchText = buildFavoriteSearchText(
+            title = favorite.title,
+            description = favorite.description,
+            tags = nextTags,
+            sourceConversationTitle = favorite.sourceConversationTitle,
+            sourceProviderName = favorite.sourceProviderName,
+            sourceModel = favorite.sourceModel,
+            messages = favorite.messages
+          ),
+          updatedAt = now
+        )
+        dao.upsertFavoriteSnippet(updated.toEntity())
+        changedCount += 1
+      }
+    }
+    return changedCount
+  }
+
   suspend fun conversationById(conversationId: String): ChatConversation? {
     return dao.conversationById(conversationId)?.toDomain()
   }

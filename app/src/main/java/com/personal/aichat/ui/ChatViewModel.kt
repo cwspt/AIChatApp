@@ -1362,6 +1362,30 @@ class ChatViewModel(
     }
   }
 
+  fun renameFavoriteTag(oldTag: String, newTag: String) {
+    viewModelScope.launch {
+      runCatching {
+        repository.renameFavoriteTag(oldTag, newTag)
+      }.onSuccess { count ->
+        localState.update { it.copy(error = if (count > 0) "标签已更新" else "没有收藏使用该标签") }
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "重命名标签失败") }
+      }
+    }
+  }
+
+  fun deleteFavoriteTag(tag: String) {
+    viewModelScope.launch {
+      runCatching {
+        repository.deleteFavoriteTag(tag)
+      }.onSuccess { count ->
+        localState.update { it.copy(error = if (count > 0) "标签已删除" else "没有收藏使用该标签") }
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "删除标签失败") }
+      }
+    }
+  }
+
   fun copyFavoriteSnippetText(favoriteId: String, context: Context) {
     viewModelScope.launch {
       val text = repository.favoriteSnippetShareText(favoriteId)

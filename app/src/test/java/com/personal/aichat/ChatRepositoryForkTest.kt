@@ -318,6 +318,39 @@ class ChatRepositoryForkTest {
   }
 
   @Test
+  fun favoriteTagManagementRenamesMergesAndDeletesTags() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "model-a"))
+    dao.upsertConversation(conversation("conv", providerId = "provider", model = "model-a"))
+    dao.upsertMessage(message("a1", "conv", MessageRole.ASSISTANT, "answer one", "provider", "model-a", 1))
+    dao.upsertMessage(message("a2", "conv", MessageRole.ASSISTANT, "answer two", "provider", "model-a", 2))
+    val first = repository.createFavoriteSnippet("conv", setOf("a1"), "Saved one", "", "Work kotlin")
+    val second = repository.createFavoriteSnippet("conv", setOf("a2"), "Saved two", "", "Archive")
+
+    val renamed = repository.renameFavoriteTag("work", "Archive")
+    val firstAfterRename = repository.favoriteSnippetById(first.id)!!
+    val secondAfterRename = repository.favoriteSnippetById(second.id)!!
+
+    assertEquals(1, renamed)
+    assertEquals(listOf("Archive", "kotlin"), firstAfterRename.tags)
+    assertEquals(listOf("Archive"), secondAfterRename.tags)
+    assertTrue(firstAfterRename.searchText.contains("archive"))
+    assertTrue(!firstAfterRename.searchText.contains("work"))
+
+    val deleted = repository.deleteFavoriteTag("archive")
+
+    assertEquals(2, deleted)
+    assertEquals(listOf("kotlin"), repository.favoriteSnippetById(first.id)!!.tags)
+    assertEquals(emptyList<String>(), repository.favoriteSnippetById(second.id)!!.tags)
+  }
+
+  @Test
   fun appendMessagesToFavoriteMergesSortsAndDeduplicatesSnapshots() = runTest {
     val dao = FakeChatDao()
     val repository = ChatRepository(

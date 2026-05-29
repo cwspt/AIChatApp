@@ -637,6 +637,8 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onCopyText = { viewModel.copyFavoriteSnippetText(it, context) },
         onEdit = { editingFavorite = it },
         onDelete = viewModel::deleteFavoriteSnippet,
+        onRenameTag = viewModel::renameFavoriteTag,
+        onDeleteTag = viewModel::deleteFavoriteTag,
         onRemoveMessage = viewModel::removeMessageFromFavorite,
         onJumpToSource = viewModel::jumpToFavoriteSource
       )
@@ -1816,15 +1818,26 @@ private fun FavoriteSnippetsPage(
   onCopyText: (String) -> Unit,
   onEdit: (FavoriteSnippet) -> Unit,
   onDelete: (String) -> Unit,
+  onRenameTag: (String, String) -> Unit,
+  onDeleteTag: (String) -> Unit,
   onRemoveMessage: (String, String) -> Unit,
   onJumpToSource: (FavoriteSnippet) -> Unit
 ) {
   var query by remember { mutableStateOf("") }
   var tagFilter by remember { mutableStateOf<String?>(null) }
   var selectedFavoriteId by remember { mutableStateOf<String?>(null) }
+  var tagManagerOpen by remember { mutableStateOf(false) }
   val selectedFavorite = favorites.firstOrNull { it.id == selectedFavoriteId }
   val allTags = remember(favorites) {
     favorites.flatMap { it.tags }.distinctBy { it.lowercase() }.sorted()
+  }
+  val tagSummaries = remember(favorites, allTags) {
+    allTags.map { tag ->
+      FavoriteTagSummary(
+        tag = tag,
+        count = favorites.count { favorite -> favorite.tags.any { it.equals(tag, ignoreCase = true) } }
+      )
+    }
   }
   val normalizedQuery = query.trim().lowercase()
   val filtered = favorites.filter { favorite ->
@@ -1867,6 +1880,13 @@ private fun FavoriteSnippetsPage(
           Icon(Icons.Outlined.Bookmark, contentDescription = null)
           Spacer(Modifier.width(8.dp))
           Text("收藏夹", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+          if (allTags.isNotEmpty()) {
+            TextButton(onClick = { tagManagerOpen = true }) {
+              Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(4.dp))
+              Text("标签")
+            }
+          }
           IconButton(onClick = onDismiss) {
             Icon(Icons.Outlined.Close, contentDescription = "关闭收藏夹")
           }
@@ -1919,6 +1939,153 @@ private fun FavoriteSnippetsPage(
       }
     }
   }
+  if (tagManagerOpen) {
+    FavoriteTagManagerDialog(
+      tags = tagSummaries,
+      onDismiss = { tagManagerOpen = false },
+      onRename = { oldTag, newTag ->
+        onRenameTag(oldTag, newTag)
+        if (tagFilter.equals(oldTag, ignoreCase = true)) {
+          tagFilter = newTag.trim().trimStart('#').takeIf { it.isNotBlank() }
+        }
+      },
+      onDelete = { tag ->
+        onDeleteTag(tag)
+        if (tagFilter.equals(tag, ignoreCase = true)) tagFilter = null
+      }
+    )
+  }
+}
+
+private data class FavoriteTagSummary(
+  val tag: String,
+  val count: Int
+)
+
+@Composable
+private fun FavoriteTagManagerDialog(
+  tags: List<FavoriteTagSummary>,
+  onDismiss: () -> Unit,
+  onRename: (String, String) -> Unit,
+  onDelete: (String) -> Unit
+) {
+  var editingTag by remember { mutableStateOf<String?>(null) }
+  var deletingTag by remember { mutableStateOf<String?>(null) }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("管理收藏标签") },
+    text = {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .heightIn(max = 420.dp)
+          .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+      ) {
+        Text(
+          "重命名为已有标签会自动合并；删除标签只会移除分类，不会删除收藏内容。",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        tags.forEach { summary ->
+          Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(8.dp))
+              Column(modifier = Modifier.weight(1f)) {
+                Text(summary.tag, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${summary.count} 个收藏", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              }
+              TextButton(onClick = { editingTag = summary.tag }) {
+                Text("重命名")
+              }
+              TextButton(onClick = { deletingTag = summary.tag }) {
+                Text("删除")
+              }
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {},
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("关闭")
+      }
+    }
+  )
+  editingTag?.let { tag ->
+    FavoriteTagRenameDialog(
+      tag = tag,
+      onDismiss = { editingTag = null },
+      onSave = { newTag ->
+        onRename(tag, newTag)
+        editingTag = null
+      }
+    )
+  }
+  deletingTag?.let { tag ->
+    AlertDialog(
+      onDismissRequest = { deletingTag = null },
+      title = { Text("删除标签") },
+      text = { Text("将从所有收藏中移除 #$tag。收藏内容不会被删除。") },
+      confirmButton = {
+        Button(onClick = {
+          onDelete(tag)
+          deletingTag = null
+        }) {
+          Text("删除")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { deletingTag = null }) {
+          Text("取消")
+        }
+      }
+    )
+  }
+}
+
+@Composable
+private fun FavoriteTagRenameDialog(
+  tag: String,
+  onDismiss: () -> Unit,
+  onSave: (String) -> Unit
+) {
+  var value by remember(tag) { mutableStateOf(tag) }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("重命名标签") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("填写已有标签名会合并到该标签。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedTextField(
+          value = value,
+          onValueChange = { value = it },
+          label = { Text("标签名") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth()
+        )
+      }
+    },
+    confirmButton = {
+      Button(onClick = { onSave(value) }, enabled = value.trim().trimStart('#').isNotBlank()) {
+        Text("保存")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("取消")
+      }
+    }
+  )
 }
 
 @Composable
