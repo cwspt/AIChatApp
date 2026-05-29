@@ -8,6 +8,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.OpenableColumns
 import com.personal.aichat.AppForegroundTracker
 import com.personal.aichat.ChatGenerationService
@@ -17,6 +18,7 @@ import com.personal.aichat.domain.ChatAttachment
 import com.personal.aichat.domain.AiBot
 import com.personal.aichat.domain.AppThemeMode
 import com.personal.aichat.domain.AppThemePalette
+import com.personal.aichat.domain.ChatBackgroundPreset
 import com.personal.aichat.domain.ChatConversation
 import com.personal.aichat.domain.ChatConversationGroup
 import com.personal.aichat.domain.ChatProviderConfig
@@ -171,6 +173,105 @@ class ChatViewModel(
         messageSelectionMode = selected.isNotEmpty() || state.messageSelectionMode,
         selectedMessageIds = selected
       )
+    }
+  }
+
+  fun handleIncomingShareIntent(intent: Intent?) {
+    val context = appContext ?: return
+    val payload = intent?.toIncomingSharePayload() ?: return
+    viewModelScope.launch {
+      val imported = payload.uris.mapNotNull { uri -> importAttachment(context, uri) }
+      val failedCount = payload.uris.size - imported.size
+      if (payload.text.isBlank() && imported.isEmpty()) {
+        if (failedCount > 0) {
+          localState.update { it.copy(error = "分享文件导入失败") }
+        }
+        return@launch
+      }
+      localState.update {
+        it.copy(
+          incomingShareDraft = IncomingShareDraft(
+            text = payload.text,
+            attachments = imported,
+            failedCount = failedCount,
+            open = true
+          ),
+          favoritePageOpen = false,
+          settingsPageOpen = false,
+          providerManagerOpen = false,
+          newConversationPickerOpen = false,
+          forkTargetMessageId = null
+        )
+      }
+    }
+  }
+
+  fun dismissIncomingShareDraft() {
+    localState.update { state ->
+      state.incomingShareDraft?.attachments.orEmpty().forEach { attachment ->
+        runCatching { File(attachment.localPath).delete() }
+      }
+      state.copy(incomingShareDraft = null)
+    }
+  }
+
+  fun applyIncomingShareToConversation(conversationId: String) {
+    val state = uiState.value
+    val draft = state.incomingShareDraft?.takeIf { it.hasContent } ?: return
+    val conversation = state.conversations.firstOrNull { it.id == conversationId } ?: return
+    val provider = state.providers.firstOrNull { it.id == conversation.providerId }
+    if (draft.hasAttachments && provider?.supportsAttachments != true) {
+      localState.update { it.copy(error = "该对话的模型不支持附件") }
+      return
+    }
+    viewModelScope.launch {
+      preferencesRepository.setSelectedConversation(conversation.id)
+      preferencesRepository.setSelectedProvider(conversation.providerId)
+      localState.update {
+        it.copy(
+          incomingShareDraft = null,
+          groupChatPageOpen = false,
+          selectedGroupChatId = null,
+          input = appendDraftText(it.input, draft.text),
+          pendingAttachments = it.pendingAttachments + draft.attachments
+        )
+      }
+    }
+  }
+
+  fun applyIncomingShareToGroup(groupId: String) {
+    val draft = uiState.value.incomingShareDraft?.takeIf { it.hasContent } ?: return
+    localState.update {
+      it.copy(
+        incomingShareDraft = null,
+        groupChatPageOpen = true,
+        selectedGroupChatId = groupId,
+        groupInput = appendDraftText(it.groupInput, draft.text),
+        pendingAttachments = it.pendingAttachments + draft.attachments
+      )
+    }
+  }
+
+  fun createConversationForIncomingShare(providerId: String) {
+    val draft = uiState.value.incomingShareDraft?.takeIf { it.hasContent } ?: return
+    val provider = uiState.value.providers.firstOrNull { it.id == providerId } ?: return
+    if (draft.hasAttachments && !provider.supportsAttachments) {
+      localState.update { it.copy(error = "该模型不支持附件") }
+      return
+    }
+    viewModelScope.launch {
+      val conversation = repository.createConversation(provider.id, provider.defaultModel)
+      preferencesRepository.setSelectedProvider(provider.id)
+      preferencesRepository.setSelectedConversation(conversation.id)
+      localState.update {
+        it.copy(
+          incomingShareDraft = null,
+          groupChatPageOpen = false,
+          selectedGroupChatId = null,
+          input = appendDraftText(it.input, draft.text),
+          pendingAttachments = it.pendingAttachments + draft.attachments
+        )
+      }
     }
   }
 
@@ -377,6 +478,60 @@ class ChatViewModel(
     val displayName: String?,
     val sizeBytes: Long?
   )
+
+  private data class IncomingSharePayload(
+    val text: String,
+    val uris: List<Uri>
+  )
+
+  private fun Intent.toIncomingSharePayload(): IncomingSharePayload? {
+    val action = action ?: return null
+    if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) return null
+    val uris = linkedSetOf<Uri>()
+    clipData?.let { data ->
+      for (index in 0 until data.itemCount) {
+        data.getItemAt(index).uri?.let { uris += it }
+      }
+    }
+    streamUriExtra()?.let { uris += it }
+    streamUriListExtra()?.let { uris += it }
+    val subject = getStringExtra(Intent.EXTRA_SUBJECT).orEmpty().trim()
+    val extraText = getStringExtra(Intent.EXTRA_TEXT).orEmpty().trim()
+    val text = listOf(subject, extraText)
+      .filter { it.isNotBlank() }
+      .distinct()
+      .joinToString("\n\n")
+    if (text.isBlank() && uris.isEmpty()) return null
+    return IncomingSharePayload(text = text, uris = uris.toList())
+  }
+
+  private fun appendDraftText(current: TextFieldValue, incoming: String): TextFieldValue {
+    if (incoming.isBlank()) return current
+    val nextText = if (current.text.isBlank()) {
+      incoming
+    } else {
+      "${current.text.trimEnd()}\n\n$incoming"
+    }
+    return TextFieldValue(nextText, selection = TextRange(nextText.length))
+  }
+
+  private fun Intent.streamUriExtra(): Uri? {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+    } else {
+      @Suppress("DEPRECATION")
+      getParcelableExtra(Intent.EXTRA_STREAM)
+    }
+  }
+
+  private fun Intent.streamUriListExtra(): ArrayList<Uri>? {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+    } else {
+      @Suppress("DEPRECATION")
+      getParcelableArrayListExtra(Intent.EXTRA_STREAM)
+    }
+  }
 
   fun selectConversation(id: String) {
     viewModelScope.launch {
@@ -691,7 +846,12 @@ class ChatViewModel(
   }
 
   fun closeNewGroupChatDialog() {
-    localState.update { it.copy(newGroupChatDialogOpen = false) }
+    localState.update { it.copy(newGroupChatDialogOpen = false, editingGroupChatId = null) }
+  }
+
+  fun openEditGroupChatDialog() {
+    val groupId = uiState.value.selectedGroupChatId ?: return
+    localState.update { it.copy(editingGroupChatId = groupId) }
   }
 
   fun createGroupChat(title: String, topic: String, botIds: List<String>) {
@@ -755,6 +915,42 @@ class ChatViewModel(
           summarize = summarize,
           trigger = if (continueAutoPlay) GroupTurnTrigger.AUTO else GroupTurnTrigger.MANUAL
         ) == MessageStatus.COMPLETE
+    }
+  }
+
+  fun updateGroupChat(groupId: String, title: String, topic: String, botIds: List<String>) {
+    viewModelScope.launch {
+      runCatching {
+        repository.updateGroupChat(groupId, title, topic, botIds)
+      }.onSuccess {
+        localState.update { it.copy(editingGroupChatId = null) }
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "保存群聊失败") }
+      }
+    }
+  }
+
+  fun deleteSelectedGroupChat() {
+    val groupId = uiState.value.selectedGroupChatId ?: return
+    viewModelScope.launch {
+      runCatching {
+        pauseGroupAutoPlay(groupId)
+        repository.deleteGroupChat(groupId)
+      }.onSuccess {
+        val fallbackId = uiState.value.groupChats.firstOrNull { it.id != groupId }?.id
+        localState.update {
+          it.copy(
+            selectedGroupChatId = fallbackId,
+            groupChatPageOpen = fallbackId != null,
+            groupMessages = emptyList(),
+            groupMembers = emptyList(),
+            selectedMessageIds = emptySet(),
+            messageSelectionMode = false
+          )
+        }
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "删除群聊失败") }
+      }
     }
   }
 
@@ -1070,6 +1266,57 @@ class ChatViewModel(
   fun setWebSearchMode(mode: WebSearchMode) {
     viewModelScope.launch {
       preferencesRepository.setWebSearchMode(mode)
+    }
+  }
+
+  fun saveBackgroundPreset(preset: ChatBackgroundPreset?, title: String, content: String) {
+    val cleanTitle = title.trim().ifBlank { "未命名背景" }
+    val cleanContent = content.trim()
+    if (cleanContent.isBlank()) {
+      localState.update { it.copy(error = "背景内容不能为空") }
+      return
+    }
+    viewModelScope.launch {
+      val current = uiState.value.appSettings.backgroundPresets
+      val now = System.currentTimeMillis()
+      val next = if (preset == null) {
+        current + ChatBackgroundPreset(
+          id = "bg_${UUID.randomUUID().toString().replace("-", "")}",
+          title = cleanTitle,
+          content = cleanContent,
+          sortOrder = current.size,
+          createdAt = now,
+          updatedAt = now
+        )
+      } else {
+        current.map {
+          if (it.id == preset.id) {
+            it.copy(title = cleanTitle, content = cleanContent, updatedAt = now)
+          } else {
+            it
+          }
+        }
+      }
+      preferencesRepository.setBackgroundPresets(next)
+    }
+  }
+
+  fun deleteBackgroundPreset(presetId: String) {
+    viewModelScope.launch {
+      preferencesRepository.setBackgroundPresets(uiState.value.appSettings.backgroundPresets.filterNot { it.id == presetId })
+    }
+  }
+
+  fun moveBackgroundPreset(presetId: String, direction: Int) {
+    val current = uiState.value.appSettings.backgroundPresets.sortedBy { it.sortOrder }
+    val index = current.indexOfFirst { it.id == presetId }
+    val target = (index + direction).coerceIn(0, current.lastIndex)
+    if (index < 0 || target == index) return
+    val mutable = current.toMutableList()
+    val item = mutable.removeAt(index)
+    mutable.add(target, item)
+    viewModelScope.launch {
+      preferencesRepository.setBackgroundPresets(mutable.mapIndexed { order, preset -> preset.copy(sortOrder = order) })
     }
   }
 

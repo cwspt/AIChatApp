@@ -43,14 +43,14 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | DeepSeek / OpenAI-compatible | Done | 92% | 支持 Chat Completions 流式、usage、函数式 web_search、DSML open/web_fetch 工具回传 |
 | 联网搜索 | Done | 92% | OpenAI hosted web_search + compatible function calling + 官方 DeepSeek 搜索结果 + DuckDuckGo/Bing fallback |
 | 工具调用 UI | Done | 86% | 工具调用独立卡片、可折叠、显示查询词和 URL；群聊同轮工具调用已聚合展示 |
-| 多模态附件 | Done | 75% | Provider 级附件开关、图片/文件选择、拍照、气泡附件展示、图片 app 内预览 |
-| 设置页 | Done | 88% | 独立设置页，支持主题色、夜间模式、字体、debug log、搜索模式、配置导入导出、Provider 删除/改绑 |
+| 多模态附件 | Done | 82% | Provider 级附件开关、图片/文件选择、拍照、系统分享导入、气泡附件展示、图片 app 内预览 |
+| 设置页 | Done | 90% | 独立设置页，支持主题色、夜间模式、字体、debug log、搜索模式、背景预设、配置导入导出、Provider 删除/改绑 |
 | 聊天 UI | In Progress | 88% | 顶栏压缩、输入框修复、自动追踪滚动、选择模式、Markdown 表格与分隔线、长 AI 气泡侧边跳转和浮动操作已优化 |
 | 会话列表 | In Progress | 85% | 抽屉、折叠文件夹、重命名、日期分组、创建/更新时间显示已实现 |
 | 成果收藏 | Done | 85% | 支持收藏单条/多条消息为片段，保存快照、来源、标题、标签、描述，并可搜索、查看、追加、移除、分享 |
-| 多 AI 群聊 | Done | 88% | 新增常驻 AI 机器人、独立群聊表、手动点名、播放器式轮流发言、群摘要、机器人颜色、历史气泡折叠、工具消息聚合和基础 UI |
+| 多 AI 群聊 | Done | 91% | 新增常驻 AI 机器人、独立群聊表、手动点名、编辑/删除、播放器式轮流发言、群摘要、机器人颜色、历史气泡折叠、工具消息聚合和基础 UI |
 | 后台生成 | Done | 80% | 前台服务保活，后台完成后通知 |
-| 分享导出 | In Progress | 80% | 文本、Markdown 文件、长图、单气泡分享、群聊消息分享和长气泡浮动分享入口已实现，超长内容仍需优化 |
+| 分享导出 | In Progress | 84% | 文本、Markdown 文件、长图、单气泡分享、群聊消息分享、长气泡浮动分享入口和系统分享接入已实现，超长内容仍需优化 |
 | 自动化测试 | In Progress | 76% | Provider adapter、fork、附件请求体、web_search、收藏片段、多 AI 群聊仓库链路、Provider 删除/改绑、群聊播放器和长气泡导航逻辑已有单测 |
 | CI / Release | Done | 90% | Jenkins 本地 release pipeline 和签名配置已接入 |
 
@@ -109,8 +109,10 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | ATTACH-006 | 用户气泡展示附件 | Done | P1 | 气泡内显示附件列表 |
 | ATTACH-007 | 图片缩略图和 app 内预览 | Done | P1 | 图片附件显示缩略图，点击弹窗放大 |
 | ATTACH-008 | provider 级附件开关 | Done | P1 | DeepSeek 默认关闭，OpenAI/TokenHub 默认开启 |
-| ATTACH-009 | 大文件和图片压缩策略 | Planned | P1 | 需要限制大小、压缩图片、超大文件改走 Files API |
-| ATTACH-010 | PDF/文本文件 app 内预览 | Planned | P2 | 当前非图片文件走系统打开 |
+| ATTACH-009 | Android 系统分享导入 | Done | P1 | App 可作为系统分享目标，支持文本、单文件、多文件导入为待发送草稿 |
+| ATTACH-010 | 分享目标选择 | Done | P1 | 分享进入后可选已有单聊、已有群聊或快速新建单聊，不自动发送 |
+| ATTACH-011 | 大文件和图片压缩策略 | Planned | P1 | 需要限制大小、压缩图片、超大文件改走 Files API |
+| ATTACH-012 | PDF/文本文件 app 内预览 | Planned | P2 | 当前非图片文件走系统打开 |
 
 ### 4.5 设置、主题和配置导入导出
 
@@ -122,7 +124,8 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | SETTINGS-004 | 字体大小调整 | Done | P1 | 设置中支持字体缩放 |
 | SETTINGS-005 | Provider 配置文本导入导出 | Done | P1 | JSON 文本包含 provider 字段和 key |
 | SETTINGS-006 | Provider 删除和机器人改绑 | Done | P1 | 配置管理中可删除无依赖 Provider；有依赖时选择目标配置批量改绑后删除 |
-| SETTINGS-007 | Provider 配置二维码导入导出 | Planned | P2 | 复杂度较高，第一版暂缓 |
+| SETTINGS-007 | 聊天背景预设管理 | Done | P1 | 设置页可新增、编辑、删除、上移、下移背景预设，供群聊主题快速插入 |
+| SETTINGS-008 | Provider 配置二维码导入导出 | Planned | P2 | 复杂度较高，第一版暂缓 |
 
 ### 4.6 聊天 UI 和交互
 
@@ -190,6 +193,8 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | GROUP-017 | 群聊发言轮次标记 | Done | P1 | BOT 气泡显示自动第几轮第几个发言、点名第几次发言或总结发言标记 |
 | GROUP-018 | 群聊工具调用聚合和顺序 | Done | P1 | 同一轮工具调用聚合为一个可折叠工具气泡，并排在对应正文气泡之前 |
 | GROUP-019 | 群聊多选、收藏和分享 | Done | P1 | 群聊支持多选、范围选择、收藏选中消息、追加收藏、文本分享和长图分享入口 |
+| GROUP-020 | 群聊编辑和删除 | Done | P1 | 群聊三点菜单可编辑标题、主题、成员机器人，删除使用软删除且不影响历史消息表 |
+| GROUP-021 | 群聊背景预设插入 | Done | P1 | 新建/编辑群聊时可选择设置页维护的背景预设并插入到主题文本框 |
 
 ## 5. 已知风险
 
@@ -228,6 +233,9 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-011 | 群聊真机回归 | Planned | 真机验证新建机器人、创建群聊、点名/播放器发言、搜索工具调用、附件上下文和切换页面不中断 |
 | NEXT-P1-012 | 群聊导出增强 | Planned | 群聊可导出文本/Markdown/长图，群消息可生成长图分享 |
 | NEXT-P1-013 | 长气泡侧边按钮真机体验回归 | Planned | 验证单聊/群聊长气泡上下跳转、浮动三点菜单、菜单展开不自动消失、与滚动条和回到底部按钮不重叠 |
+| NEXT-P1-014 | 系统分享真机回归 | Planned | 验证相册、文件管理器、浏览器分享到 App；覆盖单文件、多文件、纯文本、文件加文本说明和 App 前台分享 |
+| NEXT-P1-015 | 分享目标页搜索 | Planned | 分享目标较多时可搜索单聊、群聊和 Provider |
+| NEXT-P1-016 | 背景预设真机回归 | Planned | 验证设置页增改删排序、新建/编辑群聊插入预设、删除预设后已保存群聊主题不变 |
 
 ### 6.2 P2 / P3
 
@@ -246,6 +254,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P2-011 | 群聊播放器增强 | Planned | 支持有限轮数、每轮间隔、按群聊保存偏好和失败后重试策略 |
 | NEXT-P2-012 | 机器人头像和颜色 | Planned | 群聊气泡按机器人显示头像、颜色和可扫描身份标记 |
 | NEXT-P2-013 | 群摘要自动滚动更新 | Planned | 长讨论自动或半自动更新摘要，避免上下文无限增长 |
+| NEXT-P2-014 | 背景预设导入导出和分类搜索 | Planned | 背景预设支持 JSON 导入导出、分类、关键词搜索和按群聊保存常用组合 |
 | NEXT-P3-001 | Anthropic adapter | Planned | Claude Messages API 文本流式对话 |
 | NEXT-P3-002 | Gemini adapter | Planned | Gemini GenerateContent 文本和多模态对话 |
 | NEXT-P3-003 | 对话 PDF 导出 | Planned | 支持完整对话导出 PDF |

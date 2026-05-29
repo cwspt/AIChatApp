@@ -463,6 +463,32 @@ class ChatRepository(
     dao.updateGroupChatRoomMeta(groupId, title.trim().ifBlank { "AI 群聊" }, topic.trim(), System.currentTimeMillis())
   }
 
+  suspend fun updateGroupChat(groupId: String, title: String, topic: String, botIds: List<String>) {
+    require(botIds.isNotEmpty()) { "请至少选择一个机器人" }
+    val room = dao.groupChatRoomById(groupId) ?: error("群聊不存在")
+    val now = System.currentTimeMillis()
+    dao.updateGroupChatRoomMeta(room.id, title.trim().ifBlank { "AI 群聊" }, topic.trim(), now)
+    val selectedBotIds = botIds.distinct()
+    val existingByBotId = dao.allGroupChatMembers(room.id).associateBy { it.botId }
+    selectedBotIds.forEachIndexed { index, botId ->
+      val bot = dao.aiBotById(botId) ?: return@forEachIndexed
+      val existing = existingByBotId[bot.id]
+      dao.upsertGroupChatMember(
+        GroupChatMemberEntity(
+          groupId = room.id,
+          botId = bot.id,
+          sortOrder = index,
+          enabled = true,
+          createdAt = existing?.createdAt ?: now,
+          updatedAt = now
+        )
+      )
+    }
+    existingByBotId.keys
+      .filter { it !in selectedBotIds }
+      .forEach { botId -> dao.removeGroupChatMember(room.id, botId, now) }
+  }
+
   suspend fun addBotToGroup(groupId: String, botId: String) {
     val now = System.currentTimeMillis()
     val current = dao.groupChatMembers(groupId)

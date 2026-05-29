@@ -138,6 +138,7 @@ import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import com.personal.aichat.domain.ChatAttachment
 import com.personal.aichat.domain.AiBot
+import com.personal.aichat.domain.ChatBackgroundPreset
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatConversation
 import com.personal.aichat.domain.ChatProviderConfig
@@ -165,8 +166,14 @@ private data class GroupChatDialogDraft(
   val title: String,
   val topic: String,
   val selectedBotIds: Set<String>,
-  val copyMode: Boolean
+  val mode: GroupChatDialogMode
 )
+
+private enum class GroupChatDialogMode {
+  CREATE,
+  EDIT,
+  COPY
+}
 
 private data class BotBubblePalette(
   val key: String,
@@ -392,6 +399,8 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onSummarize = { viewModel.sendGroupBotTurn(it, summarize = true) },
         onToggleAutoPlay = viewModel::toggleGroupAutoPlay,
         onStop = viewModel::stopGroupGenerating,
+        onEditGroup = viewModel::openEditGroupChatDialog,
+        onDeleteGroup = viewModel::deleteSelectedGroupChat,
         onFavoriteMessage = { favoriteDraftGroupMessageIds = setOf(it) },
         selectedMessageIds = state.selectedMessageIds,
         selectionMode = state.messageSelectionMode,
@@ -421,7 +430,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
               title = "${group.title.ifBlank { "AI 群聊" }} 副本",
               topic = group.topic,
               selectedBotIds = state.groupMembers.map { it.botId }.toSet(),
-              copyMode = true
+              mode = GroupChatDialogMode.COPY
             )
           }
         }
@@ -461,7 +470,10 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onWebSearchMode = viewModel::setWebSearchMode,
         onExportProviderConfigs = { viewModel.exportProviderConfigsText(context) },
         onImportProviderConfigs = viewModel::importProviderConfigsText,
-        onOpenBotManager = viewModel::openBotManager
+        onOpenBotManager = viewModel::openBotManager,
+        onSaveBackgroundPreset = viewModel::saveBackgroundPreset,
+        onDeleteBackgroundPreset = viewModel::deleteBackgroundPreset,
+        onMoveBackgroundPreset = viewModel::moveBackgroundPreset
       )
     }
 
@@ -510,6 +522,18 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
       )
     }
 
+    state.incomingShareDraft?.takeIf { it.open }?.let { draft ->
+      IncomingShareTargetDialog(
+        state = state,
+        draft = draft,
+        onDismiss = viewModel::dismissIncomingShareDraft,
+        onSelectConversation = viewModel::applyIncomingShareToConversation,
+        onSelectGroup = viewModel::applyIncomingShareToGroup,
+        onCreateConversation = viewModel::createConversationForIncomingShare,
+        onOpenAttachment = openAttachmentInApp
+      )
+    }
+
     if (drawerOpen) {
       ConversationDrawer(
         state = state,
@@ -543,12 +567,26 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
       )
     }
 
-    if (state.newGroupChatDialogOpen || groupChatDialogDraft != null) {
-      val draft = groupChatDialogDraft
+    if (state.newGroupChatDialogOpen || state.editingGroupChatId != null || groupChatDialogDraft != null) {
+      val editingGroup = state.editingGroupChatId?.let { id -> state.groupChats.firstOrNull { it.id == id } }
+      val draft = groupChatDialogDraft ?: editingGroup?.let { group ->
+        GroupChatDialogDraft(
+          title = group.title,
+          topic = group.topic,
+          selectedBotIds = state.groupMembers.filter { it.groupId == group.id }.map { it.botId }.toSet(),
+          mode = GroupChatDialogMode.EDIT
+        )
+      }
+      val mode = draft?.mode ?: GroupChatDialogMode.CREATE
       NewGroupChatDialog(
         bots = state.aiBots.filter { it.enabled },
-        title = if (draft?.copyMode == true) "复制 AI 群聊" else "新建 AI 群聊",
-        confirmText = if (draft?.copyMode == true) "创建副本" else "创建",
+        backgroundPresets = state.appSettings.backgroundPresets,
+        title = when (mode) {
+          GroupChatDialogMode.EDIT -> "编辑 AI 群聊"
+          GroupChatDialogMode.COPY -> "复制 AI 群聊"
+          GroupChatDialogMode.CREATE -> "新建 AI 群聊"
+        },
+        confirmText = if (mode == GroupChatDialogMode.EDIT) "保存" else if (mode == GroupChatDialogMode.COPY) "创建副本" else "创建",
         initialTitle = draft?.title.orEmpty(),
         initialTopic = draft?.topic.orEmpty(),
         initialSelectedBotIds = draft?.selectedBotIds.orEmpty(),
@@ -558,7 +596,11 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         },
         onCreate = { title, topic, botIds ->
           groupChatDialogDraft = null
-          viewModel.createGroupChat(title, topic, botIds)
+          if (mode == GroupChatDialogMode.EDIT && editingGroup != null) {
+            viewModel.updateGroupChat(editingGroup.id, title, topic, botIds)
+          } else {
+            viewModel.createGroupChat(title, topic, botIds)
+          }
         }
       )
     }
@@ -2046,6 +2088,8 @@ private fun GroupChatPage(
   onSummarize: (String) -> Unit,
   onToggleAutoPlay: () -> Unit,
   onStop: () -> Unit,
+  onEditGroup: () -> Unit,
+  onDeleteGroup: () -> Unit,
   onFavoriteMessage: (String) -> Unit,
   selectedMessageIds: Set<String>,
   selectionMode: Boolean,
@@ -2126,6 +2170,8 @@ private fun GroupChatPage(
             onShareSelectedImage = onShareSelectedImage,
             onFavoriteSelected = onFavoriteSelected,
             onAppendSelectedToFavorite = onAppendSelectedToFavorite,
+            onEditGroup = onEditGroup,
+            onDeleteGroup = onDeleteGroup,
             onCopyGroup = onCopyGroup
           )
         }
@@ -2287,6 +2333,8 @@ private fun GroupChatOverflowMenu(
   onShareSelectedImage: () -> Unit,
   onFavoriteSelected: () -> Unit,
   onAppendSelectedToFavorite: () -> Unit,
+  onEditGroup: () -> Unit,
+  onDeleteGroup: () -> Unit,
   onCopyGroup: () -> Unit
 ) {
   var menuOpen by remember { mutableStateOf(false) }
@@ -2353,6 +2401,22 @@ private fun GroupChatOverflowMenu(
         onClick = {
           menuOpen = false
           onShareSelectedImage()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("编辑群聊") },
+        leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+        onClick = {
+          menuOpen = false
+          onEditGroup()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("删除群聊") },
+        leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null) },
+        onClick = {
+          menuOpen = false
+          onDeleteGroup()
         }
       )
       DropdownMenuItem(
@@ -3633,6 +3697,7 @@ private fun BotColorChoice(
 @Composable
 private fun NewGroupChatDialog(
   bots: List<AiBot>,
+  backgroundPresets: List<ChatBackgroundPreset>,
   title: String = "新建 AI 群聊",
   confirmText: String = "创建",
   initialTitle: String = "",
@@ -3644,6 +3709,7 @@ private fun NewGroupChatDialog(
   var groupTitle by remember(initialTitle) { mutableStateOf(initialTitle) }
   var topic by remember(initialTopic) { mutableStateOf(initialTopic) }
   var selectedBotIds by remember(initialSelectedBotIds) { mutableStateOf(initialSelectedBotIds) }
+  var presetPickerOpen by remember { mutableStateOf(false) }
   AlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(title) },
@@ -3670,6 +3736,14 @@ private fun NewGroupChatDialog(
           maxLines = 6,
           modifier = Modifier.fillMaxWidth()
         )
+        TextButton(
+          onClick = { presetPickerOpen = true },
+          enabled = backgroundPresets.isNotEmpty()
+        ) {
+          Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null, modifier = Modifier.size(18.dp))
+          Spacer(Modifier.width(6.dp))
+          Text("插入背景预设")
+        }
         Text("选择机器人", fontWeight = FontWeight.SemiBold)
         if (bots.isEmpty()) {
           Text("还没有启用的机器人，请先到设置里创建。", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -3716,6 +3790,70 @@ private fun NewGroupChatDialog(
       }
     }
   )
+  if (presetPickerOpen) {
+    BackgroundPresetPickerDialog(
+      presets = backgroundPresets,
+      onDismiss = { presetPickerOpen = false },
+      onSelect = { preset ->
+        topic = appendPresetText(topic, preset.content)
+        presetPickerOpen = false
+      }
+    )
+  }
+}
+
+@Composable
+private fun BackgroundPresetPickerDialog(
+  presets: List<ChatBackgroundPreset>,
+  onDismiss: () -> Unit,
+  onSelect: (ChatBackgroundPreset) -> Unit
+) {
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("插入背景预设") },
+    text = {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .heightIn(max = 420.dp)
+          .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+      ) {
+        presets.sortedBy { it.sortOrder }.forEach { preset ->
+          Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable { onSelect(preset) }
+          ) {
+            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+              Text(preset.title, fontWeight = FontWeight.SemiBold)
+              Text(
+                preset.content,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {},
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("取消")
+      }
+    }
+  )
+}
+
+private fun appendPresetText(current: String, presetContent: String): String {
+  val clean = presetContent.trim()
+  if (clean.isBlank()) return current
+  return if (current.isBlank()) clean else "${current.trimEnd()}\n\n$clean"
 }
 
 private fun shareText(context: Context, text: String, title: String) {
@@ -3739,9 +3877,14 @@ private fun AppSettingsPage(
   onWebSearchMode: (WebSearchMode) -> Unit,
   onExportProviderConfigs: () -> Unit,
   onImportProviderConfigs: (String) -> Unit,
-  onOpenBotManager: () -> Unit
+  onOpenBotManager: () -> Unit,
+  onSaveBackgroundPreset: (ChatBackgroundPreset?, String, String) -> Unit,
+  onDeleteBackgroundPreset: (String) -> Unit,
+  onMoveBackgroundPreset: (String, Int) -> Unit
 ) {
   var importDialogOpen by remember { mutableStateOf(false) }
+  var editingPreset by remember { mutableStateOf<ChatBackgroundPreset?>(null) }
+  var creatingPreset by remember { mutableStateOf(false) }
   Surface(
     color = MaterialTheme.colorScheme.background,
     modifier = Modifier
@@ -3862,8 +4005,46 @@ private fun AppSettingsPage(
             color = MaterialTheme.colorScheme.onSurfaceVariant
           )
         }
+
+        SettingsSection(title = "聊天背景预设") {
+          Text(
+            "常用背景可在新建或编辑群聊时快速插入到讨论主题里。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+          )
+          Button(onClick = { creatingPreset = true }) {
+            Icon(Icons.Outlined.Add, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("新增背景预设")
+          }
+          state.appSettings.backgroundPresets.sortedBy { it.sortOrder }.forEachIndexed { index, preset ->
+            BackgroundPresetSettingsRow(
+              preset = preset,
+              canMoveUp = index > 0,
+              canMoveDown = index < state.appSettings.backgroundPresets.lastIndex,
+              onEdit = { editingPreset = preset },
+              onDelete = { onDeleteBackgroundPreset(preset.id) },
+              onMoveUp = { onMoveBackgroundPreset(preset.id, -1) },
+              onMoveDown = { onMoveBackgroundPreset(preset.id, 1) }
+            )
+          }
+        }
       }
     }
+  }
+  if (creatingPreset || editingPreset != null) {
+    BackgroundPresetEditorDialog(
+      preset = editingPreset,
+      onDismiss = {
+        creatingPreset = false
+        editingPreset = null
+      },
+      onSave = { title, content ->
+        onSaveBackgroundPreset(editingPreset, title, content)
+        creatingPreset = false
+        editingPreset = null
+      }
+    )
   }
   if (importDialogOpen) {
     ProviderConfigImportDialog(
@@ -3905,6 +4086,98 @@ private fun ProviderConfigImportDialog(
     confirmButton = {
       Button(onClick = { onImport(text) }, enabled = text.isNotBlank()) {
         Text("导入")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("取消")
+      }
+    }
+  )
+}
+
+@Composable
+private fun BackgroundPresetSettingsRow(
+  preset: ChatBackgroundPreset,
+  canMoveUp: Boolean,
+  canMoveDown: Boolean,
+  onEdit: () -> Unit,
+  onDelete: () -> Unit,
+  onMoveUp: () -> Unit,
+  onMoveDown: () -> Unit
+) {
+  Surface(
+    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f),
+    shape = RoundedCornerShape(8.dp),
+    modifier = Modifier.fillMaxWidth()
+  ) {
+    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text(preset.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+          Text(
+            preset.content,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+          )
+        }
+        IconButton(onClick = onEdit) {
+          Icon(Icons.Outlined.Edit, contentDescription = "编辑背景预设")
+        }
+        IconButton(onClick = onDelete) {
+          Icon(Icons.Outlined.Delete, contentDescription = "删除背景预设")
+        }
+      }
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(onClick = onMoveUp, enabled = canMoveUp) {
+          Text("上移")
+        }
+        TextButton(onClick = onMoveDown, enabled = canMoveDown) {
+          Text("下移")
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun BackgroundPresetEditorDialog(
+  preset: ChatBackgroundPreset?,
+  onDismiss: () -> Unit,
+  onSave: (String, String) -> Unit
+) {
+  var title by remember(preset?.id) { mutableStateOf(preset?.title.orEmpty()) }
+  var content by remember(preset?.id) { mutableStateOf(preset?.content.orEmpty()) }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text(if (preset == null) "新增背景预设" else "编辑背景预设") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedTextField(
+          value = title,
+          onValueChange = { title = it },
+          label = { Text("名称") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+          value = content,
+          onValueChange = { content = it },
+          label = { Text("背景内容") },
+          minLines = 5,
+          maxLines = 10,
+          modifier = Modifier.fillMaxWidth()
+        )
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = { onSave(title, content) },
+        enabled = content.isNotBlank()
+      ) {
+        Text("保存")
       }
     },
     dismissButton = {
@@ -4047,6 +4320,241 @@ private fun ForkProviderDialog(
       }
     }
   )
+}
+
+@Composable
+private fun IncomingShareTargetDialog(
+  state: ChatUiState,
+  draft: IncomingShareDraft,
+  onDismiss: () -> Unit,
+  onSelectConversation: (String) -> Unit,
+  onSelectGroup: (String) -> Unit,
+  onCreateConversation: (String) -> Unit,
+  onOpenAttachment: (ChatAttachment) -> Unit
+) {
+  Dialog(
+    onDismissRequest = onDismiss,
+    properties = DialogProperties(usePlatformDefaultWidth = false)
+  ) {
+    Surface(
+      shape = RoundedCornerShape(12.dp),
+      color = MaterialTheme.colorScheme.surface,
+      tonalElevation = 8.dp,
+      modifier = Modifier
+        .fillMaxWidth()
+        .fillMaxHeight(0.92f)
+        .padding(12.dp)
+    ) {
+      Column(
+        modifier = Modifier.padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+      ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("选择发送到", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+              incomingShareSummary(draft),
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+          }
+          TextButton(onClick = onDismiss) {
+            Text("取消")
+          }
+        }
+        if (draft.failedCount > 0) {
+          Text(
+            "${draft.failedCount} 个文件导入失败，其余内容仍可发送",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
+          )
+        }
+        if (draft.text.isNotBlank()) {
+          Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Text(
+              draft.text,
+              maxLines = 3,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.padding(10.dp)
+            )
+          }
+        }
+        if (draft.attachments.isNotEmpty()) {
+          AttachmentStrip(
+            attachments = draft.attachments,
+            onOpenAttachment = onOpenAttachment,
+            onRemoveAttachment = null,
+            compact = true
+          )
+        }
+        LazyColumn(
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+          modifier = Modifier.fillMaxSize()
+        ) {
+          item(key = "new-conversation-section") {
+            Text("新建单聊", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+          }
+          val creatableProviders = state.providers.filter { !draft.hasAttachments || it.supportsAttachments }
+          if (creatableProviders.isEmpty()) {
+            item(key = "new-conversation-empty") {
+              Text(
+                "没有支持这些附件的单聊模型配置",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+            }
+          } else {
+            items(creatableProviders, key = { "new-provider-${it.id}" }) { provider ->
+              IncomingShareProviderRow(
+                provider = provider,
+                onClick = { onCreateConversation(provider.id) }
+              )
+            }
+          }
+          if (state.conversations.isNotEmpty()) {
+            item(key = "conversation-section") {
+              Text("已有单聊", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))
+            }
+            items(state.conversations, key = { "conversation-${it.id}" }) { conversation ->
+              val provider = state.providers.firstOrNull { it.id == conversation.providerId }
+              val enabled = !draft.hasAttachments || provider?.supportsAttachments == true
+              IncomingShareConversationRow(
+                conversation = conversation,
+                provider = provider,
+                enabled = enabled,
+                disabledReason = if (!enabled) "该模型不支持附件" else null,
+                onClick = { onSelectConversation(conversation.id) }
+              )
+            }
+          }
+          if (state.groupChats.isNotEmpty()) {
+            item(key = "group-section") {
+              Text("已有群聊", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))
+            }
+            items(state.groupChats, key = { "group-${it.id}" }) { group ->
+              IncomingShareGroupRow(
+                group = group,
+                memberCount = state.groupMembers.count { it.groupId == group.id },
+                onClick = { onSelectGroup(group.id) }
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun IncomingShareProviderRow(
+  provider: ChatProviderConfig,
+  onClick: () -> Unit
+) {
+  Surface(
+    color = MaterialTheme.colorScheme.background,
+    shape = RoundedCornerShape(10.dp),
+    modifier = Modifier
+      .fillMaxWidth()
+      .clickable(onClick = onClick)
+  ) {
+    Row(
+      modifier = Modifier.padding(10.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Icon(Icons.Outlined.Add, contentDescription = null)
+      Spacer(Modifier.width(8.dp))
+      Column(modifier = Modifier.weight(1f)) {
+        Text(provider.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+        Text(
+          provider.defaultModel,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun IncomingShareConversationRow(
+  conversation: ChatConversation,
+  provider: ChatProviderConfig?,
+  enabled: Boolean,
+  disabledReason: String?,
+  onClick: () -> Unit
+) {
+  Surface(
+    color = if (enabled) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+    contentColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+    shape = RoundedCornerShape(10.dp),
+    modifier = Modifier
+      .fillMaxWidth()
+      .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+  ) {
+    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+      Text(conversation.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+      Text(
+        "${provider?.displayName ?: conversation.providerId} / ${conversation.model}",
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+      )
+      Text(
+        disabledReason ?: "最后 ${formatConversationTime(conversation.updatedAt)}",
+        style = MaterialTheme.typography.bodySmall,
+        color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+      )
+    }
+  }
+}
+
+@Composable
+private fun IncomingShareGroupRow(
+  group: GroupChatRoom,
+  memberCount: Int,
+  onClick: () -> Unit
+) {
+  Surface(
+    color = MaterialTheme.colorScheme.background,
+    shape = RoundedCornerShape(10.dp),
+    modifier = Modifier
+      .fillMaxWidth()
+      .clickable(onClick = onClick)
+  ) {
+    Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+      Icon(Icons.Outlined.Groups, contentDescription = null)
+      Spacer(Modifier.width(8.dp))
+      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(group.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+        Text(
+          group.topic.ifBlank { "未填写主题" },
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+          "$memberCount 个成员 · 最后 ${formatConversationTime(group.updatedAt)}",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+      }
+    }
+  }
+}
+
+private fun incomingShareSummary(draft: IncomingShareDraft): String {
+  val parts = mutableListOf<String>()
+  if (draft.attachments.isNotEmpty()) parts += "${draft.attachments.size} 个附件"
+  if (draft.text.isNotBlank()) parts += "包含文本"
+  return parts.ifEmpty { listOf("分享内容") }.joinToString(" · ")
 }
 
 @Composable

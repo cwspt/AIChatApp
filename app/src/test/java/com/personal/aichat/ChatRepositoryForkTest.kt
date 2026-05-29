@@ -16,6 +16,7 @@ import com.personal.aichat.data.security.ApiKeyStore
 import com.personal.aichat.domain.AppSettings
 import com.personal.aichat.domain.AppThemeMode
 import com.personal.aichat.domain.AppThemePalette
+import com.personal.aichat.domain.ChatBackgroundPreset
 import com.personal.aichat.domain.ChatCompletionOptions
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
@@ -409,6 +410,51 @@ class ChatRepositoryForkTest {
     assertEquals(listOf(bot.id), dao.groupChatMembers(group.id).map { it.botId })
     assertEquals(listOf("先看方案 A"), dao.groupMessages(group.id).map { it.content })
     assertNull(adapter.lastOptions)
+  }
+
+  @Test
+  fun updateGroupChatUpdatesMetaMembersAndKeepsRemovedMemberHistory() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "provider-default"))
+    val first = repository.createAiBot("first", "provider", "model-a", "")
+    val second = repository.createAiBot("second", "provider", "model-b", "")
+    val third = repository.createAiBot("third", "provider", "model-c", "")
+    val group = repository.createGroupChat("old", "old topic", listOf(first.id, second.id))
+    repository.sendGroupUserMessage(group.id, "history", emptyList())
+
+    repository.updateGroupChat(group.id, "new", "new topic", listOf(second.id, third.id))
+
+    val room = dao.groupChatRoomById(group.id)!!
+    assertEquals("new", room.title)
+    assertEquals("new topic", room.topic)
+    assertEquals(listOf(second.id, third.id), dao.groupChatMembers(group.id).map { it.botId })
+    assertEquals(false, dao.allGroupChatMembers(group.id).first { it.botId == first.id }.enabled)
+    assertEquals(listOf("history"), dao.groupMessages(group.id).map { it.content })
+  }
+
+  @Test
+  fun deleteGroupChatSoftDeletesRoom() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "provider-default"))
+    val bot = repository.createAiBot("bot", "provider", "model", "")
+    val group = repository.createGroupChat("group", "topic", listOf(bot.id))
+
+    repository.deleteGroupChat(group.id)
+
+    assertEquals(true, dao.groupChatRoomById(group.id)?.isDeleted)
+    assertTrue(dao.observeGroupChatRooms().first().isEmpty())
   }
 
   @Test
@@ -880,6 +926,10 @@ private class FakeSelectionStore : ChatSelectionStore {
   override suspend fun setWebSearchMode(mode: WebSearchMode) {
     appSettings.value = appSettings.value.copy(webSearchMode = mode)
   }
+
+  override suspend fun setBackgroundPresets(presets: List<ChatBackgroundPreset>) {
+    appSettings.value = appSettings.value.copy(backgroundPresets = presets)
+  }
 }
 
 private class FakeApiKeyStore : ApiKeyStore {
@@ -1099,6 +1149,9 @@ private class FakeChatDao : ChatDao {
 
   override suspend fun groupChatMembers(groupId: String): List<GroupChatMemberEntity> =
     groupChatMembersInternal(groupId)
+
+  override suspend fun allGroupChatMembers(groupId: String): List<GroupChatMemberEntity> =
+    groupMembers.values.filter { it.groupId == groupId }.sortedBy { it.sortOrder }
 
   override suspend fun upsertGroupChatMember(member: GroupChatMemberEntity) {
     groupMembers[member.groupId to member.botId] = member

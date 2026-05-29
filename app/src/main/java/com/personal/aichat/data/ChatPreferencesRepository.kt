@@ -9,7 +9,11 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.personal.aichat.domain.AppSettings
 import com.personal.aichat.domain.AppThemeMode
 import com.personal.aichat.domain.AppThemePalette
+import com.personal.aichat.domain.ChatBackgroundPreset
 import com.personal.aichat.domain.WebSearchMode
+import com.personal.aichat.domain.defaultBackgroundPresets
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -26,9 +30,12 @@ interface ChatSelectionStore {
   suspend fun setFontScale(scale: Float)
   suspend fun setDebugResponseLogging(enabled: Boolean)
   suspend fun setWebSearchMode(mode: WebSearchMode)
+  suspend fun setBackgroundPresets(presets: List<ChatBackgroundPreset>)
 }
 
 class ChatPreferencesRepository(private val context: Context) : ChatSelectionStore {
+  private val gson = Gson()
+  private val backgroundPresetListType = object : TypeToken<List<ChatBackgroundPreset>>() {}.type
   private val selectedProviderKey = stringPreferencesKey("selected_provider_id")
   private val selectedConversationKey = stringPreferencesKey("selected_conversation_id")
   private val themePaletteKey = stringPreferencesKey("theme_palette")
@@ -36,6 +43,7 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
   private val fontScaleKey = floatPreferencesKey("font_scale")
   private val debugResponseLoggingKey = booleanPreferencesKey("debug_response_logging")
   private val webSearchModeKey = stringPreferencesKey("web_search_mode")
+  private val backgroundPresetsKey = stringPreferencesKey("background_presets_json")
 
   override val selectedProviderId: Flow<String?> = context.chatPreferencesDataStore.data.map { preferences ->
     preferences[selectedProviderKey]
@@ -57,7 +65,8 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
       debugResponseLogging = preferences[debugResponseLoggingKey] ?: false,
       webSearchMode = preferences[webSearchModeKey]
         ?.let { runCatching { WebSearchMode.valueOf(it) }.getOrNull() }
-        ?: WebSearchMode.OFF
+        ?: WebSearchMode.OFF,
+      backgroundPresets = parseBackgroundPresets(preferences[backgroundPresetsKey])
     )
   }
 
@@ -101,5 +110,34 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
     context.chatPreferencesDataStore.edit { preferences ->
       preferences[webSearchModeKey] = mode.name
     }
+  }
+
+  override suspend fun setBackgroundPresets(presets: List<ChatBackgroundPreset>) {
+    context.chatPreferencesDataStore.edit { preferences ->
+      preferences[backgroundPresetsKey] = gson.toJson(normalizeBackgroundPresets(presets))
+    }
+  }
+
+  private fun parseBackgroundPresets(json: String?): List<ChatBackgroundPreset> {
+    if (json.isNullOrBlank()) return defaultBackgroundPresets()
+    return runCatching {
+      gson.fromJson<List<ChatBackgroundPreset>>(json, backgroundPresetListType)
+    }.getOrNull()
+      ?.let(::normalizeBackgroundPresets)
+      ?.takeIf { it.isNotEmpty() }
+      ?: defaultBackgroundPresets()
+  }
+
+  private fun normalizeBackgroundPresets(presets: List<ChatBackgroundPreset>): List<ChatBackgroundPreset> {
+    return presets
+      .filter { it.title.isNotBlank() || it.content.isNotBlank() }
+      .sortedWith(compareBy<ChatBackgroundPreset> { it.sortOrder }.thenBy { it.createdAt }.thenBy { it.title })
+      .mapIndexed { index, preset ->
+        preset.copy(
+          title = preset.title.trim().ifBlank { "未命名背景" },
+          content = preset.content.trim(),
+          sortOrder = index
+        )
+      }
   }
 }

@@ -14,6 +14,19 @@ import com.personal.aichat.domain.AppSettings
 import com.personal.aichat.domain.MessageStatus
 import androidx.compose.ui.text.input.TextFieldValue
 
+data class IncomingShareDraft(
+  val text: String = "",
+  val attachments: List<ChatAttachment> = emptyList(),
+  val failedCount: Int = 0,
+  val open: Boolean = false
+) {
+  val hasContent: Boolean
+    get() = text.isNotBlank() || attachments.isNotEmpty()
+
+  val hasAttachments: Boolean
+    get() = attachments.isNotEmpty()
+}
+
 data class ChatUiState(
   val providers: List<ChatProviderConfig> = emptyList(),
   val conversations: List<ChatConversation> = emptyList(),
@@ -31,6 +44,7 @@ data class ChatUiState(
   val input: TextFieldValue = TextFieldValue(""),
   val groupInput: TextFieldValue = TextFieldValue(""),
   val pendingAttachments: List<ChatAttachment> = emptyList(),
+  val incomingShareDraft: IncomingShareDraft? = null,
   val appSettings: AppSettings = AppSettings(),
   val selectedMessageIds: Set<String> = emptySet(),
   val messageSelectionMode: Boolean = false,
@@ -39,6 +53,7 @@ data class ChatUiState(
   val groupChatPageOpen: Boolean = false,
   val botManagerOpen: Boolean = false,
   val newGroupChatDialogOpen: Boolean = false,
+  val editingGroupChatId: String? = null,
   val providerManagerOpen: Boolean = false,
   val newConversationPickerOpen: Boolean = false,
   val settingsOpen: Boolean = false,

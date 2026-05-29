@@ -173,6 +173,9 @@ interface ChatDao {
   @Query("SELECT * FROM group_chat_members WHERE groupId = :groupId AND enabled = 1 ORDER BY sortOrder ASC")
   suspend fun groupChatMembers(groupId: String): List<GroupChatMemberEntity>
 
+  @Query("SELECT * FROM group_chat_members WHERE groupId = :groupId ORDER BY sortOrder ASC")
+  suspend fun allGroupChatMembers(groupId: String): List<GroupChatMemberEntity>
+
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun upsertGroupChatMember(member: GroupChatMemberEntity)
 
