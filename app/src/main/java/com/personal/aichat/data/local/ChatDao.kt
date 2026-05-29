@@ -56,6 +56,9 @@ interface ChatDao {
   @Query("UPDATE conversations SET groupName = :newGroupName, updatedAt = :updatedAt WHERE groupName = :oldGroupName AND isDeleted = 0")
   suspend fun renameConversationGroup(oldGroupName: String, newGroupName: String, updatedAt: Long)
 
+  @Query("UPDATE conversations SET groupName = '', updatedAt = :updatedAt WHERE groupName = :groupName AND isDeleted = 0")
+  suspend fun clearConversationGroup(groupName: String, updatedAt: Long)
+
   @Query("UPDATE conversations SET updatedAt = :updatedAt WHERE id = :id")
   suspend fun touchConversation(id: String, updatedAt: Long)
 

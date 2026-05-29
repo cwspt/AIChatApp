@@ -105,7 +105,8 @@ class ChatRepository(
   }
 
   val conversationGroups: Flow<List<ChatConversationGroup>> = conversations.map { list ->
-    list.groupBy { it.groupName.ifBlank { "默认" } }
+    list.filter { it.groupName.isNotBlank() }
+      .groupBy { it.groupName }
       .toSortedMap()
       .map { (name, items) ->
         ChatConversationGroup(
@@ -864,6 +865,12 @@ class ChatRepository(
       newGroupName.trim(),
       System.currentTimeMillis()
     )
+  }
+
+  suspend fun clearConversationGroup(groupName: String) {
+    val trimmed = groupName.trim()
+    if (trimmed.isBlank()) return
+    dao.clearConversationGroup(trimmed, System.currentTimeMillis())
   }
 
   suspend fun switchConversationProvider(conversationId: String?, providerId: String) {
@@ -1670,6 +1677,9 @@ class ChatRepository(
     }
     return buildString {
       append(prefix).append(' ')
+      if (message.status == MessageStatus.FAILED && message.errorMessage == "已停止") {
+        append("[已停止] ")
+      }
       append(message.content)
       if (!providerSupportsAttachments || message.senderType != GroupMessageSenderType.USER) {
         append(attachmentText)
@@ -1698,6 +1708,9 @@ class ChatRepository(
     ).joinToString(" · ")
     val body = buildString {
       appendLine("[$header]")
+      if (status == MessageStatus.FAILED && errorMessage == "已停止") {
+        appendLine("[已停止]")
+      }
       append(content.ifBlank { if (status == MessageStatus.STREAMING) "输出中..." else "" })
     }.trim()
     return ConversationExportMessage(

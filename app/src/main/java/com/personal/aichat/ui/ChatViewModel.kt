@@ -534,6 +534,12 @@ class ChatViewModel(
   }
 
   fun selectConversation(id: String) {
+    localState.update {
+      it.copy(
+        groupChatPageOpen = false,
+        selectedGroupChatId = null
+      )
+    }
     viewModelScope.launch {
       preferencesRepository.setSelectedConversation(id)
     }
@@ -995,7 +1001,7 @@ class ChatViewModel(
   }
 
   fun openBotManager() {
-    localState.update { it.copy(botManagerOpen = true, settingsPageOpen = false) }
+    localState.update { it.copy(botManagerOpen = true) }
   }
 
   fun closeBotManager() {
@@ -1190,6 +1196,12 @@ class ChatViewModel(
     }
   }
 
+  fun clearConversationGroup(groupName: String) {
+    viewModelScope.launch {
+      repository.clearConversationGroup(groupName)
+    }
+  }
+
   fun selectProvider(id: String) {
     viewModelScope.launch {
       repository.switchConversationProvider(uiState.value.selectedConversationId, id)
@@ -1350,7 +1362,6 @@ class ChatViewModel(
   fun openSettings(provider: ChatProviderConfig? = uiState.value.selectedProvider) {
     localState.update {
       it.copy(
-        providerManagerOpen = false,
         settingsOpen = true,
         editingProvider = provider,
         editingProviderHasApiKey = repository.hasApiKey(provider)
@@ -1372,7 +1383,6 @@ class ChatViewModel(
     val template = repository.providerTemplate(type)
     localState.update {
       it.copy(
-        providerManagerOpen = false,
         settingsOpen = true,
         editingProvider = template,
         editingProviderHasApiKey = false
@@ -1386,7 +1396,6 @@ class ChatViewModel(
       preferencesRepository.setSelectedProvider(clone.id)
       localState.update {
         it.copy(
-          providerManagerOpen = false,
           settingsOpen = true,
           editingProvider = clone,
           editingProviderHasApiKey = false

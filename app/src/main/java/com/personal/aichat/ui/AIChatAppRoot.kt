@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -89,7 +90,9 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -98,6 +101,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -194,6 +198,21 @@ private data class BotBubbleColors(
   val accent: Color
 )
 
+private data class MarkdownRenderColors(
+  val content: Color,
+  val muted: Color,
+  val blockContainer: Color,
+  val blockHeader: Color,
+  val border: Color,
+  val divider: Color
+)
+
+private data class UserBubbleColors(
+  val container: Color,
+  val content: Color,
+  val metadata: Color
+)
+
 internal data class LongBubbleNavTarget(
   val index: Int,
   val showUp: Boolean,
@@ -227,14 +246,14 @@ internal sealed interface GroupMessageListItem {
 }
 
 private val BotBubblePalettes = listOf(
-  BotBubblePalette("TEAL", "青绿", Color(0xFFD2F4EA), Color(0xFF073B32), Color(0xFF00866E), Color(0xFF0C423A), Color(0xFFE0FFF6), Color(0xFF46D3BA)),
-  BotBubblePalette("BLUE", "蓝", Color(0xFFD8E9FF), Color(0xFF062B55), Color(0xFF1E6FD9), Color(0xFF12365E), Color(0xFFE5F1FF), Color(0xFF6EA8FF)),
-  BotBubblePalette("PURPLE", "紫", Color(0xFFE8DDFF), Color(0xFF32105D), Color(0xFF7B43D6), Color(0xFF3A245E), Color(0xFFF0E8FF), Color(0xFFB994FF)),
-  BotBubblePalette("ROSE", "玫红", Color(0xFFFFD9E6), Color(0xFF5F0B2D), Color(0xFFD43D75), Color(0xFF5D2238), Color(0xFFFFE4EE), Color(0xFFFF8BB4)),
-  BotBubblePalette("ORANGE", "橙", Color(0xFFFFE1C7), Color(0xFF542600), Color(0xFFD66A00), Color(0xFF57351D), Color(0xFFFFE9D6), Color(0xFFFFA857)),
-  BotBubblePalette("GOLD", "金", Color(0xFFFFEDB5), Color(0xFF4B3500), Color(0xFFB98700), Color(0xFF4D3E17), Color(0xFFFFF0BE), Color(0xFFFFD35D)),
-  BotBubblePalette("INDIGO", "靛蓝", Color(0xFFDEE3FF), Color(0xFF161F61), Color(0xFF4C5DD9), Color(0xFF252B63), Color(0xFFE8EBFF), Color(0xFF8FA0FF)),
-  BotBubblePalette("CYAN", "湖蓝", Color(0xFFCFF3FF), Color(0xFF003847), Color(0xFF0089A8), Color(0xFF123F4A), Color(0xFFE2F8FF), Color(0xFF54D8F4))
+  BotBubblePalette("TEAL", "青绿", Color(0xFFD2F4EA), Color(0xFF073B32), Color(0xFF00866E), Color(0xFF163731), Color(0xFFE0FFF6), Color(0xFF46D3BA)),
+  BotBubblePalette("BLUE", "蓝", Color(0xFFD8E9FF), Color(0xFF062B55), Color(0xFF1E6FD9), Color(0xFF162D47), Color(0xFFE5F1FF), Color(0xFF6EA8FF)),
+  BotBubblePalette("PURPLE", "紫", Color(0xFFE8DDFF), Color(0xFF32105D), Color(0xFF7B43D6), Color(0xFF322845), Color(0xFFF0E8FF), Color(0xFFB994FF)),
+  BotBubblePalette("ROSE", "玫红", Color(0xFFFFD9E6), Color(0xFF5F0B2D), Color(0xFFD43D75), Color(0xFF442632), Color(0xFFFFE4EE), Color(0xFFFF8BB4)),
+  BotBubblePalette("ORANGE", "橙", Color(0xFFFFE1C7), Color(0xFF542600), Color(0xFFD66A00), Color(0xFF443021), Color(0xFFFFE9D6), Color(0xFFFFA857)),
+  BotBubblePalette("GOLD", "金", Color(0xFFFFEDB5), Color(0xFF4B3500), Color(0xFFB98700), Color(0xFF42371E), Color(0xFFFFF0BE), Color(0xFFFFD35D)),
+  BotBubblePalette("INDIGO", "靛蓝", Color(0xFFDEE3FF), Color(0xFF161F61), Color(0xFF4C5DD9), Color(0xFF252A49), Color(0xFFE8EBFF), Color(0xFF8FA0FF)),
+  BotBubblePalette("CYAN", "湖蓝", Color(0xFFCFF3FF), Color(0xFF003847), Color(0xFF0089A8), Color(0xFF173642), Color(0xFFE2F8FF), Color(0xFF54D8F4))
 )
 
 private val AutoBotBubblePalette = BotBubblePalette(
@@ -261,9 +280,7 @@ private fun botBubbleColors(bot: AiBot?): BotBubbleColors {
   val requestedKey = bot?.bubbleColorKey ?: "AUTO"
   val key = bot?.let { resolvedBotBubbleColorKey(it.id, requestedKey) } ?: "AUTO"
   val palette = BotBubblePalettes.firstOrNull { it.key == key } ?: AutoBotBubblePalette
-  val dark = MaterialTheme.colorScheme.onBackground.red > 0.75f &&
-    MaterialTheme.colorScheme.onBackground.green > 0.75f &&
-    MaterialTheme.colorScheme.onBackground.blue > 0.75f
+  val dark = isDarkThemeColors()
   return BotBubbleColors(
     key = palette.key,
     label = palette.label,
@@ -271,6 +288,50 @@ private fun botBubbleColors(bot: AiBot?): BotBubbleColors {
     content = if (dark) palette.darkContent else palette.lightContent,
     accent = if (dark) palette.darkAccent else palette.lightAccent
   )
+}
+
+private fun markdownColorsForBotBubble(colors: BotBubbleColors): MarkdownRenderColors {
+  return MarkdownRenderColors(
+    content = colors.content,
+    muted = colors.content.copy(alpha = 0.72f),
+    blockContainer = mixColors(colors.container, Color.Black, 0.12f),
+    blockHeader = mixColors(colors.container, colors.accent, 0.18f),
+    border = colors.accent.copy(alpha = 0.42f),
+    divider = colors.accent.copy(alpha = 0.34f)
+  )
+}
+
+private fun mixColors(base: Color, overlay: Color, overlayAlpha: Float): Color {
+  val alpha = overlayAlpha.coerceIn(0f, 1f)
+  val inverse = 1f - alpha
+  return Color(
+    red = base.red * inverse + overlay.red * alpha,
+    green = base.green * inverse + overlay.green * alpha,
+    blue = base.blue * inverse + overlay.blue * alpha,
+    alpha = base.alpha
+  )
+}
+
+private fun conversationGroupLabel(groupName: String): String =
+  groupName.ifBlank { "未分组" }
+
+@Composable
+private fun userBubbleColors(): UserBubbleColors {
+  val isDark = isDarkThemeColors()
+  val content = if (isDark) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onPrimary
+  return UserBubbleColors(
+    container = if (isDark) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.primary,
+    content = content,
+    metadata = content.copy(alpha = if (isDark) 0.72f else 0.78f)
+  )
+}
+
+@Composable
+private fun isDarkThemeColors(): Boolean {
+  val onBackground = MaterialTheme.colorScheme.onBackground
+  return onBackground.red > 0.75f &&
+    onBackground.green > 0.75f &&
+    onBackground.blue > 0.75f
 }
 
 @Composable
@@ -304,6 +365,55 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
     pendingCameraUri = null
     if (success && uri != null) {
       viewModel.addAttachments(listOf(uri))
+    }
+  }
+
+  val groupChatDialogOpen = state.newGroupChatDialogOpen || state.editingGroupChatId != null || groupChatDialogDraft != null
+  val incomingShareOpen = state.incomingShareDraft?.open == true
+  val backHandled = previewImage != null ||
+    state.providerRebindDeleteSourceId != null ||
+    state.error != null ||
+    state.deleteConfirmOpen ||
+    appendFavoritePickerOpen ||
+    editingFavorite != null ||
+    favoriteDraftGroupMessageIds != null ||
+    favoriteDraftMessageIds != null ||
+    groupChatDialogOpen ||
+    drawerOpen ||
+    incomingShareOpen ||
+    state.forkTargetMessageId != null ||
+    state.newConversationPickerOpen ||
+    state.botManagerOpen ||
+    state.favoritePageOpen ||
+    state.settingsOpen ||
+    state.providerManagerOpen ||
+    state.settingsPageOpen ||
+    state.messageSelectionMode
+
+  BackHandler(enabled = backHandled) {
+    when {
+      previewImage != null -> previewImage = null
+      state.providerRebindDeleteSourceId != null -> viewModel.cancelProviderRebindDelete()
+      state.error != null -> viewModel.clearError()
+      state.deleteConfirmOpen -> viewModel.cancelDeleteConversation()
+      appendFavoritePickerOpen -> appendFavoritePickerOpen = false
+      editingFavorite != null -> editingFavorite = null
+      favoriteDraftGroupMessageIds != null -> favoriteDraftGroupMessageIds = null
+      favoriteDraftMessageIds != null -> favoriteDraftMessageIds = null
+      groupChatDialogOpen -> {
+        groupChatDialogDraft = null
+        viewModel.closeNewGroupChatDialog()
+      }
+      drawerOpen -> drawerOpen = false
+      incomingShareOpen -> viewModel.dismissIncomingShareDraft()
+      state.forkTargetMessageId != null -> viewModel.closeForkProviderPicker()
+      state.newConversationPickerOpen -> viewModel.closeNewConversationPicker()
+      state.botManagerOpen -> viewModel.closeBotManager()
+      state.favoritePageOpen -> viewModel.closeFavoritePage()
+      state.settingsOpen -> viewModel.closeSettings()
+      state.providerManagerOpen -> viewModel.closeProviderManager()
+      state.settingsPageOpen -> viewModel.closeSettingsPage()
+      state.messageSelectionMode -> viewModel.toggleMessageSelectionMode(false)
     }
   }
 
@@ -563,11 +673,12 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onRestore = viewModel::restoreConversation,
         onDelete = viewModel::deleteConversation,
         onRename = viewModel::updateConversationMeta,
-        onRenameGroup = viewModel::renameConversationGroup
+        onRenameGroup = viewModel::renameConversationGroup,
+        onClearGroup = viewModel::clearConversationGroup
       )
     }
 
-    if (state.newGroupChatDialogOpen || state.editingGroupChatId != null || groupChatDialogDraft != null) {
+    if (groupChatDialogOpen) {
       val editingGroup = state.editingGroupChatId?.let { id -> state.groupChats.firstOrNull { it.id == id } }
       val draft = groupChatDialogDraft ?: editingGroup?.let { group ->
         GroupChatDialogDraft(
@@ -742,7 +853,7 @@ private fun ChatActionBar(
         overflow = TextOverflow.Ellipsis
       )
       Text(
-        text = selectedConversation?.let { "${it.groupName.ifBlank { "默认" }} / ${it.model}" } ?: "从左上角聊天列表选择",
+        text = selectedConversation?.let { "${conversationGroupLabel(it.groupName)} / ${it.model}" } ?: "从左上角聊天列表选择",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         maxLines = 1,
@@ -856,7 +967,8 @@ private fun ConversationDrawer(
   onRestore: (String) -> Unit,
   onDelete: (String) -> Unit,
   onRename: (String, String, String) -> Unit,
-  onRenameGroup: (String, String) -> Unit
+  onRenameGroup: (String, String) -> Unit,
+  onClearGroup: (String) -> Unit
 ) {
   var collapsedFolders by remember { mutableStateOf<Set<String>>(emptySet()) }
   Box(modifier = Modifier.fillMaxSize()) {
@@ -957,8 +1069,10 @@ private fun ConversationDrawer(
               }
             }
           }
-          val pinnedConversations = state.conversations.filter { it.isPinned }
-          val normalConversations = state.conversations.filterNot { it.isPinned }
+          val folderedConversationIds = state.conversationGroups.flatMap { it.conversations }.map { it.id }.toSet()
+          val visibleLooseConversations = state.conversations.filterNot { it.id in folderedConversationIds }
+          val pinnedConversations = visibleLooseConversations.filter { it.isPinned }
+          val normalConversations = visibleLooseConversations.filterNot { it.isPinned }
           val pinnedFolders = state.conversationGroups.filter { group -> group.conversations.any { it.isPinned } }
           val normalFolders = state.conversationGroups.filter { group -> group.conversations.none { it.isPinned } }
           drawerSection("置顶", pinnedConversations) { conversation ->
@@ -966,11 +1080,11 @@ private fun ConversationDrawer(
           }
           drawerFolderSection("置顶文件夹", pinnedFolders, collapsedFolders, { key ->
             collapsedFolders = if (key in collapsedFolders) collapsedFolders - key else collapsedFolders + key
-          }, state.selectedConversationId, onSelectConversation, onTogglePin, onArchive, onDelete, onRename, onRenameGroup)
+          }, state.selectedConversationId, onSelectConversation, onTogglePin, onArchive, onDelete, onRename, onRenameGroup, onClearGroup)
           drawerDatedConversationSections(normalConversations, state.selectedConversationId, onSelectConversation, onTogglePin, onArchive, onDelete, onRename)
           drawerFolderSection("普通文件夹", normalFolders, collapsedFolders, { key ->
             collapsedFolders = if (key in collapsedFolders) collapsedFolders - key else collapsedFolders + key
-          }, state.selectedConversationId, onSelectConversation, onTogglePin, onArchive, onDelete, onRename, onRenameGroup)
+          }, state.selectedConversationId, onSelectConversation, onTogglePin, onArchive, onDelete, onRename, onRenameGroup, onClearGroup)
           drawerArchivedSection("已归档", state.archivedConversations, onRestore, onDelete)
         }
       }
@@ -1018,7 +1132,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.drawerFolderSection(
   onArchive: (String) -> Unit,
   onDelete: (String) -> Unit,
   onRename: (String, String, String) -> Unit,
-  onRenameGroup: (String, String) -> Unit
+  onRenameGroup: (String, String) -> Unit,
+  onClearGroup: (String) -> Unit
 ) {
   if (groups.isEmpty()) return
   item(key = "section-$title") {
@@ -1032,7 +1147,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.drawerFolderSection(
         count = group.conversations.size,
         collapsed = folderKey in collapsedFolders,
         onToggle = { onToggleFolder(folderKey) },
-        onRename = { newName -> onRenameGroup(group.name, newName) }
+        onRename = { newName -> onRenameGroup(group.name, newName) },
+        onDelete = { onClearGroup(group.name) }
       )
     }
     if (folderKey !in collapsedFolders) {
@@ -1049,10 +1165,12 @@ private fun DrawerFolderHeader(
   count: Int,
   collapsed: Boolean,
   onToggle: () -> Unit,
-  onRename: (String) -> Unit
+  onRename: (String) -> Unit,
+  onDelete: () -> Unit
 ) {
   var menuOpen by remember { mutableStateOf(false) }
   var editing by remember(title) { mutableStateOf(false) }
+  var deleteConfirmOpen by remember(title) { mutableStateOf(false) }
   var newName by remember(title) { mutableStateOf(title) }
   Row(
     modifier = Modifier.fillMaxWidth(),
@@ -1086,6 +1204,14 @@ private fun DrawerFolderHeader(
             editing = true
           }
         )
+        DropdownMenuItem(
+          text = { Text("删除文件夹") },
+          leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null) },
+          onClick = {
+            menuOpen = false
+            deleteConfirmOpen = true
+          }
+        )
       }
     }
   }
@@ -1103,8 +1229,7 @@ private fun DrawerFolderHeader(
       },
       confirmButton = {
         Button(onClick = {
-          val target = newName.trim().ifBlank { "默认" }
-          onRename(target)
+          onRename(newName.trim())
           editing = false
         }) {
           Text("保存")
@@ -1112,6 +1237,26 @@ private fun DrawerFolderHeader(
       },
       dismissButton = {
         TextButton(onClick = { editing = false }) {
+          Text("取消")
+        }
+      }
+    )
+  }
+  if (deleteConfirmOpen) {
+    AlertDialog(
+      onDismissRequest = { deleteConfirmOpen = false },
+      title = { Text("删除文件夹") },
+      text = { Text("将 $count 个聊天移出「$title」文件夹，不会删除聊天内容。") },
+      confirmButton = {
+        Button(onClick = {
+          onDelete()
+          deleteConfirmOpen = false
+        }) {
+          Text("移出并删除文件夹")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { deleteConfirmOpen = false }) {
           Text("取消")
         }
       }
@@ -1134,7 +1279,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.drawerArchivedSection
       Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f)) {
           Text(conversation.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-          Text(conversation.groupName.ifBlank { "默认" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          Text(conversationGroupLabel(conversation.groupName), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         IconButton(onClick = { onRestore(conversation.id) }) {
           Icon(Icons.Outlined.Unarchive, contentDescription = "恢复归档")
@@ -1253,12 +1398,13 @@ private fun TopBar(
   onAppendSelectedToFavorite: () -> Unit
 ) {
   val selectedConversation = state.selectedConversation
-  Row(
-    modifier = Modifier
-      .fillMaxWidth()
-      .padding(horizontal = 10.dp, vertical = 6.dp),
-    verticalAlignment = Alignment.CenterVertically
-  ) {
+  CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 10.dp, vertical = 6.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
     IconButton(onClick = onOpenConversationDrawer) {
       Icon(Icons.Outlined.Menu, contentDescription = "打开聊天列表")
     }
@@ -1275,7 +1421,7 @@ private fun TopBar(
         text = selectedConversation?.let { conversation ->
           val providerName = state.providers.firstOrNull { it.id == conversation.providerId }?.displayName ?: conversation.providerId
           val streaming = if (state.isSelectedConversationStreaming) " · 输出中" else ""
-          "${conversation.groupName.ifBlank { "默认" }} / $providerName / ${conversation.model}$streaming"
+          "${conversationGroupLabel(conversation.groupName)} / $providerName / ${conversation.model}$streaming"
         } ?: "未选择配置",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1307,6 +1453,7 @@ private fun TopBar(
         onFavoriteSelected = onFavoriteSelected,
         onAppendSelectedToFavorite = onAppendSelectedToFavorite
       )
+    }
     }
   }
 }
@@ -1936,14 +2083,15 @@ private fun FavoriteMessageBubble(
   onOpenAttachment: (ChatAttachment) -> Unit
 ) {
   val isUser = message.role == MessageRole.USER
+  val userColors = userBubbleColors()
   var removeConfirmOpen by remember(message.id) { mutableStateOf(false) }
   Row(
     modifier = Modifier.fillMaxWidth(),
     horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
   ) {
     Surface(
-      color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-      contentColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+      color = if (isUser) userColors.container else MaterialTheme.colorScheme.surface,
+      contentColor = if (isUser) userColors.content else MaterialTheme.colorScheme.onSurface,
       shape = RoundedCornerShape(8.dp),
       modifier = Modifier.fillMaxWidth(if (isUser) 0.84f else 0.92f)
     ) {
@@ -1951,7 +2099,7 @@ private fun FavoriteMessageBubble(
         Text(
           "${favoriteRoleLabel(message.role)} · ${formatMessageTime(message.createdAt)}",
           style = MaterialTheme.typography.bodySmall,
-          color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f) else MaterialTheme.colorScheme.onSurfaceVariant
+          color = if (isUser) userColors.metadata else MaterialTheme.colorScheme.onSurfaceVariant
         )
         if (isUser) {
           Text(message.content)
@@ -1977,7 +2125,7 @@ private fun FavoriteMessageBubble(
           Text(
             text = metadata,
             style = MaterialTheme.typography.bodySmall,
-            color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f) else MaterialTheme.colorScheme.onSurfaceVariant
+            color = if (isUser) userColors.metadata else MaterialTheme.colorScheme.onSurfaceVariant
           )
         }
         TextButton(
@@ -2121,12 +2269,13 @@ private fun GroupChatPage(
       .windowInsetsPadding(WindowInsets.safeDrawing)
   ) {
     Column(modifier = Modifier.fillMaxSize()) {
-      Row(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-      ) {
+      CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
         IconButton(onClick = onOpenDrawer) {
           Icon(Icons.Outlined.Menu, contentDescription = "打开聊天列表")
         }
@@ -2177,6 +2326,7 @@ private fun GroupChatPage(
         }
         IconButton(onClick = onClose) {
           Icon(Icons.Outlined.Close, contentDescription = "关闭群聊")
+        }
         }
       }
 
@@ -2267,14 +2417,26 @@ private fun GroupChatPage(
           horizontalArrangement = Arrangement.spacedBy(8.dp),
           verticalAlignment = Alignment.CenterVertically
         ) {
-          Button(
-            onClick = { pickerMode = GroupBotPickerMode.SPEAK },
-            enabled = groupBots.isNotEmpty() && !state.isSelectedGroupStreaming,
-            modifier = Modifier.weight(1f)
-          ) {
-            Icon(Icons.Outlined.Groups, contentDescription = null)
-            Spacer(Modifier.width(6.dp))
-            Text("点名发言")
+          if (isDarkThemeColors()) {
+            OutlinedButton(
+              onClick = { pickerMode = GroupBotPickerMode.SPEAK },
+              enabled = groupBots.isNotEmpty() && !state.isSelectedGroupStreaming,
+              modifier = Modifier.weight(1f)
+            ) {
+              Icon(Icons.Outlined.Groups, contentDescription = null)
+              Spacer(Modifier.width(6.dp))
+              Text("点名发言")
+            }
+          } else {
+            Button(
+              onClick = { pickerMode = GroupBotPickerMode.SPEAK },
+              enabled = groupBots.isNotEmpty() && !state.isSelectedGroupStreaming,
+              modifier = Modifier.weight(1f)
+            ) {
+              Icon(Icons.Outlined.Groups, contentDescription = null)
+              Spacer(Modifier.width(6.dp))
+              Text("点名发言")
+            }
           }
           TextButton(
             onClick = { pickerMode = GroupBotPickerMode.SUMMARIZE },
@@ -2298,8 +2460,7 @@ private fun GroupChatPage(
           onOpenAttachment = onOpenAttachment,
           isGenerating = state.isSelectedGroupStreaming,
           onStopGenerating = onStop,
-          showRetry = false,
-          sendWhileGenerating = true
+          showRetry = false
         )
       }
     }
@@ -2940,13 +3101,18 @@ private fun GroupMessageBubble(
   val isUser = message.senderType == GroupMessageSenderType.USER
   val isBot = message.senderType == GroupMessageSenderType.BOT
   val botColors = botBubbleColors(bot)
+  val useBotMarkdownColors = isBot && isDarkThemeColors()
+  val markdownColors = remember(botColors, useBotMarkdownColors) {
+    if (useBotMarkdownColors) markdownColorsForBotBubble(botColors) else null
+  }
+  val userColors = userBubbleColors()
   val contentColor = when {
-    isUser -> MaterialTheme.colorScheme.onPrimary
+    isUser -> userColors.content
     isBot -> botColors.content
     else -> MaterialTheme.colorScheme.onSurface
   }
   val metadataColor = when {
-    isUser -> MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f)
+    isUser -> userColors.metadata
     isBot -> botColors.content.copy(alpha = 0.74f)
     else -> MaterialTheme.colorScheme.onSurfaceVariant
   }
@@ -2959,7 +3125,7 @@ private fun GroupMessageBubble(
     Surface(
       color = when {
         selected -> MaterialTheme.colorScheme.secondaryContainer
-        isUser -> MaterialTheme.colorScheme.primary
+        isUser -> userColors.container
         message.status == MessageStatus.FAILED -> MaterialTheme.colorScheme.errorContainer
         isBot -> botColors.container
         else -> MaterialTheme.colorScheme.surface
@@ -3054,7 +3220,10 @@ private fun GroupMessageBubble(
           )
         } else {
           SelectionContainer {
-            MarkdownPreview(message.content.ifBlank { if (message.status == MessageStatus.STREAMING) "..." else "" })
+            MarkdownPreview(
+              content = message.content.ifBlank { if (message.status == MessageStatus.STREAMING) "..." else "" },
+              colors = markdownColors
+            )
           }
         }
         if (message.attachments.isNotEmpty()) {
@@ -3068,7 +3237,7 @@ private fun GroupMessageBubble(
         if (message.status == MessageStatus.FAILED) {
           Text(
             text = message.errorMessage ?: "请求失败",
-            color = MaterialTheme.colorScheme.error,
+            color = if (message.errorMessage == "已停止") metadataColor else MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodySmall
           )
         }
@@ -4618,7 +4787,7 @@ private fun ConversationStrip(
           Text("对话列表", fontWeight = FontWeight.SemiBold)
           Text(
             text = selectedConversation?.let {
-              "${it.groupName.ifBlank { "默认" }} / ${it.title}"
+              "${conversationGroupLabel(it.groupName)} / ${it.title}"
             } ?: "点击切换历史对话",
             style = MaterialTheme.typography.bodySmall,
             maxLines = 1,
@@ -4759,7 +4928,7 @@ private fun MoveConversationDialog(
   onDismiss: () -> Unit,
   onMove: (String) -> Unit
 ) {
-  var targetGroup by remember(conversationTitle) { mutableStateOf(initialGroupName.ifBlank { "默认" }) }
+  var targetGroup by remember(conversationTitle) { mutableStateOf(initialGroupName) }
   AlertDialog(
     onDismissRequest = onDismiss,
     title = { Text("移动到文件夹") },
@@ -4770,18 +4939,18 @@ private fun MoveConversationDialog(
           value = targetGroup,
           onValueChange = { targetGroup = it },
           label = { Text("文件夹名称") },
-          placeholder = { Text("输入新文件夹名，或填写已有文件夹名") },
+          placeholder = { Text("留空则不放入文件夹") },
           modifier = Modifier.fillMaxWidth()
         )
         Text(
-          "文件夹用于按分组整理对话。填写相同文件夹名即可归到同一组。",
+          "文件夹用于收拢有共同归属的对话。加入文件夹后，该对话不再显示在普通列表里；留空可移出文件夹。",
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant
         )
       }
     },
     confirmButton = {
-      Button(onClick = { onMove(targetGroup.trim().ifBlank { "默认" }) }) {
+      Button(onClick = { onMove(targetGroup.trim()) }) {
         Text("移动")
       }
     },
@@ -5520,6 +5689,7 @@ private fun MessageBubble(
   onFork: () -> Unit
 ) {
   val isUser = message.role == MessageRole.USER
+  val userColors = userBubbleColors()
   var shareMenuOpen by remember { mutableStateOf(false) }
   Row(
     modifier = Modifier
@@ -5530,10 +5700,10 @@ private fun MessageBubble(
     Surface(
       color = when {
         selected -> MaterialTheme.colorScheme.secondaryContainer
-        isUser -> MaterialTheme.colorScheme.primary
+        isUser -> userColors.container
         else -> MaterialTheme.colorScheme.surface
       },
-      contentColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+      contentColor = if (isUser) userColors.content else MaterialTheme.colorScheme.onSurface,
       shape = RoundedCornerShape(8.dp),
       modifier = Modifier
         .fillMaxWidth(if (isUser) 0.84f else 0.92f)
@@ -5549,7 +5719,7 @@ private fun MessageBubble(
         Text(
           text = formatMessageTime(message.createdAt),
           style = MaterialTheme.typography.bodySmall,
-          color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f) else MaterialTheme.colorScheme.onSurfaceVariant
+          color = if (isUser) userColors.metadata else MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(6.dp))
         if (isUser) {
@@ -5582,7 +5752,7 @@ private fun MessageBubble(
             text = metadata,
             style = MaterialTheme.typography.bodySmall,
             color = if (isUser) {
-              MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f)
+              userColors.metadata
             } else {
               MaterialTheme.colorScheme.onSurfaceVariant
             }
@@ -5710,13 +5880,14 @@ private fun formatDuration(ms: Long): String {
 }
 
 @Composable
-private fun MarkdownPreview(content: String) {
+private fun MarkdownPreview(content: String, colors: MarkdownRenderColors? = null) {
   val blocks = remember(content) { parseMarkdownBlocks(content) }
   Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
     blocks.forEach { block ->
       when (block) {
         is MarkdownBlock.Code -> Surface(
-          color = MaterialTheme.colorScheme.background,
+          color = colors?.blockContainer ?: MaterialTheme.colorScheme.background,
+          contentColor = colors?.content ?: MaterialTheme.colorScheme.onSurface,
           shape = RoundedCornerShape(6.dp),
           modifier = Modifier.fillMaxWidth()
         ) {
@@ -5733,20 +5904,28 @@ private fun MarkdownPreview(content: String) {
             2 -> MaterialTheme.typography.titleMedium
             else -> MaterialTheme.typography.titleSmall
           },
-          fontWeight = FontWeight.SemiBold
+          fontWeight = FontWeight.SemiBold,
+          color = colors?.content ?: Color.Unspecified
         )
         is MarkdownBlock.ListItem -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          Text(block.marker, color = MaterialTheme.colorScheme.onSurfaceVariant)
-          Text(renderInlineMarkdown(block.text), modifier = Modifier.weight(1f))
+          Text(block.marker, color = colors?.muted ?: MaterialTheme.colorScheme.onSurfaceVariant)
+          Text(
+            renderInlineMarkdown(block.text),
+            modifier = Modifier.weight(1f),
+            color = colors?.content ?: Color.Unspecified
+          )
         }
-        is MarkdownBlock.Table -> MarkdownTable(block)
+        is MarkdownBlock.Table -> MarkdownTable(block, colors)
         MarkdownBlock.Divider -> Box(
           modifier = Modifier
             .fillMaxWidth()
             .height(1.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant)
+            .background(colors?.divider ?: MaterialTheme.colorScheme.outlineVariant)
         )
-        is MarkdownBlock.Paragraph -> Text(renderInlineMarkdown(block.text))
+        is MarkdownBlock.Paragraph -> Text(
+          renderInlineMarkdown(block.text),
+          color = colors?.content ?: Color.Unspecified
+        )
       }
     }
   }
@@ -5762,18 +5941,19 @@ private sealed interface MarkdownBlock {
 }
 
 @Composable
-private fun MarkdownTable(table: MarkdownBlock.Table) {
+private fun MarkdownTable(table: MarkdownBlock.Table, colors: MarkdownRenderColors? = null) {
   if (table.rows.isEmpty()) return
   val columnCount = table.rows.maxOf { it.size }.coerceAtLeast(1)
   Surface(
-    color = MaterialTheme.colorScheme.background,
+    color = colors?.blockContainer ?: MaterialTheme.colorScheme.background,
+    contentColor = colors?.content ?: MaterialTheme.colorScheme.onSurface,
     shape = RoundedCornerShape(6.dp),
     modifier = Modifier.fillMaxWidth()
   ) {
     Column(
       modifier = Modifier
         .padding(8.dp)
-        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
+        .border(1.dp, colors?.border ?: MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
     ) {
       table.rows.forEachIndexed { rowIndex, row ->
         Row(
@@ -5781,10 +5961,10 @@ private fun MarkdownTable(table: MarkdownBlock.Table) {
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
             .background(
-              color = if (rowIndex == 0) MaterialTheme.colorScheme.surfaceVariant else androidx.compose.ui.graphics.Color.Transparent,
+              color = if (rowIndex == 0) colors?.blockHeader ?: MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
               shape = RoundedCornerShape(4.dp)
             )
-            .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
+            .border(0.5.dp, colors?.border ?: MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
             .padding(vertical = 0.dp)
         ) {
           repeat(columnCount) { column ->
@@ -5792,13 +5972,14 @@ private fun MarkdownTable(table: MarkdownBlock.Table) {
               modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                .border(0.5.dp, colors?.border?.copy(alpha = 0.75f) ?: MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
                 .padding(horizontal = 8.dp, vertical = 7.dp)
             ) {
               Text(
                 text = renderInlineMarkdown(row.getOrNull(column).orEmpty()),
                 style = MaterialTheme.typography.bodySmall,
-                fontWeight = if (rowIndex == 0) FontWeight.SemiBold else FontWeight.Normal
+                fontWeight = if (rowIndex == 0) FontWeight.SemiBold else FontWeight.Normal,
+                color = colors?.content ?: Color.Unspecified
               )
             }
           }
@@ -6201,8 +6382,7 @@ private fun Composer(
   onOpenAttachment: (ChatAttachment) -> Unit,
   isGenerating: Boolean,
   onStopGenerating: () -> Unit,
-  showRetry: Boolean = true,
-  sendWhileGenerating: Boolean = false
+  showRetry: Boolean = true
 ) {
   Column(
     modifier = Modifier
@@ -6269,7 +6449,7 @@ private fun Composer(
           Icon(Icons.Outlined.Refresh, contentDescription = "重试上一条", tint = MaterialTheme.colorScheme.primary)
         }
       }
-      if (isGenerating && !sendWhileGenerating) {
+      if (isGenerating) {
         Surface(
           shape = RoundedCornerShape(999.dp),
           color = MaterialTheme.colorScheme.primary,

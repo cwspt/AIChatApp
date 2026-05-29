@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import androidx.activity.SystemBarStyle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -19,6 +20,8 @@ import com.personal.aichat.data.ChatPreferencesRepository
 import com.personal.aichat.data.ChatRepository
 import com.personal.aichat.data.local.ChatDatabase
 import com.personal.aichat.data.security.EncryptedApiKeyStore
+import com.personal.aichat.domain.AppSettings
+import com.personal.aichat.domain.AppThemeMode
 import com.personal.aichat.ui.AIChatAppRoot
 import com.personal.aichat.ui.ChatViewModel
 import com.personal.aichat.ui.theme.AIChatTheme
@@ -38,11 +41,14 @@ class MainActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    enableEdgeToEdge()
+    configureSystemBars(AppSettings())
     requestNotificationPermissionIfNeeded()
     pendingShareIntent = intent.takeIf { it.isShareIntent() }
     setContent {
-      val settings by preferencesRepository.appSettings.collectAsState(com.personal.aichat.domain.AppSettings())
+      val settings by preferencesRepository.appSettings.collectAsState(AppSettings())
+      LaunchedEffect(settings.themeMode) {
+        configureSystemBars(settings)
+      }
       AIChatTheme(settings = settings) {
         val chatViewModel: ChatViewModel = viewModel(
           factory = ChatViewModel.factory(
@@ -91,5 +97,18 @@ class MainActivity : ComponentActivity() {
 
   private fun clearConsumedShareIntent() {
     setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
+  }
+
+  private fun configureSystemBars(settings: AppSettings) {
+    val transparent = android.graphics.Color.TRANSPARENT
+    val systemBarStyle = if (settings.themeMode == AppThemeMode.DARK) {
+      SystemBarStyle.dark(transparent)
+    } else {
+      SystemBarStyle.light(transparent, transparent)
+    }
+    enableEdgeToEdge(
+      statusBarStyle = systemBarStyle,
+      navigationBarStyle = systemBarStyle
+    )
   }
 }

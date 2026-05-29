@@ -1012,6 +1012,16 @@ private class FakeChatDao : ChatDao {
     }
   }
 
+  override suspend fun clearConversationGroup(groupName: String, updatedAt: Long) {
+    conversations.replaceAll { _, conversation ->
+      if (conversation.groupName == groupName && !conversation.isDeleted) {
+        conversation.copy(groupName = "", updatedAt = updatedAt)
+      } else {
+        conversation
+      }
+    }
+  }
+
   override suspend fun touchConversation(id: String, updatedAt: Long) {
     conversations[id]?.let { conversations[id] = it.copy(updatedAt = updatedAt) }
   }

@@ -1,5 +1,14 @@
 # AIChatApp Project Tracker
 
+## 2026-05-29 Local Update Summary
+
+- Done: improved dark mode readability for system bars, main top bars, single-chat user bubbles, group-chat user bubbles, and group bot Markdown rendering.
+- Done: group AI interruption UX now exposes a stop action during generation, keeps the partial draft as a stopped message, and marks stopped group context with `[已停止]` for later bot turns.
+- Done: folder behavior now treats non-empty `groupName` as real folders only; foldered chats are hidden from the loose chat list, deleting a folder moves chats back to the ungrouped list, and blank/default folders are not shown as folders.
+- Done: selecting a single chat from the drawer while a group chat is open now closes the group chat overlay so the selected single chat is visible immediately.
+- Done: app back/close behavior now closes the topmost UI layer first, including drawer, settings, provider manager, API detail dialogs, bot manager, favorites, share target picker, and local edit dialogs; root single/group chat pages still allow Android to exit to launcher.
+- Validation: `:app:compileDebugKotlin` and `:app:assembleDebug` passed after the latest UI/back-stack changes; run full unit + build validation before release tagging.
+
 更新时间：2026-05-29
 
 ## 1. 项目目标
