@@ -5762,11 +5762,27 @@ private fun ToolCallDetail(
         Spacer(Modifier.width(7.dp))
         Text("工具 $index · ${details.name}", fontWeight = FontWeight.SemiBold, color = colors.content)
       }
+      details.query?.takeIf { it.isNotBlank() }?.let {
+        ToolCallSection("查询词", it, labelColor = colors.accent, textColor = colors.metadata)
+      }
+      if (details.openedUrls.isNotEmpty()) {
+        ToolCallSection("打开 URL", details.openedUrls.joinToString("\n"), labelColor = colors.accent, textColor = colors.metadata)
+      }
+      if (details.citations.isNotEmpty()) {
+        ToolCallSection(
+          "Citation URL",
+          details.citations.joinToString("\n\n") { citation ->
+            listOfNotNull(citation.title?.takeIf { it.isNotBlank() }, citation.url).joinToString("\n")
+          },
+          labelColor = colors.accent,
+          textColor = colors.metadata
+        )
+      }
       details.input?.takeIf { it.isNotBlank() }?.let {
-        ToolCallSection("输入", it, labelColor = colors.accent, textColor = colors.metadata)
+        ToolCallSection("原始输入", it, labelColor = colors.accent, textColor = colors.metadata)
       }
       details.output?.takeIf { it.isNotBlank() }?.let {
-        ToolCallSection("输出", it, labelColor = colors.accent, textColor = colors.metadata)
+        ToolCallSection("原始输出", it, labelColor = colors.accent, textColor = colors.metadata)
       }
       if (details.input.isNullOrBlank() && details.output.isNullOrBlank()) {
         Text("暂无详情", style = MaterialTheme.typography.bodySmall, color = colors.metadata)
@@ -5927,13 +5943,28 @@ private fun ToolCallSection(
   Spacer(Modifier.height(6.dp))
 }
 
-private data class ToolCallDetails(
+internal data class ToolCallCitation(
+  val title: String?,
+  val url: String
+)
+
+internal data class ToolCallDetails(
   val name: String,
   val input: String?,
-  val output: String?
+  val output: String?,
+  val query: String? = null,
+  val openedUrls: List<String> = emptyList(),
+  val citations: List<ToolCallCitation> = emptyList()
 ) {
   val summary: String?
     get() {
+      query?.takeIf { it.isNotBlank() }?.let { return "查询：${it.take(100)}" }
+      openedUrls.firstOrNull()?.let { return "打开：${it.take(100)}" }
+      citations.firstOrNull()?.let { citation ->
+        return listOfNotNull(citation.title?.takeIf { it.isNotBlank() }, citation.url)
+          .joinToString(" · ")
+          .take(120)
+      }
       val outputLines = output?.lineSequence()
         ?.map { it.trim() }
         ?.filter { it.isNotBlank() }
@@ -5946,12 +5977,112 @@ private data class ToolCallDetails(
     }
 }
 
-private fun parseToolCallDetails(content: String): ToolCallDetails {
+internal fun parseToolCallDetails(content: String): ToolCallDetails {
   val name = content.substringAfter("工具：", "").lineSequence().firstOrNull()?.trim().orEmpty().ifBlank { "tool" }
   val input = content.sectionAfter("输入：", "输出：")
   val output = content.sectionAfter("输出：", null)
-  return ToolCallDetails(name = name, input = input, output = output)
+  val inputUrls = extractPlainUrls(input.orEmpty())
+  val outputUrls = extractPlainUrls(output.orEmpty())
+  val query = extractToolQuery(input) ?: extractToolQuery(output) ?: extractQueryFromToolOutput(output)
+  val openedUrls = when (name) {
+    "open", "open_page", "web_fetch" -> (inputUrls + outputUrls.take(1)).distinct()
+    else -> inputUrls
+  }
+  val citations = extractToolCitations(output.orEmpty(), openedUrls.toSet())
+  return ToolCallDetails(
+    name = name,
+    input = input,
+    output = output,
+    query = query,
+    openedUrls = openedUrls,
+    citations = citations
+  )
 }
+
+private fun extractToolQuery(text: String?): String? {
+  if (text.isNullOrBlank()) return null
+  Regex(""""(?:query|queries|q)"\s*:\s*(\[[^\]]*]|"[^"]*")""").find(text)?.let { match ->
+    val raw = match.groupValues[1].trim()
+    if (raw.startsWith("[")) {
+      return Regex(""""([^"]+)"""").find(raw)?.groupValues?.getOrNull(1)?.jsonUnescape()
+    }
+    return raw.trim('"').jsonUnescape().takeIf { it.isNotBlank() }
+  }
+  Regex("""(?im)^(?:查询|搜索关键词|搜索|query)\s*[:：]\s*(.+)$""").find(text)?.let { match ->
+    return match.groupValues[1].trim().takeIf { it.isNotBlank() }
+  }
+  return null
+}
+
+private fun extractQueryFromToolOutput(output: String?): String? {
+  if (output.isNullOrBlank()) return null
+  val lines = output.lineSequence().map { it.trim() }.toList()
+  val labelIndex = lines.indexOfFirst {
+    it.contains("查询") ||
+      it.contains("搜索关键词") ||
+      it.contains("鏌ヨ") ||
+      it.contains("鎼滅储鍏抽敭")
+  }
+  if (labelIndex < 0) return null
+  return lines.drop(labelIndex + 1)
+    .firstOrNull { line ->
+      line.isNotBlank() &&
+        !line.startsWith("http://") &&
+        !line.startsWith("https://") &&
+        !line.contains("网址") &&
+        !line.contains("缃戝潃")
+    }
+    ?.take(120)
+}
+
+private fun extractPlainUrls(text: String): List<String> {
+  return PlainToolUrlRegex.findAll(text)
+    .map { it.value.trimEnd('.', ',', ';', '，', '。', '；') }
+    .distinct()
+    .toList()
+}
+
+private fun extractToolCitations(output: String, openedUrls: Set<String>): List<ToolCallCitation> {
+  if (output.isBlank()) return emptyList()
+  val lines = output.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList()
+  val citations = mutableListOf<ToolCallCitation>()
+  lines.forEachIndexed { index, line ->
+    extractPlainUrls(line).forEach { url ->
+      if (url in openedUrls) return@forEach
+      val title = nearestCitationTitle(lines, index)
+      citations += ToolCallCitation(title = title, url = url)
+    }
+  }
+  return citations.distinctBy { it.url }
+}
+
+private fun nearestCitationTitle(lines: List<String>, urlLineIndex: Int): String? {
+  lines.take(urlLineIndex).takeLast(4).asReversed().forEach { line ->
+    Regex("""^\d+[.)]\s+(.+)$""").matchEntire(line)?.let { match ->
+      return match.groupValues[1].trim().takeIf { it.isNotBlank() }
+    }
+  }
+  val previous = lines.take(urlLineIndex).asReversed().firstOrNull { line ->
+    !line.startsWith("http://") &&
+      !line.startsWith("https://") &&
+      !line.contains("：") &&
+      !line.contains(":") &&
+      line.length <= 120
+  } ?: return null
+  return previous
+    .replace(Regex("""^\d+[.)]\s*"""), "")
+    .trim()
+    .takeIf { it.isNotBlank() }
+}
+
+private fun String.jsonUnescape(): String {
+  return replace("\\n", "\n")
+    .replace("\\\"", "\"")
+    .replace("\\/", "/")
+    .replace("\\\\", "\\")
+}
+
+private val PlainToolUrlRegex = Regex("https?://[^\\s<>\"'`\\]\\)\\}]+")
 
 private fun String.sectionAfter(label: String, until: String?): String? {
   val start = indexOf(label)

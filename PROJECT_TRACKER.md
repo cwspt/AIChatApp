@@ -14,6 +14,7 @@
 - Done: provider/network errors now surface clearer Chinese guidance for invalid requests, API keys, permissions, model/Base URL mismatches, rate limits, quota/billing issues, and 5xx upstream failures.
 - Done: large image attachments now keep the original local preview while sending a downscaled/compressed payload to providers; pending upload limits are calculated from the provider payload size.
 - Done: attachment limits are configurable in settings, covering single upload payload, total pending payload, and original image import caps while keeping the existing defaults.
+- Done: grouped tool-call cards now parse and show query text, opened page URLs, and citation URLs separately before the raw input/output details.
 - Planned: improve full long-image export for grouped tool cards, structure tool source URLs more explicitly, and consider persistent single-chat turn ids if UI-order grouping is not enough later.
 - Planned: vary grouped tool card watermarks by tool type, such as search for web_search and page/file icons for open or web_fetch.
 - Planned: extend image-generation mode with masks/local edit regions, reusable generation parameters, richer image export layouts, and DeepSeek support only if an official image-generation API becomes available.
@@ -242,7 +243,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-001 | 图片发送前压缩 | Done | 大图导入后保留原图本地预览，并生成最大边 2048px、优先低体积的发送副本；Provider 请求优先使用发送副本 |
 | NEXT-P1-002 | 附件限制设置项 | Done | 设置页已支持全局调整单个附件上传上限、待发送附件总量上限和图片原图导入上限，默认保持 20MB/50MB/80MB |
 | NEXT-P1-003 | OpenAI Files API 上传路径 | Planned | 大 PDF/文件不走 Base64，改用 `file_id` |
-| NEXT-P1-004 | 搜索工具卡片细节优化 | Planned | 显示查询词、打开网页 URL、citation URL 的层级关系 |
+| NEXT-P1-004 | 搜索工具卡片细节优化 | Done | 工具卡片展开后优先显示查询词、打开 URL 和 citation URL，再保留原始输入/输出用于排查 |
 | NEXT-P1-005 | 真实 GPT Key 验证图片 + PDF 输入 | Planned | 真机选择图片/PDF 后 GPT 能正确识别内容 |
 | NEXT-P1-006 | 真实 DeepSeek Key 回归验证附件按钮隐藏 | Planned | DeepSeek 对话无附件按钮，纯文本/搜索功能正常 |
 | NEXT-P1-007 | 滚动卡顿专项优化 | Planned | 排查长气泡交界处滚动卡顿和自绘滚动条影响 |

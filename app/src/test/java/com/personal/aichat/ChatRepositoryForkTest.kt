@@ -36,11 +36,13 @@ import com.personal.aichat.ui.collapsedGroupMessageSummary
 import com.personal.aichat.ui.ChatMessageListItem
 import com.personal.aichat.ui.GroupMessageListItem
 import com.personal.aichat.ui.LongBubbleNavTarget
+import com.personal.aichat.ui.ToolCallCitation
 import com.personal.aichat.ui.VisibleListItemBounds
 import com.personal.aichat.ui.chatMessageListItems
 import com.personal.aichat.ui.groupMessageListItems
 import com.personal.aichat.ui.longBubbleNavTarget
 import com.personal.aichat.ui.nextGroupAutoPlayBotId
+import com.personal.aichat.ui.parseToolCallDetails
 import com.personal.aichat.ui.resolvedBotBubbleColorKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -626,6 +628,50 @@ class ChatRepositoryForkTest {
     assertEquals(2, items.size)
     assertEquals("user", (items[0] as ChatMessageListItem.Message).message.id)
     assertEquals(listOf("tool"), (items[1] as ChatMessageListItem.ToolGroup).messageIds)
+  }
+
+  @Test
+  fun toolCallDetailsExtractQueryAndCitationUrls() {
+    val details = parseToolCallDetails(
+      """
+      工具：web_search
+      输入：
+      {"query":"DeepSeek API pricing"}
+      输出：
+      搜索关键词：
+      DeepSeek API pricing
+
+      1. DeepSeek Pricing
+      Official pricing page
+      https://api-docs.deepseek.com/quick_start/pricing/
+      """.trimIndent()
+    )
+
+    assertEquals("web_search", details.name)
+    assertEquals("DeepSeek API pricing", details.query)
+    assertEquals(emptyList<String>(), details.openedUrls)
+    assertEquals(1, details.citations.size)
+    assertEquals("DeepSeek Pricing", details.citations.first().title)
+    assertEquals("https://api-docs.deepseek.com/quick_start/pricing/", details.citations.first().url)
+    assertTrue(details.summary?.contains("DeepSeek API pricing") == true)
+  }
+
+  @Test
+  fun toolCallDetailsExtractOpenedUrlForOpenPage() {
+    val details = parseToolCallDetails(
+      """
+      工具：open_page
+      输入：
+      {"url":"https://example.com/report"}
+      输出：
+      打开网页：https://example.com/report
+      标题：Report
+      """.trimIndent()
+    )
+
+    assertEquals(listOf("https://example.com/report"), details.openedUrls)
+    assertEquals(emptyList<ToolCallCitation>(), details.citations)
+    assertTrue(details.summary?.contains("https://example.com/report") == true)
   }
 
   @Test
