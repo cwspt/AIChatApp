@@ -1077,15 +1077,16 @@ fun extractCompatibleToolDecision(json: String): CompatibleToolDecision {
         message?.getAsJsonArray("tool_calls")?.mapNotNull { item ->
           val tool = item.asJsonObject
           val function = tool.getAsJsonObject("function") ?: return@mapNotNull null
+          val name = normalizeCompatibleToolName(function.findString("name") ?: return@mapNotNull null)
+            ?: return@mapNotNull null
           CompatibleToolCall(
             id = tool.findString("id") ?: return@mapNotNull null,
-            name = function.findString("name") ?: return@mapNotNull null,
+            name = name,
             arguments = function.findString("arguments") ?: "{}"
           )
         } ?: emptyList()
       }
       .orEmpty()
-      .filter { it.name in CompatibleToolNames }
     CompatibleToolDecision(
       toolCalls = calls,
       content = firstMessage?.findString("content"),
@@ -1117,8 +1118,8 @@ fun extractCompatibleMarkupToolCalls(text: String): List<CompatibleToolCall> {
   return Regex(
     """(?is)<\s*invoke\s+name\s*=\s*["']([^"']+)["']\s*>(.*?)</\s*invoke\s*>"""
   ).findAll(normalized).mapIndexedNotNull { index, match ->
-    val name = match.groupValues[1].trim()
-    if (name !in CompatibleToolNames) return@mapIndexedNotNull null
+    val name = normalizeCompatibleToolName(match.groupValues[1])
+      ?: return@mapIndexedNotNull null
     val body = match.groupValues[2]
     val args = mutableMapOf<String, String>()
     Regex(
@@ -1137,12 +1138,22 @@ fun extractCompatibleMarkupToolCalls(text: String): List<CompatibleToolCall> {
 
 private fun normalizeCompatibleMarkup(text: String): String {
   return text
+    .replace("\uFF5C\uFF5CDSML\uFF5C\uFF5C", "")
     .replace("｜｜DSML｜｜", "")
     .replace("锝滐綔DSML锝滐綔", "")
     .trim()
 }
 
 private val CompatibleToolNames = setOf("web_search", "open", "open_page", "web_fetch")
+
+private fun normalizeCompatibleToolName(name: String): String? {
+  val normalized = name.trim().lowercase()
+  return when (normalized) {
+    "open_url", "open_url_page" -> "open"
+    in CompatibleToolNames -> normalized
+    else -> null
+  }
+}
 
 private fun looksLikeCompatibleToolMarkup(text: String): Boolean {
   val normalized = normalizeCompatibleMarkup(text)

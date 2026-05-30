@@ -856,6 +856,42 @@ class ProviderAdapterTest {
   }
 
   @Test
+  fun extractsFullwidthDsmlMarkupToolCall() {
+    val marker = "\uFF5C\uFF5CDSML\uFF5C\uFF5C"
+    val markerparameter = "${marker}parameter"
+    val call = extractCompatibleMarkupToolCall(
+      """
+      <${marker}tool_calls>
+      <${marker}invoke name="web_search">
+      <$markerparameter name="query" string="true">国内大模型API平台 对比 价格 2025</$markerparameter>
+      </${marker}invoke>
+      </${marker}tool_calls>
+      """.trimIndent()
+    )
+
+    assertEquals("web_search", call?.name)
+    assertEquals(true, call?.arguments?.contains("国内大模型API平台 对比 价格 2025") == true)
+  }
+
+  @Test
+  fun treatsMarkupOpenUrlAsOpenToolCall() {
+    val marker = "\uFF5C\uFF5CDSML\uFF5C\uFF5C"
+    val markerparameter = "${marker}parameter"
+    val call = extractCompatibleMarkupToolCall(
+      """
+      <${marker}tool_calls>
+      <${marker}invoke name="open_url">
+      <$markerparameter name="url" string="true">https://api-docs.deepseek.com/zh-cn/quick_start/pricing-details-cny/</$markerparameter>
+      </${marker}invoke>
+      </${marker}tool_calls>
+      """.trimIndent()
+    )
+
+    assertEquals("open", call?.name)
+    assertEquals(true, call?.arguments?.contains("pricing-details-cny") == true)
+  }
+
+  @Test
   fun extractsCompatibleToolCalls() {
     val calls = extractCompatibleToolCalls(
       """

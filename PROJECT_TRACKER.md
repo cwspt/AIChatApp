@@ -1,5 +1,15 @@
 # AIChatApp Project Tracker
 
+## 2026-05-30 Local Update Summary
+
+- Done: debug builds now install with the distinct Android launcher label `AI Chat Debug`, while release builds keep the normal `AI Chat` label.
+- Done: added `scripts/build-release-apk.ps1` to build signed release APKs into `app/build/outputs/apk/release` using the local JDK, Android SDK, Gradle user home, and existing release signing properties.
+- Done: release signing prerequisites were verified locally after the release keystore was restored; `:app:validateSigningRelease` and `:app:assembleRelease` completed successfully and produced `app-release.apk`.
+- Done: Markdown headings now render inline Markdown, so heading text such as `建议的**周模板**` no longer leaks raw `**` markers.
+- Done: DeepSeek/OpenAI-compatible DSML tool markup now handles the full-width `｜｜DSML｜｜` marker and normalizes model-emitted `open_url` / `open_url_page` tool names to the supported `open` tool, preventing raw DSML tool XML from being saved as assistant body text.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ProviderAdapterTest` and `:app:assembleDebug` passed after the DSML/open_url and Markdown heading fixes.
+- Planned: consider a one-time cleanup tool for historical assistant messages that already saved raw DSML markup before this fix; current fix prevents new leaks but does not rewrite existing chat history.
+
 ## 2026-05-29 Local Update Summary
 
 - Done: improved dark mode readability for system bars, main top bars, single-chat user bubbles, group-chat user bubbles, and group bot Markdown rendering.

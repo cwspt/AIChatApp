@@ -6907,7 +6907,7 @@ private fun MarkdownPreview(content: String, colors: MarkdownRenderColors? = nul
           )
         }
         is MarkdownBlock.Heading -> Text(
-          text = block.text,
+          text = renderInlineMarkdown(block.text),
           style = when (block.level) {
             1 -> MaterialTheme.typography.titleLarge
             2 -> MaterialTheme.typography.titleMedium
