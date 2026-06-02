@@ -1848,6 +1848,15 @@ class ChatViewModel(
     }
   }
 
+  fun saveGroupBackgroundPresetCombination(groupId: String, presetIds: List<String>) {
+    viewModelScope.launch {
+      preferencesRepository.setGroupBackgroundPresetCombination(groupId, presetIds)
+      localState.update {
+        it.copy(error = if (presetIds.isEmpty()) "已清除本群常用背景组合" else "已保存本群常用背景组合")
+      }
+    }
+  }
+
   fun exportProviderConfigsText(context: Context) {
     viewModelScope.launch {
       val text = repository.exportProvidersText(includeApiKeys = true)

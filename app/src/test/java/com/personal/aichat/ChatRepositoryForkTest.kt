@@ -1411,6 +1411,16 @@ private class FakeSelectionStore : ChatSelectionStore {
   override suspend fun setBackgroundPresets(presets: List<ChatBackgroundPreset>) {
     appSettings.value = appSettings.value.copy(backgroundPresets = presets)
   }
+
+  override suspend fun setGroupBackgroundPresetCombination(groupId: String, presetIds: List<String>) {
+    val current = appSettings.value.groupBackgroundPresetCombinations.toMutableMap()
+    if (presetIds.isEmpty()) {
+      current.remove(groupId)
+    } else {
+      current[groupId] = presetIds
+    }
+    appSettings.value = appSettings.value.copy(groupBackgroundPresetCombinations = current)
+  }
 }
 
 private class FakeApiKeyStore : ApiKeyStore {

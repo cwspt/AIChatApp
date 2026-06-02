@@ -48,7 +48,8 @@ data class AppSettings(
   val attachmentMaxFileMb: Int = DEFAULT_ATTACHMENT_MAX_FILE_MB,
   val attachmentMaxPendingMb: Int = DEFAULT_ATTACHMENT_MAX_PENDING_MB,
   val attachmentMaxImageSourceMb: Int = DEFAULT_ATTACHMENT_MAX_IMAGE_SOURCE_MB,
-  val backgroundPresets: List<ChatBackgroundPreset> = defaultBackgroundPresets()
+  val backgroundPresets: List<ChatBackgroundPreset> = defaultBackgroundPresets(),
+  val groupBackgroundPresetCombinations: Map<String, List<String>> = emptyMap()
 )
 
 fun defaultBackgroundPresets(now: Long = 0L): List<ChatBackgroundPreset> = listOf(

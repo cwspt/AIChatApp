@@ -874,9 +874,11 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         )
       }
       val mode = draft?.mode ?: GroupChatDialogMode.CREATE
+      val editableGroupId = editingGroup?.id.takeIf { mode == GroupChatDialogMode.EDIT }
       NewGroupChatDialog(
         bots = state.aiBots.filter { it.enabled },
         backgroundPresets = state.appSettings.backgroundPresets,
+        commonBackgroundPresetIds = editableGroupId?.let { state.appSettings.groupBackgroundPresetCombinations[it] }.orEmpty(),
         title = when (mode) {
           GroupChatDialogMode.EDIT -> "编辑 AI 群聊"
           GroupChatDialogMode.COPY -> "复制 AI 群聊"
@@ -897,6 +899,9 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
           } else {
             viewModel.createGroupChat(title, topic, botIds)
           }
+        },
+        onSaveBackgroundPresetCombination = editableGroupId?.let { groupId ->
+          { presetIds -> viewModel.saveGroupBackgroundPresetCombination(groupId, presetIds) }
         }
       )
     }
@@ -4731,18 +4736,24 @@ private fun BotColorChoice(
 private fun NewGroupChatDialog(
   bots: List<AiBot>,
   backgroundPresets: List<ChatBackgroundPreset>,
+  commonBackgroundPresetIds: List<String> = emptyList(),
   title: String = "新建 AI 群聊",
   confirmText: String = "创建",
   initialTitle: String = "",
   initialTopic: String = "",
   initialSelectedBotIds: Set<String> = emptySet(),
   onDismiss: () -> Unit,
-  onCreate: (String, String, List<String>) -> Unit
+  onCreate: (String, String, List<String>) -> Unit,
+  onSaveBackgroundPresetCombination: ((List<String>) -> Unit)? = null
 ) {
   var groupTitle by remember(initialTitle) { mutableStateOf(initialTitle) }
   var topic by remember(initialTopic) { mutableStateOf(initialTopic) }
   var selectedBotIds by remember(initialSelectedBotIds) { mutableStateOf(initialSelectedBotIds) }
   var presetPickerOpen by remember { mutableStateOf(false) }
+  val commonBackgroundPresets = remember(backgroundPresets, commonBackgroundPresetIds) {
+    val byId = backgroundPresets.associateBy { it.id }
+    commonBackgroundPresetIds.mapNotNull { byId[it] }
+  }
   AlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(title) },
@@ -4776,6 +4787,13 @@ private fun NewGroupChatDialog(
           Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null, modifier = Modifier.size(18.dp))
           Spacer(Modifier.width(6.dp))
           Text("插入背景预设")
+        }
+        if (commonBackgroundPresets.isNotEmpty()) {
+          TextButton(onClick = { topic = appendPresetTexts(topic, commonBackgroundPresets.map { it.content }) }) {
+            Icon(Icons.Outlined.Bookmark, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("插入本群常用组合")
+          }
         }
         Text("选择机器人", fontWeight = FontWeight.SemiBold)
         if (bots.isEmpty()) {
@@ -4826,10 +4844,17 @@ private fun NewGroupChatDialog(
   if (presetPickerOpen) {
     BackgroundPresetPickerDialog(
       presets = backgroundPresets,
+      initialSelectedPresetIds = commonBackgroundPresetIds,
       onDismiss = { presetPickerOpen = false },
-      onSelect = { preset ->
-        topic = appendPresetText(topic, preset.content)
+      onSelect = { selectedPresets ->
+        topic = appendPresetTexts(topic, selectedPresets.map { it.content })
         presetPickerOpen = false
+      },
+      onSaveCombination = onSaveBackgroundPresetCombination?.let { saveCombination ->
+        { selectedPresets ->
+          saveCombination(selectedPresets.map { it.id })
+          presetPickerOpen = false
+        }
       }
     )
   }
@@ -4838,11 +4863,16 @@ private fun NewGroupChatDialog(
 @Composable
 private fun BackgroundPresetPickerDialog(
   presets: List<ChatBackgroundPreset>,
+  initialSelectedPresetIds: List<String> = emptyList(),
   onDismiss: () -> Unit,
-  onSelect: (ChatBackgroundPreset) -> Unit
+  onSelect: (List<ChatBackgroundPreset>) -> Unit,
+  onSaveCombination: ((List<ChatBackgroundPreset>) -> Unit)? = null
 ) {
   var query by remember { mutableStateOf("") }
   var categoryFilter by remember { mutableStateOf<String?>(null) }
+  var selectedPresetIds by remember(initialSelectedPresetIds, presets) {
+    mutableStateOf<Set<String>>(initialSelectedPresetIds.filter { id -> presets.any { it.id == id } }.toSet())
+  }
   val sortedPresets = remember(presets) { presets.sortedBy { it.sortOrder } }
   val categories = remember(sortedPresets) {
     sortedPresets.mapNotNull { it.cleanCategory() }.distinctBy { it.lowercase() }.sorted()
@@ -4852,6 +4882,9 @@ private fun BackgroundPresetPickerDialog(
       preset.matchesBackgroundPresetQuery(query) &&
         (categoryFilter == null || preset.cleanCategory().equals(categoryFilter, ignoreCase = true))
     }
+  }
+  val selectedPresets = remember(sortedPresets, selectedPresetIds) {
+    sortedPresets.filter { it.id in selectedPresetIds }
   }
   AlertDialog(
     onDismissRequest = onDismiss,
@@ -4911,26 +4944,49 @@ private fun BackgroundPresetPickerDialog(
             shape = RoundedCornerShape(8.dp),
             modifier = Modifier
               .fillMaxWidth()
-              .clickable { onSelect(preset) }
+              .clickable { onSelect(listOf(preset)) }
           ) {
-            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-              Text(preset.title, fontWeight = FontWeight.SemiBold)
-              preset.cleanCategory()?.let { category ->
-                Text("#$category", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            Row(
+              modifier = Modifier.padding(10.dp),
+              verticalAlignment = Alignment.Top,
+              horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+              Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(preset.title, fontWeight = FontWeight.SemiBold)
+                preset.cleanCategory()?.let { category ->
+                  Text("#$category", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                }
+                Text(
+                  preset.content,
+                  maxLines = 4,
+                  overflow = TextOverflow.Ellipsis,
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
               }
-              Text(
-                preset.content,
-                maxLines = 4,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+              Checkbox(
+                checked = preset.id in selectedPresetIds,
+                onCheckedChange = { checked ->
+                  selectedPresetIds = if (checked) selectedPresetIds + preset.id else selectedPresetIds - preset.id
+                }
               )
             }
           }
         }
       }
     },
-    confirmButton = {},
+    confirmButton = {
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        onSaveCombination?.let { saveCombination ->
+          TextButton(onClick = { saveCombination(selectedPresets) }, enabled = selectedPresets.isNotEmpty()) {
+            Text("设为常用")
+          }
+        }
+        Button(onClick = { onSelect(selectedPresets) }, enabled = selectedPresets.isNotEmpty()) {
+          Text("插入选中")
+        }
+      }
+    },
     dismissButton = {
       TextButton(onClick = onDismiss) {
         Text("取消")
@@ -4939,10 +4995,11 @@ private fun BackgroundPresetPickerDialog(
   )
 }
 
-private fun appendPresetText(current: String, presetContent: String): String {
-  val clean = presetContent.trim()
-  if (clean.isBlank()) return current
-  return if (current.isBlank()) clean else "${current.trimEnd()}\n\n$clean"
+private fun appendPresetTexts(current: String, presetContents: List<String>): String {
+  val clean = presetContents.map { it.trim() }.filter { it.isNotBlank() }
+  if (clean.isEmpty()) return current
+  val appended = clean.joinToString("\n\n")
+  return if (current.isBlank()) appended else "${current.trimEnd()}\n\n$appended"
 }
 
 private fun shareText(context: Context, text: String, title: String) {

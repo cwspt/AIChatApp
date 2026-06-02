@@ -38,11 +38,13 @@ interface ChatSelectionStore {
   suspend fun setStreamingBubbleMotion(motion: StreamingBubbleMotion)
   suspend fun setAttachmentLimits(maxFileMb: Int, maxPendingMb: Int, maxImageSourceMb: Int)
   suspend fun setBackgroundPresets(presets: List<ChatBackgroundPreset>)
+  suspend fun setGroupBackgroundPresetCombination(groupId: String, presetIds: List<String>)
 }
 
 class ChatPreferencesRepository(private val context: Context) : ChatSelectionStore {
   private val gson = Gson()
   private val backgroundPresetListType = object : TypeToken<List<ChatBackgroundPreset>>() {}.type
+  private val groupBackgroundPresetCombinationsType = object : TypeToken<Map<String, List<String>>>() {}.type
   private val selectedProviderKey = stringPreferencesKey("selected_provider_id")
   private val selectedConversationKey = stringPreferencesKey("selected_conversation_id")
   private val themePaletteKey = stringPreferencesKey("theme_palette")
@@ -55,6 +57,7 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
   private val attachmentMaxPendingMbKey = intPreferencesKey("attachment_max_pending_mb")
   private val attachmentMaxImageSourceMbKey = intPreferencesKey("attachment_max_image_source_mb")
   private val backgroundPresetsKey = stringPreferencesKey("background_presets_json")
+  private val groupBackgroundPresetCombinationsKey = stringPreferencesKey("group_background_preset_combinations_json")
 
   override val selectedProviderId: Flow<String?> = context.chatPreferencesDataStore.data.map { preferences ->
     preferences[selectedProviderKey]
@@ -86,7 +89,8 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
         .coerceIn(MinAttachmentPendingMb, MaxAttachmentPendingMb),
       attachmentMaxImageSourceMb = (preferences[attachmentMaxImageSourceMbKey] ?: DEFAULT_ATTACHMENT_MAX_IMAGE_SOURCE_MB)
         .coerceIn(MinAttachmentImageSourceMb, MaxAttachmentImageSourceMb),
-      backgroundPresets = parseBackgroundPresets(preferences[backgroundPresetsKey])
+      backgroundPresets = parseBackgroundPresets(preferences[backgroundPresetsKey]),
+      groupBackgroundPresetCombinations = parseGroupBackgroundPresetCombinations(preferences[groupBackgroundPresetCombinationsKey])
     )
   }
 
@@ -155,6 +159,21 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
     }
   }
 
+  override suspend fun setGroupBackgroundPresetCombination(groupId: String, presetIds: List<String>) {
+    val cleanGroupId = groupId.trim()
+    if (cleanGroupId.isBlank()) return
+    val cleanPresetIds = presetIds.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+    context.chatPreferencesDataStore.edit { preferences ->
+      val current = parseGroupBackgroundPresetCombinations(preferences[groupBackgroundPresetCombinationsKey]).toMutableMap()
+      if (cleanPresetIds.isEmpty()) {
+        current.remove(cleanGroupId)
+      } else {
+        current[cleanGroupId] = cleanPresetIds
+      }
+      preferences[groupBackgroundPresetCombinationsKey] = gson.toJson(current)
+    }
+  }
+
   private fun parseBackgroundPresets(json: String?): List<ChatBackgroundPreset> {
     if (json.isNullOrBlank()) return defaultBackgroundPresets()
     return runCatching {
@@ -177,6 +196,18 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
           sortOrder = index
         )
       }
+  }
+
+  private fun parseGroupBackgroundPresetCombinations(json: String?): Map<String, List<String>> {
+    if (json.isNullOrBlank()) return emptyMap()
+    return runCatching {
+      gson.fromJson<Map<String, List<String>>>(json, groupBackgroundPresetCombinationsType)
+    }.getOrNull()
+      ?.mapKeys { it.key.trim() }
+      ?.mapValues { (_, ids) -> ids.map { it.trim() }.filter { it.isNotBlank() }.distinct() }
+      ?.filterKeys { it.isNotBlank() }
+      ?.filterValues { it.isNotEmpty() }
+      ?: emptyMap()
   }
 
   private companion object {
