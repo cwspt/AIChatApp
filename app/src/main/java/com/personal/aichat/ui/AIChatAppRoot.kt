@@ -2058,6 +2058,8 @@ private fun FavoriteSnippetsPage(
   var query by remember { mutableStateOf("") }
   var tagFilter by remember { mutableStateOf<String?>(null) }
   var selectedFavoriteId by remember { mutableStateOf<String?>(null) }
+  var batchMode by remember { mutableStateOf(false) }
+  var selectedFavoriteIds by remember { mutableStateOf<Set<String>>(emptySet()) }
   var tagManagerOpen by remember { mutableStateOf(false) }
   var importExportOpen by remember { mutableStateOf(false) }
   val selectedFavorite = favorites.firstOrNull { it.id == selectedFavoriteId }
@@ -2077,6 +2079,10 @@ private fun FavoriteSnippetsPage(
     val matchesQuery = normalizedQuery.isBlank() || favorite.searchText.contains(normalizedQuery)
     val matchesTag = tagFilter == null || favorite.tags.any { it.equals(tagFilter, ignoreCase = true) }
     matchesQuery && matchesTag
+  }
+  val filteredIds = filtered.map { it.id }.toSet()
+  LaunchedEffect(favorites) {
+    selectedFavoriteIds = selectedFavoriteIds.filterTo(mutableSetOf()) { id -> favorites.any { it.id == id } }
   }
 
   Surface(
@@ -2113,6 +2119,14 @@ private fun FavoriteSnippetsPage(
           Icon(Icons.Outlined.Bookmark, contentDescription = null)
           Spacer(Modifier.width(8.dp))
           Text("收藏夹", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+          TextButton(onClick = {
+            batchMode = !batchMode
+            if (!batchMode) selectedFavoriteIds = emptySet()
+          }) {
+            Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(if (batchMode) "退出批量" else "批量")
+          }
           TextButton(onClick = { importExportOpen = true }) {
             Icon(Icons.Outlined.ImportExport, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(4.dp))
@@ -2127,6 +2141,45 @@ private fun FavoriteSnippetsPage(
           }
           IconButton(onClick = onDismiss) {
             Icon(Icons.Outlined.Close, contentDescription = "关闭收藏夹")
+          }
+        }
+        if (batchMode) {
+          Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+              Text("已选择 ${selectedFavoriteIds.size} 项", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+              TextButton(
+                onClick = {
+                  selectedFavoriteIds = if (selectedFavoriteIds.containsAll(filteredIds)) {
+                    selectedFavoriteIds - filteredIds
+                  } else {
+                    selectedFavoriteIds + filteredIds
+                  }
+                },
+                enabled = filteredIds.isNotEmpty()
+              ) {
+                Text(if (filteredIds.isNotEmpty() && selectedFavoriteIds.containsAll(filteredIds)) "取消全选" else "全选当前")
+              }
+              TextButton(
+                onClick = {
+                  selectedFavoriteIds.forEach(onDelete)
+                  selectedFavoriteIds = emptySet()
+                  batchMode = false
+                },
+                enabled = selectedFavoriteIds.isNotEmpty()
+              ) {
+                Icon(Icons.Outlined.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("删除")
+              }
+            }
           }
         }
         OutlinedTextField(
@@ -2170,7 +2223,26 @@ private fun FavoriteSnippetsPage(
               FavoriteSnippetCard(
                 favorite = favorite,
                 query = normalizedQuery,
-                onClick = { selectedFavoriteId = favorite.id }
+                batchMode = batchMode,
+                selected = favorite.id in selectedFavoriteIds,
+                onToggleSelected = {
+                  selectedFavoriteIds = if (favorite.id in selectedFavoriteIds) {
+                    selectedFavoriteIds - favorite.id
+                  } else {
+                    selectedFavoriteIds + favorite.id
+                  }
+                },
+                onClick = {
+                  if (batchMode) {
+                    selectedFavoriteIds = if (favorite.id in selectedFavoriteIds) {
+                      selectedFavoriteIds - favorite.id
+                    } else {
+                      selectedFavoriteIds + favorite.id
+                    }
+                  } else {
+                    selectedFavoriteId = favorite.id
+                  }
+                }
               )
             }
           }
@@ -2395,6 +2467,9 @@ private fun FavoriteTagRenameDialog(
 private fun FavoriteSnippetCard(
   favorite: FavoriteSnippet,
   query: String,
+  batchMode: Boolean,
+  selected: Boolean,
+  onToggleSelected: () -> Unit,
   onClick: () -> Unit
 ) {
   Surface(
@@ -2405,7 +2480,19 @@ private fun FavoriteSnippetCard(
       .fillMaxWidth()
       .clickable(onClick = onClick)
   ) {
-    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(
+      modifier = Modifier.padding(12.dp),
+      verticalAlignment = Alignment.Top,
+      horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+      if (batchMode) {
+        Checkbox(
+          checked = selected,
+          onCheckedChange = { onToggleSelected() },
+          modifier = Modifier.padding(top = 2.dp)
+        )
+      }
+      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
       val highlightStyle = SpanStyle(
         background = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
         color = MaterialTheme.colorScheme.onSurface,
@@ -2460,6 +2547,7 @@ private fun FavoriteSnippetCard(
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
       )
+      }
     }
   }
 }
