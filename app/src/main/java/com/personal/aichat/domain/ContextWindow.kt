@@ -33,6 +33,29 @@ data class ContextCompressionResult(
   val estimatedTokensAfter: Int
 )
 
+fun parseContextWindowTokensInput(input: String): Int? {
+  val normalized = input
+    .trim()
+    .replace("_", "")
+    .replace(",", "")
+    .replace(" ", "")
+    .lowercase()
+  if (normalized.isBlank()) return null
+
+  val multiplier = when {
+    normalized.endsWith("k") -> 1_000L
+    normalized.endsWith("m") -> 1_000_000L
+    else -> 1L
+  }
+  val numberPart = if (multiplier == 1L) normalized else normalized.dropLast(1)
+  if (numberPart.isBlank()) return null
+
+  val number = numberPart.toDoubleOrNull() ?: return null
+  if (number <= 0) return null
+  val tokens = (number * multiplier).toLong()
+  return tokens.takeIf { it in 1..Int.MAX_VALUE }?.toInt()
+}
+
 object KnownContextWindows {
   fun resolve(provider: ChatProviderConfig, model: String): Int? {
     provider.contextWindowTokensOverride?.takeIf { it > 0 }?.let { return it }

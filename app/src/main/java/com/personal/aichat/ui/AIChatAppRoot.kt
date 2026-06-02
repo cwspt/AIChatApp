@@ -179,6 +179,7 @@ import com.personal.aichat.domain.AppThemeMode
 import com.personal.aichat.domain.AppThemePalette
 import com.personal.aichat.domain.StreamingBubbleMotion
 import com.personal.aichat.domain.WebSearchMode
+import com.personal.aichat.domain.parseContextWindowTokensInput
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.io.File
@@ -7916,6 +7917,10 @@ private fun ProviderSettingsDialog(
   var imageGenerationApiMode by remember(provider.id) { mutableStateOf(provider.imageGenerationApiMode) }
   var imageGenerationModel by remember(provider.id) { mutableStateOf(provider.imageGenerationModel) }
   var apiKey by remember(provider.id) { mutableStateOf("") }
+  val parsedContextWindowTokens = remember(contextWindowTokens) {
+    parseContextWindowTokensInput(contextWindowTokens)
+  }
+  val contextWindowInputInvalid = contextWindowTokens.isNotBlank() && parsedContextWindowTokens == null
 
   Dialog(
     onDismissRequest = onDismiss,
@@ -7972,10 +7977,23 @@ private fun ProviderSettingsDialog(
           )
           OutlinedTextField(
             value = contextWindowTokens,
-            onValueChange = { value -> contextWindowTokens = value.filter { it.isDigit() }.take(9) },
+            onValueChange = { value ->
+              contextWindowTokens = value
+                .filter { it.isDigit() || it in setOf('k', 'K', 'm', 'M', ',', '_', '.', ' ') }
+                .take(16)
+            },
             label = { Text("上下文上限 tokens（可选）") },
-            placeholder = { Text("留空则使用内置模型表") },
-            supportingText = { Text("用于显示约剩余容量和启用自动压缩；自定义模型建议填写。") },
+            placeholder = { Text("例如 1M、400K 或 1000000") },
+            supportingText = {
+              Text(
+                when {
+                  contextWindowInputInvalid -> "无法识别；可填写 1M、400K、128000 或 1,000,000。"
+                  parsedContextWindowTokens != null -> "将保存为 ${formatTokenCount(parsedContextWindowTokens)} tokens，用于容量估算和自动压缩。"
+                  else -> "留空则使用内置模型表；自定义模型建议填写。"
+                }
+              )
+            },
+            isError = contextWindowInputInvalid,
             modifier = Modifier.fillMaxWidth()
           )
           if (provider.type == ProviderType.OPENAI_RESPONSES) {
@@ -8077,13 +8095,14 @@ private fun ProviderSettingsDialog(
           }
           Spacer(Modifier.width(8.dp))
           Button(
+            enabled = !contextWindowInputInvalid,
             onClick = {
               onSave(
                 provider.copy(
                   displayName = displayName.trim(),
                   baseUrl = baseUrl.trim().trimEnd('/'),
                   defaultModel = model.trim(),
-                  contextWindowTokensOverride = contextWindowTokens.toIntOrNull()?.takeIf { it > 0 },
+                  contextWindowTokensOverride = parsedContextWindowTokens,
                   enabled = true,
                   supportsAttachments = supportsAttachments,
                   supportsImageGeneration = supportsImageGeneration && provider.type == ProviderType.OPENAI_RESPONSES,

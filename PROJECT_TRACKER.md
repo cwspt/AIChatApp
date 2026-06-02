@@ -1,5 +1,11 @@
 # AIChatApp Project Tracker
 
+## 2026-06-02 Local Update Summary
+
+- Done: provider context-window override input now accepts compact forms such as `1M`, `400K`, `1.5m`, `1,000,000`, and plain token counts instead of digits-only input.
+- Done: provider settings show the parsed token count while editing and disable saving for unrecognized context-window values, preventing accidental `1M -> 1 token` or `400K -> 400 tokens` saves.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ContextWindowTest` and `:app:assembleDebug` passed after the context-window input parsing change.
+
 ## 2026-05-30 Local Update Summary
 
 - Done: debug builds now install with the distinct Android launcher label `AI Chat Debug`, while release builds keep the normal `AI Chat` label.
