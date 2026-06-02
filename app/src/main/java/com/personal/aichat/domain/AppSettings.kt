@@ -34,7 +34,8 @@ data class ChatBackgroundPreset(
   val content: String,
   val sortOrder: Int,
   val createdAt: Long,
-  val updatedAt: Long
+  val updatedAt: Long,
+  val category: String? = null
 )
 
 data class AppSettings(
@@ -57,7 +58,8 @@ fun defaultBackgroundPresets(now: Long = 0L): List<ChatBackgroundPreset> = listO
     content = "家庭成员、年龄、健康情况、作息、饮食偏好、预算和出行限制等背景：\n- \n\n讨论时请优先考虑安全性、可执行性和家庭成员的真实约束。",
     sortOrder = 0,
     createdAt = now,
-    updatedAt = now
+    updatedAt = now,
+    category = "家庭"
   ),
   ChatBackgroundPreset(
     id = "default_personal",
@@ -65,7 +67,8 @@ fun defaultBackgroundPresets(now: Long = 0L): List<ChatBackgroundPreset> = listO
     content = "我的个人偏好、目标、禁忌、预算、时间安排和决策风格：\n- \n\n讨论时请在给出建议前先检查是否符合这些偏好。",
     sortOrder = 1,
     createdAt = now,
-    updatedAt = now
+    updatedAt = now,
+    category = "个人"
   ),
   ChatBackgroundPreset(
     id = "default_project",
@@ -73,6 +76,7 @@ fun defaultBackgroundPresets(now: Long = 0L): List<ChatBackgroundPreset> = listO
     content = "项目目标、当前进度、相关角色、技术/业务约束、截止时间和已知风险：\n- \n\n讨论时请围绕目标拆解方案、风险和下一步行动。",
     sortOrder = 2,
     createdAt = now,
-    updatedAt = now
+    updatedAt = now,
+    category = "工作"
   )
 )

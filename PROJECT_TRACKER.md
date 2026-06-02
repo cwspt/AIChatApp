@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: background presets now support optional categories, default presets ship with categories, Settings can edit/filter by category, and the group-chat preset insertion dialog can filter and display categories.
+- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the background preset category change.
 - Done: background presets now support JSON export/share and JSON import from Settings; imports append cleaned presets, regenerate conflicting IDs, and keep existing presets intact.
 - Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the background preset import/export change.
 - Done: background presets can now be searched by title/content in both Settings and the group-chat preset insertion dialog, with multi-keyword matching and empty states.
@@ -333,7 +335,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P2-011 | 群聊播放器增强 | Planned | 支持有限轮数、每轮间隔、按群聊保存偏好和失败后重试策略 |
 | NEXT-P2-012 | 机器人头像和颜色 | Planned | 群聊气泡按机器人显示头像、颜色和可扫描身份标记 |
 | NEXT-P2-013 | 群摘要自动滚动更新 | Planned | 长讨论自动或半自动更新摘要，避免上下文无限增长 |
-| NEXT-P2-014 | 背景预设导入导出和分类搜索 | In Progress | 背景预设已支持设置页和群聊插入弹窗的关键词搜索，并支持 JSON 导出/分享与追加导入；仍需继续补分类和按群聊保存常用组合 |
+| NEXT-P2-014 | 背景预设导入导出和分类搜索 | In Progress | 背景预设已支持设置页和群聊插入弹窗的关键词搜索、JSON 导出/分享与追加导入、分类编辑与分类筛选；仍需继续补按群聊保存常用组合 |
 | NEXT-P3-001 | Anthropic adapter | Planned | Claude Messages API 文本流式对话 |
 | NEXT-P3-002 | Gemini adapter | Planned | Gemini GenerateContent 文本和多模态对话 |
 | NEXT-P3-003 | 对话 PDF 导出 | Planned | 支持完整对话导出 PDF |

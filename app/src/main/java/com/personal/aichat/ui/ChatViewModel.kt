@@ -1746,9 +1746,10 @@ class ChatViewModel(
     }
   }
 
-  fun saveBackgroundPreset(preset: ChatBackgroundPreset?, title: String, content: String) {
+  fun saveBackgroundPreset(preset: ChatBackgroundPreset?, title: String, content: String, category: String) {
     val cleanTitle = title.trim().ifBlank { "未命名背景" }
     val cleanContent = content.trim()
+    val cleanCategory = category.trim().takeIf { it.isNotBlank() }
     if (cleanContent.isBlank()) {
       localState.update { it.copy(error = "背景内容不能为空") }
       return
@@ -1763,12 +1764,13 @@ class ChatViewModel(
           content = cleanContent,
           sortOrder = current.size,
           createdAt = now,
-          updatedAt = now
+          updatedAt = now,
+          category = cleanCategory
         )
       } else {
         current.map {
           if (it.id == preset.id) {
-            it.copy(title = cleanTitle, content = cleanContent, updatedAt = now)
+            it.copy(title = cleanTitle, content = cleanContent, category = cleanCategory, updatedAt = now)
           } else {
             it
           }
@@ -1827,6 +1829,7 @@ class ChatViewModel(
               id = uniqueBackgroundPresetId(preset.id, usedIds),
               title = preset.title.trim().ifBlank { "未命名背景" },
               content = cleanContent,
+              category = preset.category?.trim()?.takeIf { it.isNotBlank() },
               createdAt = preset.createdAt.takeIf { it > 0L } ?: now,
               updatedAt = now
             )

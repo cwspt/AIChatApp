@@ -173,6 +173,7 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
         preset.copy(
           title = preset.title.trim().ifBlank { "未命名背景" },
           content = preset.content.trim(),
+          category = preset.category?.trim()?.takeIf { it.isNotBlank() },
           sortOrder = index
         )
       }

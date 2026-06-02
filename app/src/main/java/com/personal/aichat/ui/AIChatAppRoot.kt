@@ -4842,9 +4842,16 @@ private fun BackgroundPresetPickerDialog(
   onSelect: (ChatBackgroundPreset) -> Unit
 ) {
   var query by remember { mutableStateOf("") }
+  var categoryFilter by remember { mutableStateOf<String?>(null) }
   val sortedPresets = remember(presets) { presets.sortedBy { it.sortOrder } }
-  val filteredPresets = remember(sortedPresets, query) {
-    sortedPresets.filter { it.matchesBackgroundPresetQuery(query) }
+  val categories = remember(sortedPresets) {
+    sortedPresets.mapNotNull { it.cleanCategory() }.distinctBy { it.lowercase() }.sorted()
+  }
+  val filteredPresets = remember(sortedPresets, query, categoryFilter) {
+    sortedPresets.filter { preset ->
+      preset.matchesBackgroundPresetQuery(query) &&
+        (categoryFilter == null || preset.cleanCategory().equals(categoryFilter, ignoreCase = true))
+    }
   }
   AlertDialog(
     onDismissRequest = onDismiss,
@@ -4872,6 +4879,24 @@ private fun BackgroundPresetPickerDialog(
           singleLine = true,
           modifier = Modifier.fillMaxWidth()
         )
+        if (categories.isNotEmpty()) {
+          LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item {
+              FilterChip(
+                selected = categoryFilter == null,
+                onClick = { categoryFilter = null },
+                label = { Text("全部") }
+              )
+            }
+            items(categories, key = { it }) { category ->
+              FilterChip(
+                selected = categoryFilter.equals(category, ignoreCase = true),
+                onClick = { categoryFilter = if (categoryFilter.equals(category, ignoreCase = true)) null else category },
+                label = { Text(category) }
+              )
+            }
+          }
+        }
         if (filteredPresets.isEmpty()) {
           Text(
             "没有匹配的背景预设",
@@ -4890,6 +4915,9 @@ private fun BackgroundPresetPickerDialog(
           ) {
             Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
               Text(preset.title, fontWeight = FontWeight.SemiBold)
+              preset.cleanCategory()?.let { category ->
+                Text("#$category", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+              }
               Text(
                 preset.content,
                 maxLines = 4,
@@ -4945,7 +4973,7 @@ private fun AppSettingsPage(
   onExportBackgroundPresets: () -> Unit,
   onImportBackgroundPresets: (String) -> Unit,
   onOpenBotManager: () -> Unit,
-  onSaveBackgroundPreset: (ChatBackgroundPreset?, String, String) -> Unit,
+  onSaveBackgroundPreset: (ChatBackgroundPreset?, String, String, String) -> Unit,
   onDeleteBackgroundPreset: (String) -> Unit,
   onMoveBackgroundPreset: (String, Int) -> Unit
 ) {
@@ -4954,11 +4982,18 @@ private fun AppSettingsPage(
   var editingPreset by remember { mutableStateOf<ChatBackgroundPreset?>(null) }
   var creatingPreset by remember { mutableStateOf(false) }
   var backgroundPresetQuery by remember { mutableStateOf("") }
+  var backgroundPresetCategoryFilter by remember { mutableStateOf<String?>(null) }
   val sortedBackgroundPresets = remember(state.appSettings.backgroundPresets) {
     state.appSettings.backgroundPresets.sortedBy { it.sortOrder }
   }
-  val filteredBackgroundPresets = remember(sortedBackgroundPresets, backgroundPresetQuery) {
-    sortedBackgroundPresets.filter { it.matchesBackgroundPresetQuery(backgroundPresetQuery) }
+  val backgroundPresetCategories = remember(sortedBackgroundPresets) {
+    sortedBackgroundPresets.mapNotNull { it.cleanCategory() }.distinctBy { it.lowercase() }.sorted()
+  }
+  val filteredBackgroundPresets = remember(sortedBackgroundPresets, backgroundPresetQuery, backgroundPresetCategoryFilter) {
+    sortedBackgroundPresets.filter { preset ->
+      preset.matchesBackgroundPresetQuery(backgroundPresetQuery) &&
+        (backgroundPresetCategoryFilter == null || preset.cleanCategory().equals(backgroundPresetCategoryFilter, ignoreCase = true))
+    }
   }
   Surface(
     color = MaterialTheme.colorScheme.background,
@@ -5166,6 +5201,27 @@ private fun AppSettingsPage(
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
           )
+          if (backgroundPresetCategories.isNotEmpty()) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              item {
+                FilterChip(
+                  selected = backgroundPresetCategoryFilter == null,
+                  onClick = { backgroundPresetCategoryFilter = null },
+                  label = { Text("全部") }
+                )
+              }
+              items(backgroundPresetCategories, key = { it }) { category ->
+                FilterChip(
+                  selected = backgroundPresetCategoryFilter.equals(category, ignoreCase = true),
+                  onClick = {
+                    backgroundPresetCategoryFilter =
+                      if (backgroundPresetCategoryFilter.equals(category, ignoreCase = true)) null else category
+                  },
+                  label = { Text(category) }
+                )
+              }
+            }
+          }
           if (filteredBackgroundPresets.isEmpty()) {
             Text(
               "没有匹配的背景预设",
@@ -5197,8 +5253,8 @@ private fun AppSettingsPage(
         creatingPreset = false
         editingPreset = null
       },
-      onSave = { title, content ->
-        onSaveBackgroundPreset(editingPreset, title, content)
+      onSave = { title, content, category ->
+        onSaveBackgroundPreset(editingPreset, title, content, category)
         creatingPreset = false
         editingPreset = null
       }
@@ -5231,9 +5287,11 @@ private fun ChatBackgroundPreset.matchesBackgroundPresetQuery(query: String): Bo
     .split(Regex("\\s+"))
     .filter { it.isNotBlank() }
   if (tokens.isEmpty()) return true
-  val searchable = "${title.lowercase()}\n${content.lowercase()}"
+  val searchable = "${title.lowercase()}\n${cleanCategory().orEmpty().lowercase()}\n${content.lowercase()}"
   return tokens.all { token -> searchable.contains(token) }
 }
+
+private fun ChatBackgroundPreset.cleanCategory(): String? = category?.trim()?.takeIf { it.isNotBlank() }
 
 @Composable
 private fun AttachmentLimitSlider(
@@ -5363,6 +5421,9 @@ private fun BackgroundPresetSettingsRow(
       Row(verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f)) {
           Text(preset.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+          preset.cleanCategory()?.let { category ->
+            Text("#$category", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+          }
           Text(
             preset.content,
             maxLines = 2,
@@ -5394,9 +5455,10 @@ private fun BackgroundPresetSettingsRow(
 private fun BackgroundPresetEditorDialog(
   preset: ChatBackgroundPreset?,
   onDismiss: () -> Unit,
-  onSave: (String, String) -> Unit
+  onSave: (String, String, String) -> Unit
 ) {
   var title by remember(preset?.id) { mutableStateOf(preset?.title.orEmpty()) }
+  var category by remember(preset?.id) { mutableStateOf(preset?.cleanCategory().orEmpty()) }
   var content by remember(preset?.id) { mutableStateOf(preset?.content.orEmpty()) }
   AlertDialog(
     onDismissRequest = onDismiss,
@@ -5407,6 +5469,13 @@ private fun BackgroundPresetEditorDialog(
           value = title,
           onValueChange = { title = it },
           label = { Text("名称") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+          value = category,
+          onValueChange = { category = it },
+          label = { Text("分类，可选") },
           singleLine = true,
           modifier = Modifier.fillMaxWidth()
         )
@@ -5422,7 +5491,7 @@ private fun BackgroundPresetEditorDialog(
     },
     confirmButton = {
       Button(
-        onClick = { onSave(title, content) },
+        onClick = { onSave(title, content, category) },
         enabled = content.isNotBlank()
       ) {
         Text("保存")
