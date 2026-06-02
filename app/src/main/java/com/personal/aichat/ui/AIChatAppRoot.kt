@@ -2061,6 +2061,7 @@ private fun FavoriteSnippetsPage(
   var tagFilter by remember { mutableStateOf<String?>(null) }
   var selectedFavoriteId by remember { mutableStateOf<String?>(null) }
   var batchMode by remember { mutableStateOf(false) }
+  var sortMode by remember { mutableStateOf(FavoriteSortMode.UpdatedDesc) }
   var selectedFavoriteIds by remember { mutableStateOf<Set<String>>(emptySet()) }
   var tagManagerOpen by remember { mutableStateOf(false) }
   var batchTagDialogOpen by remember { mutableStateOf(false) }
@@ -2082,6 +2083,24 @@ private fun FavoriteSnippetsPage(
     val matchesQuery = normalizedQuery.isBlank() || favorite.searchText.contains(normalizedQuery)
     val matchesTag = tagFilter == null || favorite.tags.any { it.equals(tagFilter, ignoreCase = true) }
     matchesQuery && matchesTag
+  }
+  val sortedFavorites = remember(filtered, sortMode) {
+    when (sortMode) {
+      FavoriteSortMode.UpdatedDesc -> filtered.sortedWith(
+        compareByDescending<FavoriteSnippet> { it.updatedAt }.thenByDescending { it.createdAt }
+      )
+      FavoriteSortMode.CreatedDesc -> filtered.sortedWith(
+        compareByDescending<FavoriteSnippet> { it.createdAt }.thenByDescending { it.updatedAt }
+      )
+      FavoriteSortMode.TitleAsc -> filtered.sortedWith(
+        compareBy<FavoriteSnippet> { it.title.lowercase() }.thenByDescending { it.updatedAt }
+      )
+      FavoriteSortMode.TagAsc -> filtered.sortedWith(
+        compareBy<FavoriteSnippet> { it.primaryTagSortKey() }
+          .thenBy { it.title.lowercase() }
+          .thenByDescending { it.updatedAt }
+      )
+    }
   }
   val filteredIds = filtered.map { it.id }.toSet()
   LaunchedEffect(favorites) {
@@ -2201,6 +2220,18 @@ private fun FavoriteSnippetsPage(
           singleLine = true,
           modifier = Modifier.fillMaxWidth()
         )
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          FavoriteSortMenu(sortMode = sortMode, onSortModeChange = { sortMode = it })
+          Text(
+            "${sortedFavorites.size} 项",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+          )
+        }
         if (allTags.isNotEmpty()) {
           LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
@@ -2220,7 +2251,7 @@ private fun FavoriteSnippetsPage(
             }
           }
         }
-        if (filtered.isEmpty()) {
+        if (sortedFavorites.isEmpty()) {
           Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
             Text(
               text = if (favorites.isEmpty()) "还没有收藏片段。可以在消息气泡或多选菜单里收藏。" else "没有匹配的收藏。",
@@ -2230,7 +2261,7 @@ private fun FavoriteSnippetsPage(
           }
         } else {
           LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
-            items(filtered, key = { it.id }) { favorite ->
+            items(sortedFavorites, key = { it.id }) { favorite ->
               FavoriteSnippetCard(
                 favorite = favorite,
                 query = normalizedQuery,
@@ -2296,6 +2327,55 @@ private fun FavoriteSnippetsPage(
       onExportMarkdown = onExportMarkdown,
       onImportJson = onImportJson
     )
+  }
+}
+
+private enum class FavoriteSortMode {
+  UpdatedDesc,
+  CreatedDesc,
+  TitleAsc,
+  TagAsc
+}
+
+private fun favoriteSortModeLabel(sortMode: FavoriteSortMode): String = when (sortMode) {
+  FavoriteSortMode.UpdatedDesc -> "最近更新"
+  FavoriteSortMode.CreatedDesc -> "收藏时间"
+  FavoriteSortMode.TitleAsc -> "标题"
+  FavoriteSortMode.TagAsc -> "标签"
+}
+
+private fun FavoriteSnippet.primaryTagSortKey(): String {
+  return tags.minOfOrNull { it.lowercase() } ?: "~"
+}
+
+@Composable
+private fun FavoriteSortMenu(
+  sortMode: FavoriteSortMode,
+  onSortModeChange: (FavoriteSortMode) -> Unit
+) {
+  var expanded by remember { mutableStateOf(false) }
+  Box {
+    AssistChip(
+      onClick = { expanded = true },
+      label = { Text("排序 ${favoriteSortModeLabel(sortMode)}") },
+      trailingIcon = {
+        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
+      }
+    )
+    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+      FavoriteSortMode.entries.forEach { mode ->
+        DropdownMenuItem(
+          text = { Text(favoriteSortModeLabel(mode)) },
+          leadingIcon = {
+            if (mode == sortMode) Icon(Icons.Outlined.CheckCircle, contentDescription = null)
+          },
+          onClick = {
+            expanded = false
+            onSortModeChange(mode)
+          }
+        )
+      }
+    }
   }
 }
 
