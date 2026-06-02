@@ -4459,6 +4459,8 @@ private fun AppSettingsPage(
             )
           }
         }
+
+        AppChangelogSection()
       }
     }
   }

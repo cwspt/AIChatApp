@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: Settings now includes a user-facing changelog section summarized from recent Git history, grouped by update date and focused on additions, fixes, and maintenance work.
+- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the settings changelog change.
 - Done: UI splitting continued by extracting the shared message scroll indicator and LazyList scroll-position helpers into `ScrollComponents.kt`.
 - Validation: `:app:compileDebugKotlin` and `:app:assembleDebug` passed after the scroll component split.
 - Done: UI splitting continued by extracting the conversation strip, conversation quick actions, grouped picker, and conversation chip rows into `ConversationComponents.kt`.
@@ -392,6 +394,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P2-012 | 机器人头像和颜色 | Done | 群聊机器人气泡、点名选择器和机器人管理列表均显示稳定头像缩写、短身份码和解析后的颜色标签，便于快速扫描区分机器人 |
 | NEXT-P2-013 | 群摘要自动滚动更新 | Done | 群聊会在无摘要且消息较多、或上次摘要后积累较多新消息时提示生成/更新摘要，并复用总结机器人选择器执行半自动刷新 |
 | NEXT-P2-014 | 背景预设导入导出和分类搜索 | Done | 背景预设已支持设置页和群聊插入弹窗的关键词搜索、JSON 导出/分享与追加导入、分类编辑与分类筛选，并支持编辑群聊时按群聊保存和插入常用预设组合 |
+| NEXT-P2-015 | 设置页更新日志 | Done | 设置页展示根据 Git 提交整理的更新日志，按日期汇总新增能力、修正和维护改进 |
 | NEXT-P3-001 | Anthropic adapter | Planned | Claude Messages API 文本流式对话 |
 | NEXT-P3-002 | Gemini adapter | Planned | Gemini GenerateContent 文本和多模态对话 |
 | NEXT-P3-003 | 对话 PDF 导出 | Planned | 支持完整对话导出 PDF |
