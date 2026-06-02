@@ -32,6 +32,7 @@ import com.personal.aichat.domain.FavoriteSnippet
 import com.personal.aichat.domain.GroupChatMember
 import com.personal.aichat.domain.GroupChatMessage
 import com.personal.aichat.domain.GroupChatRoom
+import com.personal.aichat.domain.GroupAutoPlayPreference
 import com.personal.aichat.domain.GroupMessageSenderType
 import com.personal.aichat.domain.GroupTurnTrigger
 import com.personal.aichat.domain.ImageGenerationOptions
@@ -43,6 +44,7 @@ import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.StreamingBubbleMotion
 import com.personal.aichat.domain.WebSearchMode
+import com.personal.aichat.domain.groupAutoPlayPreference
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -55,6 +57,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.math.max
@@ -66,6 +69,11 @@ private data class BackgroundPresetExportPayload(
   val presets: List<ChatBackgroundPreset> = emptyList()
 )
 
+private data class GroupAutoPlaySession(
+  val completedTurns: Int = 0,
+  val retriedBotId: String? = null
+)
+
 class ChatViewModel(
   private val repository: ChatRepository,
   private val preferencesRepository: ChatSelectionStore,
@@ -75,6 +83,7 @@ class ChatViewModel(
   private val sendJobsByConversationId = mutableMapOf<String, Job>()
   private val groupJobsByGroupId = mutableMapOf<String, Job>()
   private val lastGroupTurnCompletedByGroupId = mutableMapOf<String, Boolean>()
+  private val groupAutoPlaySessionsByGroupId = mutableMapOf<String, GroupAutoPlaySession>()
   private var pendingDeleteConversationId: String? = null
 
   private val conversationLists = combine(
@@ -463,6 +472,7 @@ class ChatViewModel(
 
   fun startGroupAutoPlay(groupId: String? = null) {
     val targetGroupId = groupId ?: uiState.value.selectedGroupChatId ?: return
+    groupAutoPlaySessionsByGroupId[targetGroupId] = GroupAutoPlaySession()
     localState.update { it.copy(autoPlayingGroupIds = it.autoPlayingGroupIds + targetGroupId) }
     if (groupJobsByGroupId[targetGroupId]?.isActive == true) return
     val nextBotId = nextAutoPlayBotId(targetGroupId)
@@ -475,7 +485,14 @@ class ChatViewModel(
 
   fun pauseGroupAutoPlay(groupId: String? = null) {
     val targetGroupId = groupId ?: uiState.value.selectedGroupChatId ?: return
+    groupAutoPlaySessionsByGroupId.remove(targetGroupId)
     localState.update { it.copy(autoPlayingGroupIds = it.autoPlayingGroupIds - targetGroupId) }
+  }
+
+  fun setGroupAutoPlayPreference(groupId: String, preference: GroupAutoPlayPreference) {
+    viewModelScope.launch {
+      preferencesRepository.setGroupAutoPlayPreference(groupId, preference)
+    }
   }
 
   private fun importAttachment(context: Context, uri: Uri, settings: AppSettings): AttachmentImportAttempt {
@@ -1287,19 +1304,50 @@ class ChatViewModel(
     }
   }
 
-  private fun continueGroupAutoPlayIfNeeded(groupId: String, completed: Boolean, lastBotId: String) {
-    if (!completed) {
+  private suspend fun continueGroupAutoPlayIfNeeded(groupId: String, completed: Boolean, lastBotId: String) {
+    val state = uiState.value
+    if (groupId !in state.autoPlayingGroupIds) return
+    val preference = state.appSettings.groupAutoPlayPreference(groupId)
+    val bots = enabledGroupBotsForCurrentState(groupId)
+    if (bots.isEmpty()) {
       pauseGroupAutoPlay(groupId)
       return
     }
-    val state = uiState.value
-    if (groupId !in state.autoPlayingGroupIds) return
+    val session = groupAutoPlaySessionsByGroupId[groupId] ?: GroupAutoPlaySession()
+    if (!completed) {
+      if (preference.retryFailedTurn && session.retriedBotId != lastBotId) {
+        groupAutoPlaySessionsByGroupId[groupId] = session.copy(retriedBotId = lastBotId)
+        delayGroupAutoPlay(preference)
+        if (groupId in uiState.value.autoPlayingGroupIds && groupJobsByGroupId[groupId]?.isActive != true) {
+          launchGroupBotTurn(groupId, lastBotId, summarize = false, continueAutoPlay = true)
+        }
+      } else {
+        pauseGroupAutoPlay(groupId)
+      }
+      return
+    }
+    val completedTurns = session.completedTurns + 1
+    val maxTurns = preference.maxRounds.takeIf { it > 0 }?.let { it * bots.size }
+    if (maxTurns != null && completedTurns >= maxTurns) {
+      groupAutoPlaySessionsByGroupId[groupId] = session.copy(completedTurns = completedTurns, retriedBotId = null)
+      pauseGroupAutoPlay(groupId)
+      localState.update { it.copy(error = "已完成自动轮流 ${preference.maxRounds} 轮") }
+      return
+    }
     val nextBotId = nextAutoPlayBotIdAfter(groupId, lastBotId)
     if (nextBotId == null) {
       pauseGroupAutoPlay(groupId)
       return
     }
+    groupAutoPlaySessionsByGroupId[groupId] = session.copy(completedTurns = completedTurns, retriedBotId = null)
+    delayGroupAutoPlay(preference)
+    if (groupId !in uiState.value.autoPlayingGroupIds || groupJobsByGroupId[groupId]?.isActive == true) return
     launchGroupBotTurn(groupId, nextBotId, summarize = false, continueAutoPlay = true)
+  }
+
+  private suspend fun delayGroupAutoPlay(preference: GroupAutoPlayPreference) {
+    val intervalMs = preference.intervalSeconds.coerceAtLeast(0) * 1_000L
+    if (intervalMs > 0) delay(intervalMs)
   }
 
   private fun enabledGroupBotsForCurrentState(groupId: String): List<AiBot> {

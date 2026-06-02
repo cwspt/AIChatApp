@@ -25,6 +25,7 @@ import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ChatStreamEvent
 import com.personal.aichat.domain.AiBot
 import com.personal.aichat.domain.GroupChatMessage
+import com.personal.aichat.domain.GroupAutoPlayPreference
 import com.personal.aichat.domain.GroupMessageSenderType
 import com.personal.aichat.domain.GroupTurnTrigger
 import com.personal.aichat.domain.ImageGenerationOptions
@@ -35,6 +36,7 @@ import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.ReasoningEffort
 import com.personal.aichat.domain.StreamingBubbleMotion
 import com.personal.aichat.domain.WebSearchMode
+import com.personal.aichat.domain.groupAutoPlayPreference
 import com.personal.aichat.ui.collapsedGroupMessageSummary
 import com.personal.aichat.ui.ChatMessageListItem
 import com.personal.aichat.ui.GroupMessageListItem
@@ -1219,6 +1221,18 @@ class ChatRepositoryForkTest {
   }
 
   @Test
+  fun groupAutoPlayPreferenceDefaultsAndNormalizes() {
+    val settings = AppSettings(
+      groupAutoPlayPreferences = mapOf(
+        "group" to GroupAutoPlayPreference(maxRounds = 99, intervalSeconds = -2, retryFailedTurn = false)
+      )
+    )
+
+    assertEquals(GroupAutoPlayPreference(), settings.groupAutoPlayPreference(null))
+    assertEquals(GroupAutoPlayPreference(maxRounds = 12, intervalSeconds = 0, retryFailedTurn = false), settings.groupAutoPlayPreference("group"))
+  }
+
+  @Test
   fun autoBotBubbleColorKeyIsStableAndUsesPalette() {
     val first = resolvedBotBubbleColorKey("bot-a", "AUTO")
     val second = resolvedBotBubbleColorKey("bot-a", "AUTO")
@@ -1464,6 +1478,12 @@ private class FakeSelectionStore : ChatSelectionStore {
       current[groupId] = presetIds
     }
     appSettings.value = appSettings.value.copy(groupBackgroundPresetCombinations = current)
+  }
+
+  override suspend fun setGroupAutoPlayPreference(groupId: String, preference: GroupAutoPlayPreference) {
+    val current = appSettings.value.groupAutoPlayPreferences.toMutableMap()
+    current[groupId] = preference.normalized()
+    appSettings.value = appSettings.value.copy(groupAutoPlayPreferences = current)
   }
 }
 

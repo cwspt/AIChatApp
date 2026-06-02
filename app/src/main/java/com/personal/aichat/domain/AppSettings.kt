@@ -24,6 +24,17 @@ enum class StreamingBubbleMotion(val label: String) {
   OFF("关闭")
 }
 
+data class GroupAutoPlayPreference(
+  val maxRounds: Int = 0,
+  val intervalSeconds: Int = 0,
+  val retryFailedTurn: Boolean = true
+) {
+  fun normalized(): GroupAutoPlayPreference = copy(
+    maxRounds = maxRounds.coerceIn(0, 12),
+    intervalSeconds = intervalSeconds.coerceIn(0, 30)
+  )
+}
+
 const val DEFAULT_ATTACHMENT_MAX_FILE_MB = 20
 const val DEFAULT_ATTACHMENT_MAX_PENDING_MB = 50
 const val DEFAULT_ATTACHMENT_MAX_IMAGE_SOURCE_MB = 80
@@ -49,8 +60,14 @@ data class AppSettings(
   val attachmentMaxPendingMb: Int = DEFAULT_ATTACHMENT_MAX_PENDING_MB,
   val attachmentMaxImageSourceMb: Int = DEFAULT_ATTACHMENT_MAX_IMAGE_SOURCE_MB,
   val backgroundPresets: List<ChatBackgroundPreset> = defaultBackgroundPresets(),
-  val groupBackgroundPresetCombinations: Map<String, List<String>> = emptyMap()
+  val groupBackgroundPresetCombinations: Map<String, List<String>> = emptyMap(),
+  val groupAutoPlayPreferences: Map<String, GroupAutoPlayPreference> = emptyMap()
 )
+
+fun AppSettings.groupAutoPlayPreference(groupId: String?): GroupAutoPlayPreference {
+  val id = groupId?.takeIf { it.isNotBlank() } ?: return GroupAutoPlayPreference()
+  return (groupAutoPlayPreferences[id] ?: GroupAutoPlayPreference()).normalized()
+}
 
 fun defaultBackgroundPresets(now: Long = 0L): List<ChatBackgroundPreset> = listOf(
   ChatBackgroundPreset(

@@ -173,6 +173,7 @@ import com.personal.aichat.domain.FavoriteSnippet
 import com.personal.aichat.domain.FavoriteSnippetMessage
 import com.personal.aichat.domain.GroupChatMessage
 import com.personal.aichat.domain.GroupChatRoom
+import com.personal.aichat.domain.GroupAutoPlayPreference
 import com.personal.aichat.domain.GroupMessageSenderType
 import com.personal.aichat.domain.GroupTurnTrigger
 import com.personal.aichat.domain.ImageGenerationApiMode
@@ -188,6 +189,7 @@ import com.personal.aichat.domain.AppThemeMode
 import com.personal.aichat.domain.AppThemePalette
 import com.personal.aichat.domain.StreamingBubbleMotion
 import com.personal.aichat.domain.WebSearchMode
+import com.personal.aichat.domain.groupAutoPlayPreference
 import com.personal.aichat.domain.parseContextWindowTokensInput
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -738,6 +740,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onBotTurn = { viewModel.sendGroupBotTurn(it, summarize = false) },
         onSummarize = { viewModel.sendGroupBotTurn(it, summarize = true) },
         onToggleAutoPlay = viewModel::toggleGroupAutoPlay,
+        onSaveAutoPlayPreference = viewModel::setGroupAutoPlayPreference,
         onCompressContext = viewModel::compressSelectedGroupContext,
         onStop = viewModel::stopGroupGenerating,
         onEditGroup = viewModel::openEditGroupChatDialog,
@@ -3250,6 +3253,7 @@ private fun GroupChatPage(
   onBotTurn: (String) -> Unit,
   onSummarize: (String) -> Unit,
   onToggleAutoPlay: () -> Unit,
+  onSaveAutoPlayPreference: (String, GroupAutoPlayPreference) -> Unit,
   onCompressContext: () -> Unit,
   onStop: () -> Unit,
   onEditGroup: () -> Unit,
@@ -3274,7 +3278,9 @@ private fun GroupChatPage(
   onCopyGroup: () -> Unit
 ) {
   var pickerMode by remember { mutableStateOf<GroupBotPickerMode?>(null) }
+  var autoPlaySettingsOpen by remember { mutableStateOf(false) }
   val selectedGroup = state.selectedGroupChat
+  val autoPlayPreference = state.appSettings.groupAutoPlayPreference(selectedGroup?.id)
   val memberBotIds = state.groupMembers.map { it.botId }.toSet()
   val groupBots = state.aiBots
     .filter { it.enabled && (memberBotIds.isEmpty() || it.id in memberBotIds) }
@@ -3331,6 +3337,7 @@ private fun GroupChatPage(
                 onShareMarkdown = onShareMarkdown,
                 onFavoriteSelected = onFavoriteSelected,
                 onAppendSelectedToFavorite = onAppendSelectedToFavorite,
+                onOpenAutoPlaySettings = { autoPlaySettingsOpen = true },
                 onCompressContext = onCompressContext,
                 contextCompressionEnabled = selectedGroup.id !in state.compressingGroupIds,
                 onEditGroup = onEditGroup,
@@ -3487,6 +3494,17 @@ private fun GroupChatPage(
     }
   }
 
+  if (autoPlaySettingsOpen && selectedGroup != null) {
+    GroupAutoPlayPreferenceDialog(
+      preference = autoPlayPreference,
+      onDismiss = { autoPlaySettingsOpen = false },
+      onSave = { preference ->
+        onSaveAutoPlayPreference(selectedGroup.id, preference)
+        autoPlaySettingsOpen = false
+      }
+    )
+  }
+
   pickerMode?.let { mode ->
     GroupBotPickerDialog(
       title = if (mode == GroupBotPickerMode.SPEAK) "选择发言机器人" else "选择总结机器人",
@@ -3505,6 +3523,92 @@ private fun GroupChatPage(
 }
 
 @Composable
+private fun GroupAutoPlayPreferenceDialog(
+  preference: GroupAutoPlayPreference,
+  onDismiss: () -> Unit,
+  onSave: (GroupAutoPlayPreference) -> Unit
+) {
+  var maxRounds by remember(preference) { mutableStateOf(preference.maxRounds.coerceIn(0, 12)) }
+  var intervalSeconds by remember(preference) { mutableStateOf(preference.intervalSeconds.coerceIn(0, 30)) }
+  var retryFailedTurn by remember(preference) { mutableStateOf(preference.retryFailedTurn) }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("播放器设置") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        GroupAutoPlaySlider(
+          title = "自动轮数",
+          value = maxRounds,
+          valueText = if (maxRounds == 0) "不限" else "$maxRounds 轮",
+          range = 0..12,
+          onValueChange = { maxRounds = it }
+        )
+        GroupAutoPlaySlider(
+          title = "发言间隔",
+          value = intervalSeconds,
+          valueText = if (intervalSeconds == 0) "无间隔" else "$intervalSeconds 秒",
+          range = 0..30,
+          onValueChange = { intervalSeconds = it }
+        )
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("失败后重试一次", fontWeight = FontWeight.SemiBold)
+            Text(
+              "单个机器人发言失败时，播放器会先重试同一机器人一次，再暂停。",
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+          }
+          Switch(checked = retryFailedTurn, onCheckedChange = { retryFailedTurn = it })
+        }
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = {
+          onSave(
+            GroupAutoPlayPreference(
+              maxRounds = maxRounds,
+              intervalSeconds = intervalSeconds,
+              retryFailedTurn = retryFailedTurn
+            )
+          )
+        }
+      ) {
+        Text("保存")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("取消")
+      }
+    }
+  )
+}
+
+@Composable
+private fun GroupAutoPlaySlider(
+  title: String,
+  value: Int,
+  valueText: String,
+  range: IntRange,
+  onValueChange: (Int) -> Unit
+) {
+  Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+      Text(title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+      Text(valueText, fontWeight = FontWeight.SemiBold)
+    }
+    Slider(
+      value = value.toFloat(),
+      onValueChange = { next -> onValueChange(next.roundToInt().coerceIn(range.first, range.last)) },
+      valueRange = range.first.toFloat()..range.last.toFloat(),
+      steps = (range.last - range.first - 1).coerceAtLeast(0)
+    )
+  }
+}
+
+@Composable
 private fun GroupChatOverflowMenu(
   selectionMode: Boolean,
   selectedCount: Int,
@@ -3516,6 +3620,7 @@ private fun GroupChatOverflowMenu(
   onShareMarkdown: () -> Unit,
   onFavoriteSelected: () -> Unit,
   onAppendSelectedToFavorite: () -> Unit,
+  onOpenAutoPlaySettings: () -> Unit,
   onCompressContext: () -> Unit,
   contextCompressionEnabled: Boolean,
   onEditGroup: () -> Unit,
@@ -3594,6 +3699,14 @@ private fun GroupChatOverflowMenu(
         onClick = {
           menuOpen = false
           onShareMarkdown()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("播放器设置") },
+        leadingIcon = { Icon(Icons.Outlined.PlayArrow, contentDescription = null) },
+        onClick = {
+          menuOpen = false
+          onOpenAutoPlaySettings()
         }
       )
       DropdownMenuItem(

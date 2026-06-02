@@ -14,6 +14,7 @@ import com.personal.aichat.domain.ChatBackgroundPreset
 import com.personal.aichat.domain.DEFAULT_ATTACHMENT_MAX_FILE_MB
 import com.personal.aichat.domain.DEFAULT_ATTACHMENT_MAX_IMAGE_SOURCE_MB
 import com.personal.aichat.domain.DEFAULT_ATTACHMENT_MAX_PENDING_MB
+import com.personal.aichat.domain.GroupAutoPlayPreference
 import com.personal.aichat.domain.StreamingBubbleMotion
 import com.personal.aichat.domain.WebSearchMode
 import com.personal.aichat.domain.defaultBackgroundPresets
@@ -39,12 +40,14 @@ interface ChatSelectionStore {
   suspend fun setAttachmentLimits(maxFileMb: Int, maxPendingMb: Int, maxImageSourceMb: Int)
   suspend fun setBackgroundPresets(presets: List<ChatBackgroundPreset>)
   suspend fun setGroupBackgroundPresetCombination(groupId: String, presetIds: List<String>)
+  suspend fun setGroupAutoPlayPreference(groupId: String, preference: GroupAutoPlayPreference)
 }
 
 class ChatPreferencesRepository(private val context: Context) : ChatSelectionStore {
   private val gson = Gson()
   private val backgroundPresetListType = object : TypeToken<List<ChatBackgroundPreset>>() {}.type
   private val groupBackgroundPresetCombinationsType = object : TypeToken<Map<String, List<String>>>() {}.type
+  private val groupAutoPlayPreferencesType = object : TypeToken<Map<String, GroupAutoPlayPreference>>() {}.type
   private val selectedProviderKey = stringPreferencesKey("selected_provider_id")
   private val selectedConversationKey = stringPreferencesKey("selected_conversation_id")
   private val themePaletteKey = stringPreferencesKey("theme_palette")
@@ -58,6 +61,7 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
   private val attachmentMaxImageSourceMbKey = intPreferencesKey("attachment_max_image_source_mb")
   private val backgroundPresetsKey = stringPreferencesKey("background_presets_json")
   private val groupBackgroundPresetCombinationsKey = stringPreferencesKey("group_background_preset_combinations_json")
+  private val groupAutoPlayPreferencesKey = stringPreferencesKey("group_auto_play_preferences_json")
 
   override val selectedProviderId: Flow<String?> = context.chatPreferencesDataStore.data.map { preferences ->
     preferences[selectedProviderKey]
@@ -90,7 +94,8 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
       attachmentMaxImageSourceMb = (preferences[attachmentMaxImageSourceMbKey] ?: DEFAULT_ATTACHMENT_MAX_IMAGE_SOURCE_MB)
         .coerceIn(MinAttachmentImageSourceMb, MaxAttachmentImageSourceMb),
       backgroundPresets = parseBackgroundPresets(preferences[backgroundPresetsKey]),
-      groupBackgroundPresetCombinations = parseGroupBackgroundPresetCombinations(preferences[groupBackgroundPresetCombinationsKey])
+      groupBackgroundPresetCombinations = parseGroupBackgroundPresetCombinations(preferences[groupBackgroundPresetCombinationsKey]),
+      groupAutoPlayPreferences = parseGroupAutoPlayPreferences(preferences[groupAutoPlayPreferencesKey])
     )
   }
 
@@ -174,6 +179,16 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
     }
   }
 
+  override suspend fun setGroupAutoPlayPreference(groupId: String, preference: GroupAutoPlayPreference) {
+    val cleanGroupId = groupId.trim()
+    if (cleanGroupId.isBlank()) return
+    context.chatPreferencesDataStore.edit { preferences ->
+      val current = parseGroupAutoPlayPreferences(preferences[groupAutoPlayPreferencesKey]).toMutableMap()
+      current[cleanGroupId] = preference.normalized()
+      preferences[groupAutoPlayPreferencesKey] = gson.toJson(current)
+    }
+  }
+
   private fun parseBackgroundPresets(json: String?): List<ChatBackgroundPreset> {
     if (json.isNullOrBlank()) return defaultBackgroundPresets()
     return runCatching {
@@ -207,6 +222,17 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
       ?.mapValues { (_, ids) -> ids.map { it.trim() }.filter { it.isNotBlank() }.distinct() }
       ?.filterKeys { it.isNotBlank() }
       ?.filterValues { it.isNotEmpty() }
+      ?: emptyMap()
+  }
+
+  private fun parseGroupAutoPlayPreferences(json: String?): Map<String, GroupAutoPlayPreference> {
+    if (json.isNullOrBlank()) return emptyMap()
+    return runCatching {
+      gson.fromJson<Map<String, GroupAutoPlayPreference>>(json, groupAutoPlayPreferencesType)
+    }.getOrNull()
+      ?.mapKeys { it.key.trim() }
+      ?.filterKeys { it.isNotBlank() }
+      ?.mapValues { (_, preference) -> preference.normalized() }
       ?: emptyMap()
   }
 
