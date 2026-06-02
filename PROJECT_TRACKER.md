@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: conversation drawer rows now show a fork-source label with a branch icon, resolving the source conversation title when available and showing a missing-source state when the original conversation is no longer in the list.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest.conversationForkSourceLabelShowsSourceTitleOrMissingSource`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the drawer fork-source label change.
 - Done: Settings now includes a one-time cleanup action for historical assistant/group bot messages that saved raw DSML tool markup, converting matching XML blocks into readable tool-call summaries while leaving ordinary/user messages untouched.
 - Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest.historicalDsmlCleanerConvertsMarkupToReadableToolSummary --tests com.personal.aichat.ChatRepositoryForkTest.cleanupHistoricalDsmlToolMarkupUpdatesSingleAndGroupAssistantMessages`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the historical DSML cleanup tool change.
 - Done: grouped tool-call cards now vary their header/detail icons and background watermark by tool type, using search, page-open, file, or generic tool visuals for faster scanning.
@@ -177,7 +179,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | BRANCH-001 | `ConversationEntity` 增加 fork 来源字段 | Done | P0 | `forkedFromConversationId` / `forkedFromMessageId` 已迁移 |
 | BRANCH-002 | 从消息气泡分叉到其他 Provider | Done | P0 | 复制历史消息到目标消息，保存新会话来源 |
 | BRANCH-003 | 从 USER 消息分叉后自动用目标模型回复 | Done | P1 | 仓库测试覆盖 |
-| BRANCH-004 | 对话列表展示分叉来源标记 | Watch | P2 | 已保留来源字段，轻量展示仍可继续优化 |
+| BRANCH-004 | 对话列表展示分叉来源标记 | Done | P2 | 抽屉会话行已显示带分叉图标的来源标签，可展示来源对话标题或来源不可用状态 |
 | BRANCH-005 | 顶部模型切换降级为显示属性 | Done | P1 | 新建会话时选择模型，已有会话模型固定 |
 
 ### 4.3 联网搜索和工具调用

@@ -1338,17 +1338,27 @@ private fun ConversationDrawer(
           val normalConversations = visibleLooseConversations.filterNot { it.isPinned }
           val pinnedFolders = state.conversationGroups.filter { group -> group.conversations.any { it.isPinned } }
           val normalFolders = state.conversationGroups.filter { group -> group.conversations.none { it.isPinned } }
+          val forkSourceConversations = state.conversations + state.archivedConversations
           drawerSection("置顶", pinnedConversations) { conversation ->
-            ConversationDrawerRow(conversation, state.selectedConversationId, onSelectConversation, onTogglePin, onArchive, onDelete, onRename)
+            ConversationDrawerRow(
+              conversation,
+              state.selectedConversationId,
+              conversationForkSourceLabel(conversation, forkSourceConversations),
+              onSelectConversation,
+              onTogglePin,
+              onArchive,
+              onDelete,
+              onRename
+            )
           }
           drawerFolderSection("置顶文件夹", pinnedFolders, collapsedFolders, { key ->
             collapsedFolders = if (key in collapsedFolders) collapsedFolders - key else collapsedFolders + key
-          }, state.selectedConversationId, onSelectConversation, onTogglePin, onArchive, onDelete, onRename, onRenameGroup, onClearGroup)
-          drawerDatedConversationSections(normalConversations, state.selectedConversationId, onSelectConversation, onTogglePin, onArchive, onDelete, onRename)
+          }, state.selectedConversationId, forkSourceConversations, onSelectConversation, onTogglePin, onArchive, onDelete, onRename, onRenameGroup, onClearGroup)
+          drawerDatedConversationSections(normalConversations, state.selectedConversationId, forkSourceConversations, onSelectConversation, onTogglePin, onArchive, onDelete, onRename)
           drawerFolderSection("普通文件夹", normalFolders, collapsedFolders, { key ->
             collapsedFolders = if (key in collapsedFolders) collapsedFolders - key else collapsedFolders + key
-          }, state.selectedConversationId, onSelectConversation, onTogglePin, onArchive, onDelete, onRename, onRenameGroup, onClearGroup)
-          drawerArchivedSection("已归档", state.archivedConversations, onRestore, onDelete)
+          }, state.selectedConversationId, forkSourceConversations, onSelectConversation, onTogglePin, onArchive, onDelete, onRename, onRenameGroup, onClearGroup)
+          drawerArchivedSection("已归档", state.archivedConversations, forkSourceConversations, onRestore, onDelete)
         }
       }
     }
@@ -1358,6 +1368,7 @@ private fun ConversationDrawer(
 private fun androidx.compose.foundation.lazy.LazyListScope.drawerDatedConversationSections(
   conversations: List<ChatConversation>,
   selectedConversationId: String?,
+  forkSourceConversations: List<ChatConversation>,
   onSelectConversation: (String) -> Unit,
   onTogglePin: (String, Boolean) -> Unit,
   onArchive: (String) -> Unit,
@@ -1366,7 +1377,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.drawerDatedConversati
 ) {
   conversations.groupBy { conversationDateBucket(it.updatedAt) }.forEach { (bucket, items) ->
     drawerSection(bucket, items) { conversation ->
-      ConversationDrawerRow(conversation, selectedConversationId, onSelectConversation, onTogglePin, onArchive, onDelete, onRename)
+      ConversationDrawerRow(conversation, selectedConversationId, conversationForkSourceLabel(conversation, forkSourceConversations), onSelectConversation, onTogglePin, onArchive, onDelete, onRename)
     }
 
   }
@@ -1390,6 +1401,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.drawerFolderSection(
   collapsedFolders: Set<String>,
   onToggleFolder: (String) -> Unit,
   selectedConversationId: String?,
+  forkSourceConversations: List<ChatConversation>,
   onSelectConversation: (String) -> Unit,
   onTogglePin: (String, Boolean) -> Unit,
   onArchive: (String) -> Unit,
@@ -1416,7 +1428,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.drawerFolderSection(
     }
     if (folderKey !in collapsedFolders) {
       items(group.conversations, key = { "$title-${group.name}-${it.id}" }) { conversation ->
-        ConversationDrawerRow(conversation, selectedConversationId, onSelectConversation, onTogglePin, onArchive, onDelete, onRename)
+        ConversationDrawerRow(conversation, selectedConversationId, conversationForkSourceLabel(conversation, forkSourceConversations), onSelectConversation, onTogglePin, onArchive, onDelete, onRename)
       }
     }
   }
@@ -1530,6 +1542,7 @@ private fun DrawerFolderHeader(
 private fun androidx.compose.foundation.lazy.LazyListScope.drawerArchivedSection(
   title: String,
   conversations: List<ChatConversation>,
+  forkSourceConversations: List<ChatConversation>,
   onRestore: (String) -> Unit,
   onDelete: (String) -> Unit
 ) {
@@ -1543,6 +1556,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.drawerArchivedSection
         Column(modifier = Modifier.weight(1f)) {
           Text(conversation.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
           Text(conversationGroupLabel(conversation.groupName), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          conversationForkSourceLabel(conversation, forkSourceConversations)?.let { label ->
+            ForkSourceLabel(label)
+          }
         }
         IconButton(onClick = { onRestore(conversation.id) }) {
           Icon(Icons.Outlined.Unarchive, contentDescription = "恢复归档")
@@ -1559,6 +1575,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.drawerArchivedSection
 private fun ConversationDrawerRow(
   conversation: ChatConversation,
   selectedConversationId: String?,
+  forkSourceLabel: String?,
   onSelectConversation: (String) -> Unit,
   onTogglePin: (String, Boolean) -> Unit,
   onArchive: (String) -> Unit,
@@ -1583,8 +1600,8 @@ private fun ConversationDrawerRow(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
           )
-          if (conversation.forkedFromConversationId != null) {
-            Text("分叉对话", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+          forkSourceLabel?.let { label ->
+            ForkSourceLabel(label)
           }
         }
       }
@@ -1639,6 +1656,39 @@ private fun ConversationDrawerRow(
         moving = false
       }
     )
+  }
+}
+
+@Composable
+private fun ForkSourceLabel(label: String) {
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    Icon(
+      Icons.AutoMirrored.Outlined.CallSplit,
+      contentDescription = null,
+      tint = MaterialTheme.colorScheme.primary,
+      modifier = Modifier.size(14.dp)
+    )
+    Spacer(Modifier.width(4.dp))
+    Text(
+      label,
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.primary,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
+  }
+}
+
+internal fun conversationForkSourceLabel(
+  conversation: ChatConversation,
+  sourceConversations: List<ChatConversation>
+): String? {
+  val sourceId = conversation.forkedFromConversationId ?: return null
+  val source = sourceConversations.firstOrNull { it.id == sourceId }
+  return if (source == null) {
+    "分叉来源不可用"
+  } else {
+    "分叉自 ${source.title.ifBlank { "未命名对话" }}"
   }
 }
 

@@ -21,6 +21,7 @@ import com.personal.aichat.domain.AppThemePalette
 import com.personal.aichat.domain.ChatBackgroundPreset
 import com.personal.aichat.domain.ChatAttachment
 import com.personal.aichat.domain.ChatCompletionOptions
+import com.personal.aichat.domain.ChatConversation
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ChatStreamEvent
@@ -49,6 +50,7 @@ import com.personal.aichat.ui.VisibleListItemBounds
 import com.personal.aichat.ui.botAvatarLabel
 import com.personal.aichat.ui.botIdentityCode
 import com.personal.aichat.ui.chatMessageListItems
+import com.personal.aichat.ui.conversationForkSourceLabel
 import com.personal.aichat.ui.groupMessageListItems
 import com.personal.aichat.ui.groupSummaryRefreshHint
 import com.personal.aichat.ui.longBubbleNavTarget
@@ -139,6 +141,18 @@ class ChatRepositoryForkTest {
     assertEquals(2, forkMessages.size)
     assertEquals(listOf("hello", "hi"), forkMessages.map { it.content })
     assertNull(adapter.lastOptions)
+  }
+
+  @Test
+  fun conversationForkSourceLabelShowsSourceTitleOrMissingSource() {
+    val source = testConversation("source", "原始对话")
+    val forked = testConversation("fork", "分叉对话", forkedFromConversationId = "source")
+    val missingSource = testConversation("orphan", "孤立分叉", forkedFromConversationId = "missing")
+    val normal = testConversation("normal", "普通对话")
+
+    assertEquals("分叉自 原始对话", conversationForkSourceLabel(forked, listOf(source, forked)))
+    assertEquals("分叉来源不可用", conversationForkSourceLabel(missingSource, listOf(source, missingSource)))
+    assertNull(conversationForkSourceLabel(normal, listOf(source, normal)))
   }
 
   @Test
@@ -1390,6 +1404,25 @@ class ChatRepositoryForkTest {
     groupName = "Group",
     createdAt = 1,
     updatedAt = 1
+  )
+
+  private fun testConversation(
+    id: String,
+    title: String,
+    forkedFromConversationId: String? = null
+  ): ChatConversation = ChatConversation(
+    id = id,
+    title = title,
+    providerId = "provider",
+    model = "model",
+    groupName = "",
+    forkedFromConversationId = forkedFromConversationId,
+    forkedFromMessageId = null,
+    createdAt = 1,
+    updatedAt = 1,
+    isArchived = false,
+    isDeleted = false,
+    isPinned = false
   )
 
   private fun message(
