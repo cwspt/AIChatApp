@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Tracker sync: `ATTACH-012` now matches the completed in-app PDF/text attachment preview work already tracked by `NEXT-P2-001`.
+- Validation: source search confirms PDF/text attachments route through `canPreviewInApp`, `AttachmentPreviewDialog`, `PdfRenderer`, and `readAttachmentPreviewText`.
 - Done: conversation drawer rows now show a fork-source label with a branch icon, resolving the source conversation title when available and showing a missing-source state when the original conversation is no longer in the list.
 - Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest.conversationForkSourceLabelShowsSourceTitleOrMissingSource`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the drawer fork-source label change.
 - Done: Settings now includes a one-time cleanup action for historical assistant/group bot messages that saved raw DSML tool markup, converting matching XML blocks into readable tool-call summaries while leaving ordinary/user messages untouched.
@@ -213,7 +215,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | ATTACH-009 | Android 系统分享导入 | Done | P1 | App 可作为系统分享目标，支持文本、单文件、多文件导入为待发送草稿 |
 | ATTACH-010 | 分享目标选择 | Done | P1 | 分享进入后可选已有单聊、已有群聊或快速新建单聊，不自动发送 |
 | ATTACH-011 | 附件大小限制和错误提示 | Done | P1 | 选择附件和系统分享导入均限制单个附件 20MB、待发送总量 50MB，超限文件跳过并提示 |
-| ATTACH-012 | PDF/文本文件 app 内预览 | Planned | P2 | 当前非图片文件走系统打开 |
+| ATTACH-012 | PDF/文本文件 app 内预览 | Done | P2 | PDF 附件已支持 app 内第一页预览，文本/JSON/Markdown/日志等文本附件已支持 app 内滚动/选择预览，并保留系统打开入口 |
 
 ### 4.5 设置、主题和配置导入导出
 
