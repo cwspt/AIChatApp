@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: UI splitting continued by extracting in-chat Markdown rendering and parsing, including headings, lists, dividers, code blocks, tables, and inline bold/code/link styling, into `MarkdownRenderer.kt`.
+- Validation: `:app:compileDebugKotlin` and `:app:assembleDebug` passed after the Markdown renderer split.
 - Done: UI splitting continued by extracting the conversation drawer, drawer rows, folder controls, archived row handling, fork-source label UI, move-to-folder dialog, and shared conversation time/group helpers into `ConversationDrawer.kt`.
 - Validation: `:app:compileDebugKotlin` and `:app:assembleDebug` passed after the conversation drawer component split.
 - Done: UI splitting continued by moving tool-call parsing, summaries, citations, and visual-kind model helpers out of `AIChatAppRoot.kt` into `ToolCallModels.kt`, leaving the root file focused on rendering the tool-call UI.
@@ -353,7 +355,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P2-001 | PDF/文本 app 内预览 | Done | PDF 附件可在 app 内预览第一页，文本/JSON/Markdown/日志等文本附件可在 app 内滚动/选择预览，并保留系统应用打开入口 |
 | NEXT-P2-002 | Provider 多模态能力矩阵 | Done | 设置页的 API 配置管理已展示每个 provider 是否支持图片输入、文件输入、搜索工具和 reasoning，并在每行显示紧凑能力徽章 |
 | NEXT-P2-003 | 二维码导入导出 Provider 配置 | Done | 设置页可生成包含 Provider 配置的压缩二维码，扫码后复用导入流程新增配置，并有单元测试覆盖二维码载荷导入 |
-| NEXT-P2-004 | UI 文件拆分 | In Progress | 已将带单测覆盖的列表分组、长气泡导航目标、折叠摘要和分叉来源标签纯逻辑拆到 `UiListModels.kt`，将工具调用解析/摘要/引用/视觉类型模型拆到 `ToolCallModels.kt`，并将会话抽屉、文件夹操作、归档行和移动文件夹对话框拆到 `ConversationDrawer.kt`；后续继续拆 chat/settings/markdown/components |
+| NEXT-P2-004 | UI 文件拆分 | In Progress | 已将带单测覆盖的列表分组、长气泡导航目标、折叠摘要和分叉来源标签纯逻辑拆到 `UiListModels.kt`，将工具调用解析/摘要/引用/视觉类型模型拆到 `ToolCallModels.kt`，将会话抽屉/文件夹操作/归档行/移动文件夹对话框拆到 `ConversationDrawer.kt`，并将聊天 Markdown 渲染拆到 `MarkdownRenderer.kt`；后续继续拆 chat/settings/components |
 | NEXT-P2-005 | Room migration 测试 | Done | Robolectric 单测已验证带旧数据的 schema 1 可迁移到最新 schema，且每个已导出 schema 均可迁移到最新 schema；AndroidTest 版本也可编译 |
 | NEXT-P2-006 | 导出内容包含附件索引 | Done | Markdown/文本/长图导出会列出用户上传附件名称、MIME 类型和大小，单聊与群聊导出均有单测覆盖 |
 | NEXT-P2-007 | 文本级选区收藏 | Planned | 支持收藏气泡内选中的一段文字 |
