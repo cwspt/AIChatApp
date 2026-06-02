@@ -4,8 +4,11 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -495,6 +498,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
   val context = LocalContext.current
   var drawerOpen by remember { mutableStateOf(false) }
   var previewImage by remember { mutableStateOf<ChatAttachment?>(null) }
+  var previewAttachment by remember { mutableStateOf<ChatAttachment?>(null) }
   var favoriteDraftMessageIds by remember { mutableStateOf<Set<String>?>(null) }
   var favoriteDraftGroupMessageIds by remember { mutableStateOf<Set<String>?>(null) }
   var editingFavorite by remember { mutableStateOf<FavoriteSnippet?>(null) }
@@ -503,6 +507,8 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
   val openAttachmentInApp: (ChatAttachment) -> Unit = { attachment ->
     if (attachment.isImage) {
       previewImage = attachment
+    } else if (attachment.canPreviewInApp()) {
+      previewAttachment = attachment
     } else {
       openAttachment(context, attachment)
     }
@@ -1007,6 +1013,13 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
       ImagePreviewDialog(
         attachment = attachment,
         onDismiss = { previewImage = null },
+        onOpenExternal = { openAttachment(context, attachment) }
+      )
+    }
+    previewAttachment?.let { attachment ->
+      AttachmentPreviewDialog(
+        attachment = attachment,
+        onDismiss = { previewAttachment = null },
         onOpenExternal = { openAttachment(context, attachment) }
       )
     }
@@ -7968,6 +7981,81 @@ private fun openAttachment(context: Context, attachment: ChatAttachment) {
   }
 }
 
+private fun ChatAttachment.canPreviewInApp(): Boolean = isPdfAttachment() || isTextAttachment()
+
+private fun ChatAttachment.isPdfAttachment(): Boolean {
+  return mimeType.equals("application/pdf", ignoreCase = true) || displayName.endsWith(".pdf", ignoreCase = true)
+}
+
+private fun ChatAttachment.isTextAttachment(): Boolean {
+  val lowerMimeType = mimeType.lowercase(Locale.getDefault())
+  val lowerName = displayName.lowercase(Locale.getDefault())
+  return lowerMimeType.startsWith("text/") ||
+    lowerMimeType in setOf(
+      "application/json",
+      "application/xml",
+      "application/javascript",
+      "application/x-javascript",
+      "application/yaml",
+      "application/x-yaml"
+    ) ||
+    lowerName.endsWith(".txt") ||
+    lowerName.endsWith(".md") ||
+    lowerName.endsWith(".json") ||
+    lowerName.endsWith(".xml") ||
+    lowerName.endsWith(".csv") ||
+    lowerName.endsWith(".log") ||
+    lowerName.endsWith(".yaml") ||
+    lowerName.endsWith(".yml")
+}
+
+private fun readAttachmentPreviewText(path: String, maxChars: Int = 40_000): String? {
+  val file = File(path)
+  if (!file.exists() || !file.isFile) return null
+  return runCatching {
+    file.bufferedReader().use { reader ->
+      val buffer = CharArray(maxChars + 1)
+      val count = reader.read(buffer, 0, buffer.size).coerceAtLeast(0)
+      buildString {
+        append(buffer.concatToString(0, count.coerceAtMost(maxChars)))
+        if (count > maxChars) append("\n\n... 预览已截断")
+      }
+    }
+  }.getOrNull()
+}
+
+private data class PdfPagePreview(
+  val bitmap: androidx.compose.ui.graphics.ImageBitmap?,
+  val pageCount: Int
+)
+
+private fun renderPdfFirstPage(path: String): PdfPagePreview {
+  val file = File(path)
+  if (!file.exists() || !file.isFile) return PdfPagePreview(bitmap = null, pageCount = 0)
+  return runCatching {
+    ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+      PdfRenderer(descriptor).use { renderer ->
+        if (renderer.pageCount <= 0) {
+          PdfPagePreview(bitmap = null, pageCount = 0)
+        } else {
+          renderer.openPage(0).use { page ->
+            val maxWidth = 1200
+            val scale = (maxWidth.toFloat() / page.width.toFloat()).coerceAtMost(2f).coerceAtLeast(1f)
+            val bitmap = Bitmap.createBitmap(
+              (page.width * scale).roundToInt().coerceAtLeast(1),
+              (page.height * scale).roundToInt().coerceAtLeast(1),
+              Bitmap.Config.ARGB_8888
+            )
+            bitmap.eraseColor(android.graphics.Color.WHITE)
+            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            PdfPagePreview(bitmap = bitmap.asImageBitmap(), pageCount = renderer.pageCount)
+          }
+        }
+      }
+    }
+  }.getOrDefault(PdfPagePreview(bitmap = null, pageCount = 0))
+}
+
 private fun formatAttachmentSize(bytes: Long): String {
   if (bytes < 1024) return "$bytes B"
   val kb = bytes / 1024f
@@ -8183,6 +8271,103 @@ private fun ImagePreviewDialog(
           Text("无法在应用内预览这张图片。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(8.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+          TextButton(onClick = onOpenExternal) {
+            Text("用系统应用打开")
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun AttachmentPreviewDialog(
+  attachment: ChatAttachment,
+  onDismiss: () -> Unit,
+  onOpenExternal: () -> Unit
+) {
+  val textPreview = remember(attachment.localPath, attachment.mimeType) {
+    if (attachment.isTextAttachment()) readAttachmentPreviewText(attachment.localPath) else null
+  }
+  val pdfPreview = remember(attachment.localPath, attachment.mimeType) {
+    if (attachment.isPdfAttachment()) renderPdfFirstPage(attachment.localPath) else null
+  }
+  Dialog(
+    onDismissRequest = onDismiss,
+    properties = DialogProperties(usePlatformDefaultWidth = false)
+  ) {
+    Surface(
+      color = MaterialTheme.colorScheme.surface,
+      shape = RoundedCornerShape(8.dp),
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(18.dp)
+    ) {
+      Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = attachment.displayName,
+              fontWeight = FontWeight.SemiBold,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
+            )
+            Text(
+              text = "${attachment.mimeType} · ${formatAttachmentSize(attachment.sizeBytes)}",
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
+            )
+          }
+          IconButton(onClick = onDismiss) {
+            Icon(Icons.Outlined.Close, contentDescription = "关闭预览")
+          }
+        }
+        when {
+          textPreview != null -> {
+            Surface(
+              color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f),
+              shape = RoundedCornerShape(8.dp),
+              modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 220.dp, max = 560.dp)
+            ) {
+              SelectionContainer {
+                Text(
+                  text = textPreview,
+                  style = MaterialTheme.typography.bodySmall,
+                  modifier = Modifier
+                    .padding(12.dp)
+                    .verticalScroll(rememberScrollState())
+                )
+              }
+            }
+          }
+          pdfPreview?.bitmap != null -> {
+            Text(
+              text = "PDF 共 ${pdfPreview.pageCount} 页，当前预览第 1 页。",
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Image(
+              bitmap = pdfPreview.bitmap,
+              contentDescription = attachment.displayName,
+              contentScale = ContentScale.Fit,
+              modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 220.dp, max = 620.dp)
+            )
+          }
+          else -> {
+            Text("无法在应用内预览该附件。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+          }
+        }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
           TextButton(onClick = onOpenExternal) {
             Text("用系统应用打开")

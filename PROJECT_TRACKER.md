@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: PDF and text attachments now open in an in-app preview dialog, with PDF first-page rendering, text selection/scrolling, and a system-open fallback.
+- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the in-app attachment preview change.
 - Done: group-chat editing can now save a multi-preset background combination per group, reinsert that group's common combination, and insert multiple selected presets at once.
 - Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the group background preset combination change.
 - Done: background presets now support optional categories, default presets ship with categories, Settings can edit/filter by category, and the group-chat preset insertion dialog can filter and display categories.
@@ -324,7 +326,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 
 | ID | 任务 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
-| NEXT-P2-001 | PDF/文本 app 内预览 | Planned | PDF 或文本附件可在 app 内预览 |
+| NEXT-P2-001 | PDF/文本 app 内预览 | Done | PDF 附件可在 app 内预览第一页，文本/JSON/Markdown/日志等文本附件可在 app 内滚动/选择预览，并保留系统应用打开入口 |
 | NEXT-P2-002 | Provider 多模态能力矩阵 | Done | 设置页的 API 配置管理已展示每个 provider 是否支持图片输入、文件输入、搜索工具和 reasoning，并在每行显示紧凑能力徽章 |
 | NEXT-P2-003 | 二维码导入导出 Provider 配置 | Planned | 支持配置生成二维码和扫码导入 |
 | NEXT-P2-004 | UI 文件拆分 | Planned | `AIChatAppRoot.kt` 拆分为 chat/settings/drawer/markdown/components |
