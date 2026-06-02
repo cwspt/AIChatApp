@@ -505,6 +505,33 @@ class ChatRepositoryForkTest {
   }
 
   @Test
+  fun addTagsToFavoriteSnippetsMergesOnlySelectedFavorites() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    dao.upsertProvider(provider("provider", "model-a"))
+    dao.upsertConversation(conversation("conv", providerId = "provider", model = "model-a"))
+    dao.upsertMessage(message("a1", "conv", MessageRole.ASSISTANT, "answer one", "provider", "model-a", 1))
+    dao.upsertMessage(message("a2", "conv", MessageRole.ASSISTANT, "answer two", "provider", "model-a", 2))
+    val first = repository.createFavoriteSnippet("conv", setOf("a1"), "Saved one", "", "Work")
+    val second = repository.createFavoriteSnippet("conv", setOf("a2"), "Saved two", "", "Archive")
+
+    val changed = repository.addTagsToFavoriteSnippets(setOf(first.id), "Work Important")
+    val firstAfterAdd = repository.favoriteSnippetById(first.id)!!
+    val secondAfterAdd = repository.favoriteSnippetById(second.id)!!
+
+    assertEquals(1, changed)
+    assertEquals(listOf("Work", "Important"), firstAfterAdd.tags)
+    assertEquals(listOf("Archive"), secondAfterAdd.tags)
+    assertTrue(firstAfterAdd.searchText.contains("important"))
+    assertTrue(!secondAfterAdd.searchText.contains("important"))
+  }
+
+  @Test
   fun favoriteSnippetsExportAndImportJson() = runTest {
     val dao = FakeChatDao()
     val repository = ChatRepository(

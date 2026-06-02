@@ -399,6 +399,16 @@ class ChatRepository(
     dao.deleteFavoriteSnippet(favoriteId)
   }
 
+  suspend fun addTagsToFavoriteSnippets(favoriteIds: Set<String>, tagsInput: String): Int {
+    require(favoriteIds.isNotEmpty()) { "请选择收藏" }
+    val cleanTags = normalizeTags(tagsInput)
+    require(cleanTags.isNotEmpty()) { "请输入标签" }
+    return updateFavoriteTags(
+      favoriteFilter = { it.id in favoriteIds },
+      transform = { tags -> tags + cleanTags }
+    )
+  }
+
   suspend fun renameFavoriteTag(oldTag: String, newTagInput: String): Int {
     val cleanOldTag = oldTag.trim().trimStart('#')
     val cleanNewTag = normalizeTags(newTagInput).firstOrNull() ?: error("新标签不能为空")
@@ -418,11 +428,15 @@ class ChatRepository(
     }
   }
 
-  private suspend fun updateFavoriteTags(transform: (List<String>) -> List<String>): Int {
+  private suspend fun updateFavoriteTags(
+    favoriteFilter: (FavoriteSnippet) -> Boolean = { true },
+    transform: (List<String>) -> List<String>
+  ): Int {
     val favorites = dao.observeFavoriteSnippets().first().map { it.toDomain() }
     val now = System.currentTimeMillis()
     var changedCount = 0
     favorites.forEach { favorite ->
+      if (!favoriteFilter(favorite)) return@forEach
       val nextTags = transform(favorite.tags).distinctBy { it.lowercase() }
       if (nextTags != favorite.tags) {
         val updated = favorite.copy(

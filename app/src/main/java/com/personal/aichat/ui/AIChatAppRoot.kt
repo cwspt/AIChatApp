@@ -776,6 +776,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onImportJson = viewModel::importFavoriteSnippetsJson,
         onEdit = { editingFavorite = it },
         onDelete = viewModel::deleteFavoriteSnippet,
+        onAddTagsToFavorites = viewModel::addTagsToFavoriteSnippets,
         onRenameTag = viewModel::renameFavoriteTag,
         onDeleteTag = viewModel::deleteFavoriteTag,
         onRemoveMessage = viewModel::removeMessageFromFavorite,
@@ -2050,6 +2051,7 @@ private fun FavoriteSnippetsPage(
   onImportJson: (String) -> Unit,
   onEdit: (FavoriteSnippet) -> Unit,
   onDelete: (String) -> Unit,
+  onAddTagsToFavorites: (Set<String>, String) -> Unit,
   onRenameTag: (String, String) -> Unit,
   onDeleteTag: (String) -> Unit,
   onRemoveMessage: (String, String) -> Unit,
@@ -2061,6 +2063,7 @@ private fun FavoriteSnippetsPage(
   var batchMode by remember { mutableStateOf(false) }
   var selectedFavoriteIds by remember { mutableStateOf<Set<String>>(emptySet()) }
   var tagManagerOpen by remember { mutableStateOf(false) }
+  var batchTagDialogOpen by remember { mutableStateOf(false) }
   var importExportOpen by remember { mutableStateOf(false) }
   val selectedFavorite = favorites.firstOrNull { it.id == selectedFavoriteId }
   val allTags = remember(favorites) {
@@ -2179,6 +2182,14 @@ private fun FavoriteSnippetsPage(
                 Spacer(Modifier.width(4.dp))
                 Text("删除")
               }
+              TextButton(
+                onClick = { batchTagDialogOpen = true },
+                enabled = selectedFavoriteIds.isNotEmpty()
+              ) {
+                Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("打标签")
+              }
             }
           }
         }
@@ -2266,6 +2277,18 @@ private fun FavoriteSnippetsPage(
       }
     )
   }
+  if (batchTagDialogOpen) {
+    FavoriteBatchTagDialog(
+      count = selectedFavoriteIds.size,
+      onDismiss = { batchTagDialogOpen = false },
+      onSave = { tags ->
+        onAddTagsToFavorites(selectedFavoriteIds, tags)
+        selectedFavoriteIds = emptySet()
+        batchMode = false
+        batchTagDialogOpen = false
+      }
+    )
+  }
   if (importExportOpen) {
     FavoriteImportExportDialog(
       onDismiss = { importExportOpen = false },
@@ -2274,6 +2297,45 @@ private fun FavoriteSnippetsPage(
       onImportJson = onImportJson
     )
   }
+}
+
+@Composable
+private fun FavoriteBatchTagDialog(
+  count: Int,
+  onDismiss: () -> Unit,
+  onSave: (String) -> Unit
+) {
+  var value by remember { mutableStateOf("") }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("批量打标签") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+          "将为已选择的 $count 个收藏追加标签，已有标签会自动去重。",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        OutlinedTextField(
+          value = value,
+          onValueChange = { value = it },
+          label = { Text("标签，空格或逗号分隔") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth()
+        )
+      }
+    },
+    confirmButton = {
+      Button(onClick = { onSave(value) }, enabled = value.trim().trimStart('#').isNotBlank()) {
+        Text("添加")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("取消")
+      }
+    }
+  )
 }
 
 @Composable

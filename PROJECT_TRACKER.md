@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: favorite batch mode now supports adding one or more tags to selected favorite snippets, merging with existing tags and de-duplicating case-insensitively.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the favorite batch-tagging change.
 - Done: favorite library now has a batch mode with current-filter select-all, per-card checkboxes, and batch deletion for selected favorite snippets.
 - Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the favorite batch-delete change.
 - Done: favorite search results now highlight matched text in titles, descriptions, tags, source/model metadata, and show a highlighted body snippet when message content matches the query.
@@ -316,7 +318,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P2-006 | 导出内容包含附件索引 | Done | Markdown/文本/长图导出会列出用户上传附件名称、MIME 类型和大小，单聊与群聊导出均有单测覆盖 |
 | NEXT-P2-007 | 文本级选区收藏 | Planned | 支持收藏气泡内选中的一段文字 |
 | NEXT-P2-008 | 收藏搜索结果高亮 | Done | 收藏夹搜索命中标题、描述、标签、来源/模型元数据和正文时高亮显示，并显示正文命中片段 |
-| NEXT-P2-009 | 收藏批量管理 | In Progress | 收藏夹已支持批量模式、当前筛选全选和批量删除；仍需继续补批量打标签、排序和批量移除消息 |
+| NEXT-P2-009 | 收藏批量管理 | In Progress | 收藏夹已支持批量模式、当前筛选全选、批量删除和批量追加标签；仍需继续补按时间/标签排序和批量移除消息 |
 | NEXT-P2-010 | 群聊自动主持人 | Planned | 支持由主持人机器人控制下一位发言者、暂停和总结 |
 | NEXT-P2-011 | 群聊播放器增强 | Planned | 支持有限轮数、每轮间隔、按群聊保存偏好和失败后重试策略 |
 | NEXT-P2-012 | 机器人头像和颜色 | Planned | 群聊气泡按机器人显示头像、颜色和可扫描身份标记 |

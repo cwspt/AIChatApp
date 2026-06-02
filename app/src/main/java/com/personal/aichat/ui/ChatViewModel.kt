@@ -1432,6 +1432,18 @@ class ChatViewModel(
     }
   }
 
+  fun addTagsToFavoriteSnippets(favoriteIds: Set<String>, tags: String) {
+    viewModelScope.launch {
+      runCatching {
+        repository.addTagsToFavoriteSnippets(favoriteIds, tags)
+      }.onSuccess { count ->
+        localState.update { it.copy(error = if (count > 0) "已为 $count 个收藏添加标签" else "收藏标签无需更新") }
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "批量添加标签失败") }
+      }
+    }
+  }
+
   fun renameFavoriteTag(oldTag: String, newTag: String) {
     viewModelScope.launch {
       runCatching {
