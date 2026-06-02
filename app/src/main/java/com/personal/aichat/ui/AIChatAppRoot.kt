@@ -4839,6 +4839,11 @@ private fun BackgroundPresetPickerDialog(
   onDismiss: () -> Unit,
   onSelect: (ChatBackgroundPreset) -> Unit
 ) {
+  var query by remember { mutableStateOf("") }
+  val sortedPresets = remember(presets) { presets.sortedBy { it.sortOrder } }
+  val filteredPresets = remember(sortedPresets, query) {
+    sortedPresets.filter { it.matchesBackgroundPresetQuery(query) }
+  }
   AlertDialog(
     onDismissRequest = onDismiss,
     title = { Text("插入背景预设") },
@@ -4850,7 +4855,30 @@ private fun BackgroundPresetPickerDialog(
           .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
       ) {
-        presets.sortedBy { it.sortOrder }.forEach { preset ->
+        OutlinedTextField(
+          value = query,
+          onValueChange = { query = it },
+          label = { Text("搜索背景预设") },
+          leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+          trailingIcon = {
+            if (query.isNotBlank()) {
+              IconButton(onClick = { query = "" }) {
+                Icon(Icons.Outlined.Close, contentDescription = "清空搜索")
+              }
+            }
+          },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth()
+        )
+        if (filteredPresets.isEmpty()) {
+          Text(
+            "没有匹配的背景预设",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(vertical = 8.dp)
+          )
+        }
+        filteredPresets.forEach { preset ->
           Surface(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
             shape = RoundedCornerShape(8.dp),
@@ -4920,6 +4948,13 @@ private fun AppSettingsPage(
   var importDialogOpen by remember { mutableStateOf(false) }
   var editingPreset by remember { mutableStateOf<ChatBackgroundPreset?>(null) }
   var creatingPreset by remember { mutableStateOf(false) }
+  var backgroundPresetQuery by remember { mutableStateOf("") }
+  val sortedBackgroundPresets = remember(state.appSettings.backgroundPresets) {
+    state.appSettings.backgroundPresets.sortedBy { it.sortOrder }
+  }
+  val filteredBackgroundPresets = remember(sortedBackgroundPresets, backgroundPresetQuery) {
+    sortedBackgroundPresets.filter { it.matchesBackgroundPresetQuery(backgroundPresetQuery) }
+  }
   Surface(
     color = MaterialTheme.colorScheme.background,
     modifier = Modifier
@@ -5096,11 +5131,35 @@ private fun AppSettingsPage(
             Spacer(Modifier.width(8.dp))
             Text("新增背景预设")
           }
-          state.appSettings.backgroundPresets.sortedBy { it.sortOrder }.forEachIndexed { index, preset ->
+          OutlinedTextField(
+            value = backgroundPresetQuery,
+            onValueChange = { backgroundPresetQuery = it },
+            label = { Text("搜索背景预设") },
+            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+            trailingIcon = {
+              if (backgroundPresetQuery.isNotBlank()) {
+                IconButton(onClick = { backgroundPresetQuery = "" }) {
+                  Icon(Icons.Outlined.Close, contentDescription = "清空搜索")
+                }
+              }
+            },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+          )
+          if (filteredBackgroundPresets.isEmpty()) {
+            Text(
+              "没有匹配的背景预设",
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.padding(vertical = 8.dp)
+            )
+          }
+          filteredBackgroundPresets.forEach { preset ->
+            val sourceIndex = sortedBackgroundPresets.indexOfFirst { it.id == preset.id }
             BackgroundPresetSettingsRow(
               preset = preset,
-              canMoveUp = index > 0,
-              canMoveDown = index < state.appSettings.backgroundPresets.lastIndex,
+              canMoveUp = sourceIndex > 0,
+              canMoveDown = sourceIndex >= 0 && sourceIndex < sortedBackgroundPresets.lastIndex,
               onEdit = { editingPreset = preset },
               onDelete = { onDeleteBackgroundPreset(preset.id) },
               onMoveUp = { onMoveBackgroundPreset(preset.id, -1) },
@@ -5134,6 +5193,17 @@ private fun AppSettingsPage(
       }
     )
   }
+}
+
+private fun ChatBackgroundPreset.matchesBackgroundPresetQuery(query: String): Boolean {
+  val tokens = query
+    .trim()
+    .lowercase()
+    .split(Regex("\\s+"))
+    .filter { it.isNotBlank() }
+  if (tokens.isEmpty()) return true
+  val searchable = "${title.lowercase()}\n${content.lowercase()}"
+  return tokens.all { token -> searchable.contains(token) }
 }
 
 @Composable
