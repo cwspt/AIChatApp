@@ -7,6 +7,8 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+const val CHAT_DATABASE_VERSION = 15
+
 @Database(
   entities = [
     ProviderEntity::class,
@@ -18,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     GroupChatMemberEntity::class,
     GroupMessageEntity::class
   ],
-  version = 15,
+  version = CHAT_DATABASE_VERSION,
   exportSchema = true
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -33,22 +35,7 @@ abstract class ChatDatabase : RoomDatabase() {
           context.applicationContext,
           ChatDatabase::class.java,
           "ai-chat.db"
-        ).addMigrations(
-          Migration1To2,
-          Migration2To3,
-          Migration3To4,
-          Migration4To5,
-          Migration5To6,
-          Migration6To7,
-          Migration7To8,
-          Migration8To9,
-          Migration9To10,
-          Migration10To11,
-          Migration11To12,
-          Migration12To13,
-          Migration13To14,
-          Migration14To15
-        ).build().also { instance = it }
+        ).addMigrations(*ALL_MIGRATIONS).build().also { instance = it }
       }
     }
 
@@ -243,5 +230,22 @@ abstract class ChatDatabase : RoomDatabase() {
         db.execSQL("ALTER TABLE group_chat_rooms ADD COLUMN contextSummaryUpdatedAt INTEGER DEFAULT NULL")
       }
     }
+
+    val ALL_MIGRATIONS: Array<Migration> = arrayOf(
+      Migration1To2,
+      Migration2To3,
+      Migration3To4,
+      Migration4To5,
+      Migration5To6,
+      Migration6To7,
+      Migration7To8,
+      Migration8To9,
+      Migration9To10,
+      Migration10To11,
+      Migration11To12,
+      Migration12To13,
+      Migration13To14,
+      Migration14To15
+    )
   }
 }

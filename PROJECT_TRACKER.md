@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: Room migration tests now cover seeded schema 1 to the latest schema and every exported schema to the latest schema, with Robolectric execution plus an instrumentation-test counterpart.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatDatabaseMigrationRobolectricTest`, `:app:compileDebugAndroidTestKotlin`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the Room migration test change.
 - Done: Provider config QR export/import is now available from Settings, using compressed QR payloads, an in-app QR preview dialog, and scanner-based import that reuses the existing provider import path.
 - Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the provider QR import/export change.
 - Done: PDF and text attachments now open in an in-app preview dialog, with PDF first-page rendering, text selection/scrolling, and a system-open fallback.
@@ -293,7 +295,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | RISK-004 | 长图导出超长对话可能触达 Bitmap 内存限制 | Watch | P1 | 后续做分页/PDF 导出 |
 | RISK-005 | `AIChatAppRoot.kt` 文件过大 | Watch | P2 | 后续按 screen/component/dialog/markdown 拆分 |
 | RISK-006 | 中文乱码可能仍残留在旧代码或历史 tracker 文本里 | Watch | P1 | 每次提交前执行 mojibake 扫描 |
-| RISK-007 | Room migration 版本增长较快 | Watch | P2 | 增加 migration 自动化测试 |
+| RISK-007 | Room migration 版本增长较快 | Done | P2 | 已新增 Room migration 自动化测试，覆盖 schema 1 到最新版本及每个导出 schema 到最新版本 |
 | RISK-008 | release keystore 丢失会导致同包名无法升级 | Watch | P0 | 需要安全备份 JKS 和密码文件 |
 | RISK-009 | 收藏附件复用本机文件路径，文件被清理后只能保留元数据 | Watch | P2 | 后续增加附件复制/校验或收藏导出打包 |
 | RISK-010 | 群聊提示词和最近 20 条上下文可能不足以处理长讨论 | Watch | P1 | 后续增加自动摘要滚动更新、上下文长度设置和主持人调度 |
@@ -332,7 +334,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P2-002 | Provider 多模态能力矩阵 | Done | 设置页的 API 配置管理已展示每个 provider 是否支持图片输入、文件输入、搜索工具和 reasoning，并在每行显示紧凑能力徽章 |
 | NEXT-P2-003 | 二维码导入导出 Provider 配置 | Done | 设置页可生成包含 Provider 配置的压缩二维码，扫码后复用导入流程新增配置，并有单元测试覆盖二维码载荷导入 |
 | NEXT-P2-004 | UI 文件拆分 | Planned | `AIChatAppRoot.kt` 拆分为 chat/settings/drawer/markdown/components |
-| NEXT-P2-005 | Room migration 测试 | Planned | 从 schema 1 到最新 schema 自动迁移验证 |
+| NEXT-P2-005 | Room migration 测试 | Done | Robolectric 单测已验证带旧数据的 schema 1 可迁移到最新 schema，且每个已导出 schema 均可迁移到最新 schema；AndroidTest 版本也可编译 |
 | NEXT-P2-006 | 导出内容包含附件索引 | Done | Markdown/文本/长图导出会列出用户上传附件名称、MIME 类型和大小，单聊与群聊导出均有单测覆盖 |
 | NEXT-P2-007 | 文本级选区收藏 | Planned | 支持收藏气泡内选中的一段文字 |
 | NEXT-P2-008 | 收藏搜索结果高亮 | Done | 收藏夹搜索命中标题、描述、标签、来源/模型元数据和正文时高亮显示，并显示正文命中片段 |
