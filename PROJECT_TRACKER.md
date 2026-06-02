@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: UI splitting continued by extracting the provider menu, new-conversation provider picker, fork provider picker, and shared provider choice list into `ProviderChoiceComponents.kt`.
+- Validation: `:app:compileDebugKotlin` and `:app:assembleDebug` passed after the provider choice component split.
 - Done: UI splitting continued by extracting incoming share target selection, target search helpers, and incoming-share provider/conversation/group rows into `IncomingShareComponents.kt`.
 - Validation: `:app:compileDebugKotlin` and `:app:assembleDebug` passed after the incoming share component split.
 - Done: UI splitting continued by extracting the provider edit form, reasoning/image-generation selectors, and provider/model option labels into `ProviderSettingsComponents.kt`.
@@ -375,7 +377,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P2-001 | PDF/文本 app 内预览 | Done | PDF 附件可在 app 内预览第一页，文本/JSON/Markdown/日志等文本附件可在 app 内滚动/选择预览，并保留系统应用打开入口 |
 | NEXT-P2-002 | Provider 多模态能力矩阵 | Done | 设置页的 API 配置管理已展示每个 provider 是否支持图片输入、文件输入、搜索工具和 reasoning，并在每行显示紧凑能力徽章 |
 | NEXT-P2-003 | 二维码导入导出 Provider 配置 | Done | 设置页可生成包含 Provider 配置的压缩二维码，扫码后复用导入流程新增配置，并有单元测试覆盖二维码载荷导入 |
-| NEXT-P2-004 | UI 文件拆分 | In Progress | 已将带单测覆盖的列表分组、长气泡导航目标、折叠摘要和分叉来源标签纯逻辑拆到 `UiListModels.kt`，将工具调用解析/摘要/引用/视觉类型模型拆到 `ToolCallModels.kt`，将会话抽屉/文件夹操作/归档行/移动文件夹对话框拆到 `ConversationDrawer.kt`，将聊天 Markdown 渲染拆到 `MarkdownRenderer.kt`，将工具调用卡片 UI 拆到 `ToolCallCards.kt`，将单聊顶部栏/元信息条/分享和溢出菜单拆到 `TopBarComponents.kt`，将附件条/图片网格/图片/PDF/文本预览拆到 `AttachmentComponents.kt`，将 composer 与生图参数控件拆到 `ComposerComponents.kt`，将 Provider 能力矩阵/徽章拆到 `ProviderCapabilityComponents.kt`，将机器人身份/气泡配色组件拆到 `BotIdentityComponents.kt`，将设置页子组件/导入与背景预设控件拆到 `SettingsComponents.kt`，将 Provider 管理列表/删除改绑对话框拆到 `ProviderManagerComponents.kt`，将 Provider 编辑表单/模型参数选择器拆到 `ProviderSettingsComponents.kt`，并将系统分享入口目标选择/搜索结果行拆到 `IncomingShareComponents.kt`；后续继续拆 chat/settings/components |
+| NEXT-P2-004 | UI 文件拆分 | In Progress | 已将带单测覆盖的列表分组、长气泡导航目标、折叠摘要和分叉来源标签纯逻辑拆到 `UiListModels.kt`，将工具调用解析/摘要/引用/视觉类型模型拆到 `ToolCallModels.kt`，将会话抽屉/文件夹操作/归档行/移动文件夹对话框拆到 `ConversationDrawer.kt`，将聊天 Markdown 渲染拆到 `MarkdownRenderer.kt`，将工具调用卡片 UI 拆到 `ToolCallCards.kt`，将单聊顶部栏/元信息条/分享和溢出菜单拆到 `TopBarComponents.kt`，将附件条/图片网格/图片/PDF/文本预览拆到 `AttachmentComponents.kt`，将 composer 与生图参数控件拆到 `ComposerComponents.kt`，将 Provider 能力矩阵/徽章拆到 `ProviderCapabilityComponents.kt`，将机器人身份/气泡配色组件拆到 `BotIdentityComponents.kt`，将设置页子组件/导入与背景预设控件拆到 `SettingsComponents.kt`，将 Provider 管理列表/删除改绑对话框拆到 `ProviderManagerComponents.kt`，将 Provider 编辑表单/模型参数选择器拆到 `ProviderSettingsComponents.kt`，将系统分享入口目标选择/搜索结果行拆到 `IncomingShareComponents.kt`，并将 Provider 菜单/新建与分叉 Provider 选择器拆到 `ProviderChoiceComponents.kt`；后续继续拆 chat/settings/components |
 | NEXT-P2-005 | Room migration 测试 | Done | Robolectric 单测已验证带旧数据的 schema 1 可迁移到最新 schema，且每个已导出 schema 均可迁移到最新 schema；AndroidTest 版本也可编译 |
 | NEXT-P2-006 | 导出内容包含附件索引 | Done | Markdown/文本/长图导出会列出用户上传附件名称、MIME 类型和大小，单聊与群聊导出均有单测覆盖 |
 | NEXT-P2-007 | 文本级选区收藏 | Planned | 支持收藏气泡内选中的一段文字 |
