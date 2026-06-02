@@ -693,6 +693,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onShareSelected = { viewModel.shareSelectedGroupMessagesText(context) },
         onShareImage = { viewModel.shareGroupChatLongImage(context) },
         onShareSelectedImage = { viewModel.shareSelectedGroupMessagesLongImage(context) },
+        onShareMarkdown = { viewModel.shareGroupChatMarkdownFile(context) },
         onShareMessageText = { viewModel.shareGroupMessageText(it, context) },
         onShareMessageImage = { viewModel.shareGroupMessageImage(it, context) },
         onFavoriteSelected = {
@@ -2788,6 +2789,7 @@ private fun GroupChatPage(
   onShareSelected: () -> Unit,
   onShareImage: () -> Unit,
   onShareSelectedImage: () -> Unit,
+  onShareMarkdown: () -> Unit,
   onShareMessageText: (String) -> Unit,
   onShareMessageImage: (String) -> Unit,
   onFavoriteSelected: () -> Unit,
@@ -2849,6 +2851,7 @@ private fun GroupChatPage(
                 onShareSelected = onShareSelected,
                 onShareImage = onShareImage,
                 onShareSelectedImage = onShareSelectedImage,
+                onShareMarkdown = onShareMarkdown,
                 onFavoriteSelected = onFavoriteSelected,
                 onAppendSelectedToFavorite = onAppendSelectedToFavorite,
                 onCompressContext = onCompressContext,
@@ -3033,6 +3036,7 @@ private fun GroupChatOverflowMenu(
   onShareSelected: () -> Unit,
   onShareImage: () -> Unit,
   onShareSelectedImage: () -> Unit,
+  onShareMarkdown: () -> Unit,
   onFavoriteSelected: () -> Unit,
   onAppendSelectedToFavorite: () -> Unit,
   onCompressContext: () -> Unit,
@@ -3105,6 +3109,14 @@ private fun GroupChatOverflowMenu(
         onClick = {
           menuOpen = false
           onShareSelectedImage()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("导出 Markdown 文件") },
+        leadingIcon = { Icon(Icons.Outlined.ContentCopy, contentDescription = null) },
+        onClick = {
+          menuOpen = false
+          onShareMarkdown()
         }
       )
       DropdownMenuItem(

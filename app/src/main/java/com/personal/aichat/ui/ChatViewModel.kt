@@ -1028,6 +1028,29 @@ class ChatViewModel(
     }
   }
 
+  fun shareGroupChatMarkdownFile(context: Context) {
+    val state = uiState.value
+    val groupId = state.selectedGroupChatId ?: return
+    val selectedIds = state.selectedMessageIds
+    viewModelScope.launch {
+      val shareText = if (selectedIds.isEmpty()) {
+        repository.groupChatShareText(groupId)
+      } else {
+        repository.groupChatShareText(groupId, selectedIds)
+      }
+      if (shareText.isBlank()) return@launch
+      val title = state.selectedGroupChat?.title ?: "AIGroupChat"
+      val exportTitle = if (selectedIds.isEmpty()) title else "${title}（节选）"
+      val uri = ConversationShareRenderer.writeTextExport(context, exportTitle, shareText)
+      val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/markdown"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+      context.startActivity(Intent.createChooser(sendIntent, "分享群聊 Markdown 文件"))
+    }
+  }
+
   fun shareGroupChatLongImage(context: Context) {
     val groupId = uiState.value.selectedGroupChatId ?: return
     viewModelScope.launch {

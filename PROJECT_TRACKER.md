@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: group chat overflow menu now exposes Markdown file export, reusing the existing group share text for full chats and selected group-message subsets.
+- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the group Markdown export entry change.
 - Done: incoming system-share target picker now supports searching new single-chat providers, existing single chats, and group chats by title/topic/model/provider/bot fields.
 - Done: share-target search keeps attachment compatibility filtering for new/existing single chats and shows targeted empty-state text when no destination matches.
 - Done: source-level mojibake scan is clean again; historical tool-output mojibake compatibility labels were moved behind ASCII Unicode escape constants.
@@ -289,7 +291,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-009 | 收藏夹标签管理 | Done | 收藏夹标签管理弹窗已支持重命名、合并到已有标签和删除标签，收藏内容不受影响 |
 | NEXT-P1-010 | 收藏导入导出 | Done | 收藏夹支持全量 JSON 导出/导入恢复，并支持 Markdown 导出归档 |
 | NEXT-P1-011 | 群聊真机回归 | Planned | 真机验证新建机器人、创建群聊、点名/播放器发言、搜索工具调用、附件上下文和切换页面不中断 |
-| NEXT-P1-012 | 群聊导出增强 | Planned | 群聊可导出文本/Markdown/长图，群消息可生成长图分享 |
+| NEXT-P1-012 | 群聊导出增强 | In Progress | 群聊全文/选中消息已支持文本、Markdown 文件和长图分享；仍需继续优化完整群聊导出布局与超长内容表现 |
 | NEXT-P1-013 | 长气泡侧边按钮真机体验回归 | Planned | 验证单聊/群聊长气泡上下跳转、浮动三点菜单、菜单展开不自动消失、与滚动条和回到底部按钮不重叠 |
 | NEXT-P1-014 | 系统分享真机回归 | Planned | 验证相册、文件管理器、浏览器分享到 App；覆盖单文件、多文件、纯文本、文件加文本说明和 App 前台分享 |
 | NEXT-P1-015 | 分享目标页搜索 | Done | 分享目标较多时可搜索单聊、群聊和 Provider；搜索覆盖新建单聊 Provider、已有单聊和已有群聊 |
