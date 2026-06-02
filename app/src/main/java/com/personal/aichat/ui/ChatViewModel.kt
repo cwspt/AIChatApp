@@ -1870,9 +1870,30 @@ class ChatViewModel(
     }
   }
 
+  fun exportProviderConfigsQrText(onReady: (String) -> Unit) {
+    viewModelScope.launch {
+      runCatching {
+        repository.exportProvidersQrText(includeApiKeys = true)
+      }.onSuccess { text ->
+        onReady(text)
+        localState.update { it.copy(error = "已生成 API 配置二维码") }
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "生成 API 配置二维码失败") }
+      }
+    }
+  }
+
   fun importProviderConfigsText(text: String) {
     viewModelScope.launch {
-      repository.importProvidersText(text)
+      runCatching {
+        repository.importProvidersText(text)
+      }.onSuccess { count ->
+        localState.update {
+          it.copy(error = if (count > 0) "已导入 $count 个 API 配置" else "没有可导入的 API 配置")
+        }
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "导入 API 配置失败") }
+      }
     }
   }
 

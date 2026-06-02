@@ -52,15 +52,20 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.CancellationException
 import javax.net.ssl.SSLHandshakeException
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Base64
 import java.util.UUID
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 
 private const val MaxRawResponseLogChars = 64_000
 private const val GroupRecentMessageLimit = 20
 private const val AutoCompressionTriggerPercent = 85
 private const val CompressionTargetPercent = 60
 private const val CompressionRecentMessageKeep = 12
+private const val ProviderConfigQrPrefix = "aichat-provider-config-v1:"
 
 private data class ProviderConfigExport(
   val version: Int = 1,
@@ -1561,9 +1566,14 @@ class ChatRepository(
     return gson.toJson(export)
   }
 
+  suspend fun exportProvidersQrText(includeApiKeys: Boolean = true): String {
+    return encodeProviderConfigQrPayload(exportProvidersText(includeApiKeys = includeApiKeys))
+  }
+
   suspend fun importProvidersText(text: String): Int {
+    val importText = decodeProviderConfigImportText(text)
     val export = runCatching {
-      gson.fromJson(text.trim(), ProviderConfigExport::class.java)
+      gson.fromJson(importText, ProviderConfigExport::class.java)
     }.getOrNull() ?: return 0
     val existingIds = dao.observeProviders().first().map { it.id }.toMutableSet()
     var imported = 0
@@ -1597,6 +1607,24 @@ class ChatRepository(
       imported += 1
     }
     return imported
+  }
+
+  private fun encodeProviderConfigQrPayload(json: String): String {
+    val compressed = ByteArrayOutputStream()
+    GZIPOutputStream(compressed).bufferedWriter(Charsets.UTF_8).use { writer ->
+      writer.write(json)
+    }
+    return ProviderConfigQrPrefix + Base64.getEncoder().encodeToString(compressed.toByteArray())
+  }
+
+  private fun decodeProviderConfigImportText(text: String): String {
+    val trimmed = text.trim()
+    if (!trimmed.startsWith(ProviderConfigQrPrefix)) return trimmed
+    val encoded = trimmed.removePrefix(ProviderConfigQrPrefix).trim()
+    val compressed = Base64.getDecoder().decode(encoded)
+    return GZIPInputStream(ByteArrayInputStream(compressed)).bufferedReader(Charsets.UTF_8).use { reader ->
+      reader.readText()
+    }
   }
 
   suspend fun estimateConversationContextCapacity(conversationId: String): ContextCapacity? {

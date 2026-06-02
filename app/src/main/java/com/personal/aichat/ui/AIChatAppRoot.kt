@@ -150,6 +150,12 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -761,6 +767,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onAttachmentMaxPendingMb = viewModel::setAttachmentMaxPendingMb,
         onAttachmentMaxImageSourceMb = viewModel::setAttachmentMaxImageSourceMb,
         onExportProviderConfigs = { viewModel.exportProviderConfigsText(context) },
+        onExportProviderConfigsQr = { onReady -> viewModel.exportProviderConfigsQrText(onReady) },
         onImportProviderConfigs = viewModel::importProviderConfigsText,
         onExportBackgroundPresets = { viewModel.exportBackgroundPresetsText(context) },
         onImportBackgroundPresets = viewModel::importBackgroundPresetsText,
@@ -5039,6 +5046,7 @@ private fun AppSettingsPage(
   onAttachmentMaxPendingMb: (Int) -> Unit,
   onAttachmentMaxImageSourceMb: (Int) -> Unit,
   onExportProviderConfigs: () -> Unit,
+  onExportProviderConfigsQr: ((String) -> Unit) -> Unit,
   onImportProviderConfigs: (String) -> Unit,
   onExportBackgroundPresets: () -> Unit,
   onImportBackgroundPresets: (String) -> Unit,
@@ -5047,7 +5055,9 @@ private fun AppSettingsPage(
   onDeleteBackgroundPreset: (String) -> Unit,
   onMoveBackgroundPreset: (String, Int) -> Unit
 ) {
+  val context = LocalContext.current
   var importDialogOpen by remember { mutableStateOf(false) }
+  var providerConfigQrText by remember { mutableStateOf<String?>(null) }
   var backgroundImportDialogOpen by remember { mutableStateOf(false) }
   var editingPreset by remember { mutableStateOf<ChatBackgroundPreset?>(null) }
   var creatingPreset by remember { mutableStateOf(false) }
@@ -5063,6 +5073,14 @@ private fun AppSettingsPage(
     sortedBackgroundPresets.filter { preset ->
       preset.matchesBackgroundPresetQuery(backgroundPresetQuery) &&
         (backgroundPresetCategoryFilter == null || preset.cleanCategory().equals(backgroundPresetCategoryFilter, ignoreCase = true))
+    }
+  }
+  val providerQrScanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+    val contents = result.contents
+    if (contents.isNullOrBlank()) {
+      Toast.makeText(context, "未读取到二维码内容", Toast.LENGTH_SHORT).show()
+    } else {
+      onImportProviderConfigs(contents)
     }
   }
   Surface(
@@ -5217,14 +5235,40 @@ private fun AppSettingsPage(
           }
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = onExportProviderConfigs) {
+              Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(6.dp))
               Text("导出配置文本")
             }
             TextButton(onClick = { importDialogOpen = true }) {
+              Icon(Icons.Outlined.ImportExport, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(6.dp))
               Text("导入配置文本")
             }
           }
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = { onExportProviderConfigsQr { providerConfigQrText = it } }) {
+              Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(6.dp))
+              Text("生成二维码")
+            }
+            TextButton(
+              onClick = {
+                val options = ScanOptions().apply {
+                  setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                  setPrompt("扫描 API 配置二维码")
+                  setBeepEnabled(false)
+                  setOrientationLocked(false)
+                }
+                providerQrScanLauncher.launch(options)
+              }
+            ) {
+              Icon(Icons.Outlined.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(6.dp))
+              Text("扫码导入")
+            }
+          }
           Text(
-            "导出的文本包含 API Key，请只通过可信渠道保存或分享。二维码/扫码导入导出涉及相机权限、扫码库和长文本压缩，第一版先不启用。",
+            "导出的文本和二维码都包含 API Key，请只通过可信渠道保存或分享。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
           )
@@ -5348,6 +5392,12 @@ private fun AppSettingsPage(
       }
     )
   }
+  providerConfigQrText?.let { qrText ->
+    ProviderConfigQrDialog(
+      qrText = qrText,
+      onDismiss = { providerConfigQrText = null }
+    )
+  }
 }
 
 private fun ChatBackgroundPreset.matchesBackgroundPresetQuery(query: String): Boolean {
@@ -5445,14 +5495,14 @@ private fun ProviderConfigImportDialog(
     text = {
       Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
-          "粘贴从本 App 导出的 JSON 配置文本。导入会新增 Provider；如果 ID 冲突会自动生成新 ID。",
+          "粘贴从本 App 导出的 JSON 配置文本或二维码内容。导入会新增 Provider；如果 ID 冲突会自动生成新 ID。",
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         OutlinedTextField(
           value = text,
           onValueChange = { text = it },
-          label = { Text("配置 JSON") },
+          label = { Text("配置 JSON / 二维码内容") },
           minLines = 8,
           maxLines = 12,
           modifier = Modifier.fillMaxWidth()
@@ -5470,6 +5520,94 @@ private fun ProviderConfigImportDialog(
       }
     }
   )
+}
+
+@Composable
+private fun ProviderConfigQrDialog(
+  qrText: String,
+  onDismiss: () -> Unit
+) {
+  val context = LocalContext.current
+  val qrBitmap = remember(qrText) { renderQrBitmap(qrText) }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("API 配置二维码") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+          "二维码包含 API Key，请只展示给可信设备扫码。",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (qrBitmap != null) {
+          Image(
+            bitmap = qrBitmap,
+            contentDescription = "API 配置二维码",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+              .align(Alignment.CenterHorizontally)
+              .fillMaxWidth()
+              .heightIn(min = 240.dp, max = 360.dp)
+          )
+        } else {
+          Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier
+              .fillMaxWidth()
+              .heightIn(max = 280.dp)
+          ) {
+            SelectionContainer {
+              Text(
+                text = qrText,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier
+                  .padding(10.dp)
+                  .verticalScroll(rememberScrollState())
+              )
+            }
+          }
+          Text(
+            "配置内容过长，无法生成单个二维码；可复制内容后用文本导入。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
+          )
+        }
+      }
+    },
+    confirmButton = {
+      Button(onClick = onDismiss) {
+        Text("完成")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = { copyToClipboard(context, qrText) }) {
+        Text("复制内容")
+      }
+    }
+  )
+}
+
+private fun renderQrBitmap(text: String, sizePx: Int = 960): androidx.compose.ui.graphics.ImageBitmap? {
+  return runCatching {
+    val hints = mapOf(
+      EncodeHintType.CHARACTER_SET to "UTF-8",
+      EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M,
+      EncodeHintType.MARGIN to 1
+    )
+    val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
+    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+    for (y in 0 until sizePx) {
+      for (x in 0 until sizePx) {
+        bitmap.setPixel(
+          x,
+          y,
+          if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
+        )
+      }
+    }
+    bitmap.asImageBitmap()
+  }.getOrNull()
 }
 
 @Composable

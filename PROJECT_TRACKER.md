@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: Provider config QR export/import is now available from Settings, using compressed QR payloads, an in-app QR preview dialog, and scanner-based import that reuses the existing provider import path.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the provider QR import/export change.
 - Done: PDF and text attachments now open in an in-app preview dialog, with PDF first-page rendering, text selection/scrolling, and a system-open fallback.
 - Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the in-app attachment preview change.
 - Done: group-chat editing can now save a multi-preset background combination per group, reinsert that group's common combination, and insert multiple selected presets at once.
@@ -210,7 +212,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | SETTINGS-005 | Provider 配置文本导入导出 | Done | P1 | JSON 文本包含 provider 字段和 key |
 | SETTINGS-006 | Provider 删除和机器人改绑 | Done | P1 | 配置管理中可删除无依赖 Provider；有依赖时选择目标配置批量改绑后删除 |
 | SETTINGS-007 | 聊天背景预设管理 | Done | P1 | 设置页可新增、编辑、删除、上移、下移背景预设，供群聊主题快速插入 |
-| SETTINGS-008 | Provider 配置二维码导入导出 | Planned | P2 | 复杂度较高，第一版暂缓 |
+| SETTINGS-008 | Provider 配置二维码导入导出 | Done | P2 | 设置页已支持生成压缩配置二维码、扫码导入，并继续兼容 JSON 文本导入导出 |
 
 ### 4.6 聊天 UI 和交互
 
@@ -328,7 +330,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | --- | --- | --- | --- |
 | NEXT-P2-001 | PDF/文本 app 内预览 | Done | PDF 附件可在 app 内预览第一页，文本/JSON/Markdown/日志等文本附件可在 app 内滚动/选择预览，并保留系统应用打开入口 |
 | NEXT-P2-002 | Provider 多模态能力矩阵 | Done | 设置页的 API 配置管理已展示每个 provider 是否支持图片输入、文件输入、搜索工具和 reasoning，并在每行显示紧凑能力徽章 |
-| NEXT-P2-003 | 二维码导入导出 Provider 配置 | Planned | 支持配置生成二维码和扫码导入 |
+| NEXT-P2-003 | 二维码导入导出 Provider 配置 | Done | 设置页可生成包含 Provider 配置的压缩二维码，扫码后复用导入流程新增配置，并有单元测试覆盖二维码载荷导入 |
 | NEXT-P2-004 | UI 文件拆分 | Planned | `AIChatAppRoot.kt` 拆分为 chat/settings/drawer/markdown/components |
 | NEXT-P2-005 | Room migration 测试 | Planned | 从 schema 1 到最新 schema 自动迁移验证 |
 | NEXT-P2-006 | 导出内容包含附件索引 | Done | Markdown/文本/长图导出会列出用户上传附件名称、MIME 类型和大小，单聊与群聊导出均有单测覆盖 |

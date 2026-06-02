@@ -277,6 +277,39 @@ class ChatRepositoryForkTest {
   }
 
   @Test
+  fun providerQrExportCanBeImportedWithApiKey() = runTest {
+    val sourceDao = FakeChatDao()
+    val sourceKeyStore = FakeApiKeyStore()
+    val sourceRepository = ChatRepository(
+      dao = sourceDao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = sourceKeyStore,
+      adapters = emptyMap()
+    )
+    sourceDao.upsertProvider(provider("provider", "qr-model").copy(displayName = "QR Provider", secretRef = "provider_provider"))
+    sourceKeyStore.write("provider_provider", "qr-key")
+
+    val qrText = sourceRepository.exportProvidersQrText(includeApiKeys = true)
+
+    val targetDao = FakeChatDao()
+    val targetKeyStore = FakeApiKeyStore()
+    val targetRepository = ChatRepository(
+      dao = targetDao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = targetKeyStore,
+      adapters = emptyMap()
+    )
+    val imported = targetRepository.importProvidersText(qrText)
+    val provider = targetDao.providerById("provider")
+
+    assertTrue(qrText.startsWith("aichat-provider-config-v1:"))
+    assertEquals(1, imported)
+    assertEquals("QR Provider", provider?.displayName)
+    assertEquals("qr-model", provider?.defaultModel)
+    assertEquals("qr-key", targetKeyStore.writtenKeys["provider_provider"])
+  }
+
+  @Test
   fun rebindProviderBotsAndDeleteMovesBotsToTargetProviderAndDeletesSource() = runTest {
     val dao = FakeChatDao()
     val keyStore = FakeApiKeyStore()
@@ -1425,9 +1458,12 @@ private class FakeSelectionStore : ChatSelectionStore {
 
 private class FakeApiKeyStore : ApiKeyStore {
   val deletedSecretRefs = mutableListOf<String>()
-  override fun read(secretRef: String?): String? = "test-key"
+  val writtenKeys = mutableMapOf<String, String>()
+  override fun read(secretRef: String?): String? = secretRef?.let { writtenKeys[it] } ?: "test-key"
   override fun exists(secretRef: String?): Boolean = true
-  override fun write(secretRef: String, apiKey: String) = Unit
+  override fun write(secretRef: String, apiKey: String) {
+    writtenKeys[secretRef] = apiKey
+  }
   override fun delete(secretRef: String) {
     deletedSecretRefs += secretRef
   }
