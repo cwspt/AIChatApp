@@ -7311,6 +7311,40 @@ private data class ToolCallBubbleColors(
   val detailContainer: Color
 )
 
+internal enum class ToolCallVisualKind {
+  SEARCH,
+  PAGE,
+  FILE,
+  TOOL
+}
+
+internal fun toolCallVisualKind(name: String): ToolCallVisualKind {
+  val normalized = name.trim().lowercase(Locale.US)
+  return when {
+    normalized == "web_search" || normalized.contains("search") -> ToolCallVisualKind.SEARCH
+    normalized in setOf("open", "open_page", "open_url", "open_url_page") -> ToolCallVisualKind.PAGE
+    normalized == "web_fetch" || normalized.contains("fetch") || normalized.contains("file") -> ToolCallVisualKind.FILE
+    else -> ToolCallVisualKind.TOOL
+  }
+}
+
+private fun toolCallGroupVisualKind(details: List<ToolCallDetails>): ToolCallVisualKind {
+  val kinds = details.map { toolCallVisualKind(it.name) }.toSet()
+  return when {
+    ToolCallVisualKind.SEARCH in kinds -> ToolCallVisualKind.SEARCH
+    ToolCallVisualKind.PAGE in kinds -> ToolCallVisualKind.PAGE
+    ToolCallVisualKind.FILE in kinds -> ToolCallVisualKind.FILE
+    else -> ToolCallVisualKind.TOOL
+  }
+}
+
+private fun toolCallVisualIcon(kind: ToolCallVisualKind) = when (kind) {
+  ToolCallVisualKind.SEARCH -> Icons.Outlined.Search
+  ToolCallVisualKind.PAGE -> Icons.AutoMirrored.Outlined.OpenInNew
+  ToolCallVisualKind.FILE -> Icons.AutoMirrored.Outlined.InsertDriveFile
+  ToolCallVisualKind.TOOL -> Icons.Outlined.AttachFile
+}
+
 @Composable
 private fun defaultToolCallBubbleColors(botColors: BotBubbleColors? = null): ToolCallBubbleColors {
   return if (botColors == null) {
@@ -7356,6 +7390,7 @@ private fun ToolCallGroupBubble(
   if (messages.isEmpty()) return
   val resolvedColors = colors ?: defaultToolCallBubbleColors()
   val details = remember(messages) { messages.map { parseToolCallDetails(it.content) } }
+  val visualIcon = toolCallVisualIcon(toolCallGroupVisualKind(details))
   val isStreaming = messages.any { it.status == MessageStatus.STREAMING }
   var localExpanded by remember(messages.first().id) { mutableStateOf(false) }
   val effectiveExpanded = isStreaming || (expanded ?: localExpanded)
@@ -7388,7 +7423,7 @@ private fun ToolCallGroupBubble(
     ) {
       Box {
         Icon(
-          Icons.Outlined.Search,
+          visualIcon,
           contentDescription = null,
           tint = resolvedColors.accent.copy(alpha = 0.10f),
           modifier = Modifier
@@ -7415,7 +7450,7 @@ private fun ToolCallGroupBubble(
           verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
           Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Search, contentDescription = null, tint = resolvedColors.accent, modifier = Modifier.size(18.dp))
+            Icon(visualIcon, contentDescription = null, tint = resolvedColors.accent, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(7.dp))
             Column(modifier = Modifier.weight(1f)) {
               Text(
@@ -7528,6 +7563,7 @@ private fun ToolCallDetail(
   details: ToolCallDetails,
   colors: ToolCallBubbleColors
 ) {
+  val visualIcon = toolCallVisualIcon(toolCallVisualKind(details.name))
   Surface(
     color = colors.detailContainer,
     contentColor = colors.content,
@@ -7536,7 +7572,7 @@ private fun ToolCallDetail(
   ) {
     Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
       Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Outlined.Search, contentDescription = null, tint = colors.accent, modifier = Modifier.size(17.dp))
+        Icon(visualIcon, contentDescription = null, tint = colors.accent, modifier = Modifier.size(17.dp))
         Spacer(Modifier.width(7.dp))
         Text("工具 $index · ${details.name}", fontWeight = FontWeight.SemiBold, color = colors.content)
       }
@@ -7613,6 +7649,7 @@ private fun ToolCallItem(
   onFavorite: () -> Unit
 ) {
   val details = remember(message.content) { parseToolCallDetails(message.content) }
+  val visualIcon = toolCallVisualIcon(toolCallVisualKind(details.name))
   var expanded by remember(message.id) { mutableStateOf(false) }
   val isSearching = message.status == MessageStatus.STREAMING
   Row(
@@ -7646,7 +7683,7 @@ private fun ToolCallItem(
             .clickable { expanded = !expanded },
           verticalAlignment = Alignment.CenterVertically
         ) {
-          Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+          Icon(visualIcon, contentDescription = null, modifier = Modifier.size(18.dp))
           Spacer(Modifier.width(8.dp))
           Column(modifier = Modifier.weight(1f)) {
             Text(

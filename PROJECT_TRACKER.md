@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: grouped tool-call cards now vary their header/detail icons and background watermark by tool type, using search, page-open, file, or generic tool visuals for faster scanning.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest.toolCallVisualKindVariesByToolName` passed after the grouped tool-card visual-kind change.
 - Done: group chats now show a semi-automatic summary refresh prompt when a long discussion has no summary yet or has enough new messages after the last summary, reusing the existing summary bot picker for one-click updates.
 - Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest.groupSummaryRefreshHintPromptsWhenSummaryIsMissingAfterEnoughMessages --tests com.personal.aichat.ChatRepositoryForkTest.groupSummaryRefreshHintSkipsFreshSummary --tests com.personal.aichat.ChatRepositoryForkTest.groupSummaryRefreshHintPromptsWhenSummaryIsStale` passed after the group summary refresh prompt change.
 - Done: group auto-play now supports per-group saved player preferences for finite rounds, turn interval, and one retry for failed bot turns, with a group overflow settings dialog.
@@ -75,7 +77,7 @@
 - Done: favorite tag management now supports renaming, merging into an existing tag, and deleting tags without deleting favorite content.
 - Done: favorites can now export all snippets as JSON for restore or Markdown for reading, and import JSON exports back into the local favorites library.
 - Planned: improve full long-image export for grouped tool cards, structure tool source URLs more explicitly, and consider persistent single-chat turn ids if UI-order grouping is not enough later.
-- Planned: vary grouped tool card watermarks by tool type, such as search for web_search and page/file icons for open or web_fetch.
+- Done: grouped tool card watermarks and icons now vary by tool type, using search for `web_search`, page-open for `open`/`open_page`/`open_url`, file for `web_fetch`/file tools, and a generic tool icon otherwise.
 - Planned: extend image-generation mode with masks/local edit regions, reusable generation parameters, richer image export layouts, and DeepSeek support only if an official image-generation API becomes available.
 - Validation: `:app:testDebugUnitTest`, `:app:compileDebugKotlin`, and `:app:assembleDebug` passed after the GPT image-generation mode changes; `:app:compileDebugKotlin` and `:app:assembleDebug` also passed after the generated-image external-open fix.
 - Done: context capacity is estimated per provider/model and displayed in single-chat and group-chat headers. Provider settings now allow a manual context-window override for custom or proxy models.

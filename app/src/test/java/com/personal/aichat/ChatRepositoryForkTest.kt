@@ -43,6 +43,7 @@ import com.personal.aichat.ui.ChatMessageListItem
 import com.personal.aichat.ui.GroupMessageListItem
 import com.personal.aichat.ui.LongBubbleNavTarget
 import com.personal.aichat.ui.ToolCallCitation
+import com.personal.aichat.ui.ToolCallVisualKind
 import com.personal.aichat.ui.VisibleListItemBounds
 import com.personal.aichat.ui.botAvatarLabel
 import com.personal.aichat.ui.botIdentityCode
@@ -53,6 +54,7 @@ import com.personal.aichat.ui.longBubbleNavTarget
 import com.personal.aichat.ui.nextGroupAutoPlayBotId
 import com.personal.aichat.ui.parseToolCallDetails
 import com.personal.aichat.ui.resolvedBotBubbleColorKey
+import com.personal.aichat.ui.toolCallVisualKind
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -962,6 +964,16 @@ class ChatRepositoryForkTest {
     assertEquals(listOf("https://example.com/report"), details.openedUrls)
     assertEquals(emptyList<ToolCallCitation>(), details.citations)
     assertTrue(details.summary?.contains("https://example.com/report") == true)
+  }
+
+  @Test
+  fun toolCallVisualKindVariesByToolName() {
+    assertEquals(ToolCallVisualKind.SEARCH, toolCallVisualKind("web_search"))
+    assertEquals(ToolCallVisualKind.PAGE, toolCallVisualKind("open_page"))
+    assertEquals(ToolCallVisualKind.PAGE, toolCallVisualKind("open_url_page"))
+    assertEquals(ToolCallVisualKind.FILE, toolCallVisualKind("web_fetch"))
+    assertEquals(ToolCallVisualKind.FILE, toolCallVisualKind("file_lookup"))
+    assertEquals(ToolCallVisualKind.TOOL, toolCallVisualKind("calculator"))
   }
 
   @Test
