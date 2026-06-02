@@ -2,6 +2,9 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: conversation and group-chat export messages now carry structured attachment metadata, and exported Markdown/text/long-image content includes an attachment index with file name, MIME type, and size.
+- Done: added repository tests covering attachment indexes in single-chat and group-chat exports/share text.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the export attachment-index change.
 - Done: group chat overflow menu now exposes Markdown file export, reusing the existing group share text for full chats and selected group-message subsets.
 - Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the group Markdown export entry change.
 - Done: incoming system-share target picker now supports searching new single-chat providers, existing single chats, and group chats by title/topic/model/provider/bot fields.
@@ -306,7 +309,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P2-003 | 二维码导入导出 Provider 配置 | Planned | 支持配置生成二维码和扫码导入 |
 | NEXT-P2-004 | UI 文件拆分 | Planned | `AIChatAppRoot.kt` 拆分为 chat/settings/drawer/markdown/components |
 | NEXT-P2-005 | Room migration 测试 | Planned | 从 schema 1 到最新 schema 自动迁移验证 |
-| NEXT-P2-006 | 导出内容包含附件索引 | Planned | Markdown/长图导出能列出用户上传附件名称 |
+| NEXT-P2-006 | 导出内容包含附件索引 | Done | Markdown/文本/长图导出会列出用户上传附件名称、MIME 类型和大小，单聊与群聊导出均有单测覆盖 |
 | NEXT-P2-007 | 文本级选区收藏 | Planned | 支持收藏气泡内选中的一段文字 |
 | NEXT-P2-008 | 收藏搜索结果高亮 | Planned | 收藏夹搜索命中标题、描述、标签、正文时高亮显示 |
 | NEXT-P2-009 | 收藏批量管理 | Planned | 收藏夹支持批量删除、批量打标签、按时间/标签排序、批量移除消息 |

@@ -11,12 +11,14 @@ import com.personal.aichat.data.local.GroupChatRoomEntity
 import com.personal.aichat.data.local.GroupMessageEntity
 import com.personal.aichat.data.local.MessageEntity
 import com.personal.aichat.data.local.ProviderEntity
+import com.personal.aichat.data.local.formatAttachments
 import com.personal.aichat.data.local.toDomain
 import com.personal.aichat.data.security.ApiKeyStore
 import com.personal.aichat.domain.AppSettings
 import com.personal.aichat.domain.AppThemeMode
 import com.personal.aichat.domain.AppThemePalette
 import com.personal.aichat.domain.ChatBackgroundPreset
+import com.personal.aichat.domain.ChatAttachment
 import com.personal.aichat.domain.ChatCompletionOptions
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
@@ -374,6 +376,75 @@ class ChatRepositoryForkTest {
 
     assertTrue(shareText.contains("original answer"))
     assertTrue(!shareText.contains("changed answer"))
+  }
+
+  @Test
+  fun conversationExportAndShareTextIncludeAttachmentIndex() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    val attachment = ChatAttachment(
+      id = "att-1",
+      displayName = "report.pdf",
+      mimeType = "application/pdf",
+      sizeBytes = 2048,
+      localPath = "/tmp/report.pdf"
+    )
+    dao.upsertProvider(provider("provider", "model-a"))
+    dao.upsertConversation(conversation("conv", providerId = "provider", model = "model-a"))
+    dao.upsertMessage(
+      message("u1", "conv", MessageRole.USER, "please read", "provider", "model-a", 1)
+        .copy(attachmentsJson = formatAttachments(listOf(attachment)))
+    )
+
+    val export = repository.conversationExport("conv")!!
+    val shareText = repository.conversationShareText("conv")
+
+    assertEquals(listOf("report.pdf"), export.messages.first().attachments.map { it.displayName })
+    assertTrue(export.messages.first().content.contains("report.pdf"))
+    assertTrue(shareText.contains("附件："))
+    assertTrue(shareText.contains("report.pdf"))
+    assertTrue(shareText.contains("application/pdf"))
+    assertTrue(shareText.contains("2048 bytes"))
+  }
+
+  @Test
+  fun groupExportAndShareTextIncludeAttachmentIndex() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = emptyMap()
+    )
+    val attachment = ChatAttachment(
+      id = "att-1",
+      displayName = "agenda.txt",
+      mimeType = "text/plain",
+      sizeBytes = 512,
+      localPath = "/tmp/agenda.txt"
+    )
+    dao.upsertProvider(provider("provider", "model-a"))
+    val bot = repository.createAiBot("Reviewer", "provider", "model-a", "")
+    val group = repository.createGroupChat("Review", "topic", listOf(bot.id))
+    dao.upsertGroupMessage(
+      groupMessage("g1", group.id, GroupMessageSenderType.USER, null, "我", "please review", 1)
+        .copy(attachmentsJson = formatAttachments(listOf(attachment)))
+    )
+
+    val export = repository.groupChatExport(group.id)!!
+    val shareText = repository.groupChatShareText(group.id)
+
+    assertEquals(listOf("agenda.txt"), export.messages.first().attachments.map { it.displayName })
+    assertTrue(export.messages.first().content.contains("agenda.txt"))
+    assertTrue(shareText.contains("附件："))
+    assertTrue(shareText.contains("agenda.txt"))
+    assertTrue(shareText.contains("text/plain"))
+    assertTrue(shareText.contains("512 bytes"))
   }
 
   @Test

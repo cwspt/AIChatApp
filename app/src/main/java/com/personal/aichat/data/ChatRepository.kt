@@ -1257,10 +1257,11 @@ class ChatRepository(
           ConversationExportMessage(
             id = it.id,
             role = it.role,
-            content = it.content,
+            content = formatExportMessageContent(it.content, it.attachments),
             status = it.status,
             errorMessage = it.errorMessage,
-            createdAt = it.createdAt
+            createdAt = it.createdAt,
+            attachments = it.attachments
           )
         }
       ),
@@ -1280,10 +1281,11 @@ class ChatRepository(
         ConversationExportMessage(
           id = it.id,
           role = it.role,
-          content = it.content,
+          content = formatExportMessageContent(it.content, it.attachments),
           status = it.status,
           errorMessage = it.errorMessage,
-          createdAt = it.createdAt
+          createdAt = it.createdAt,
+          attachments = it.attachments
         )
       }
     )
@@ -1890,6 +1892,16 @@ class ChatRepository(
     }
   }
 
+  private fun formatExportMessageContent(content: String, attachments: List<ChatAttachment>): String {
+    if (attachments.isEmpty()) return content
+    return buildString {
+      if (content.isNotBlank()) {
+        append(content)
+      }
+      append(formatAttachmentSummary(attachments))
+    }.trim()
+  }
+
   private suspend fun ensureConversationContextReady(
     conversationId: String,
     provider: ChatProviderConfig,
@@ -2447,6 +2459,7 @@ class ChatRepository(
         appendLine("[已停止]")
       }
       append(content.ifBlank { if (status == MessageStatus.STREAMING) "输出中..." else "" })
+      append(formatAttachmentSummary(attachments))
     }.trim()
     return ConversationExportMessage(
       id = id,
@@ -2454,7 +2467,8 @@ class ChatRepository(
       content = body,
       status = status,
       errorMessage = errorMessage,
-      createdAt = createdAt
+      createdAt = createdAt,
+      attachments = attachments
     )
   }
 

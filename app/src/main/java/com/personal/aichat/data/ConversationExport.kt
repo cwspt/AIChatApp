@@ -2,6 +2,7 @@ package com.personal.aichat.data
 
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
+import com.personal.aichat.domain.ChatAttachment
 
 data class ConversationExport(
   val title: String,
@@ -16,5 +17,6 @@ data class ConversationExportMessage(
   val content: String,
   val status: MessageStatus,
   val errorMessage: String?,
-  val createdAt: Long
+  val createdAt: Long,
+  val attachments: List<ChatAttachment> = emptyList()
 )
