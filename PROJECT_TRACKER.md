@@ -2,6 +2,10 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: incoming system-share target picker now supports searching new single-chat providers, existing single chats, and group chats by title/topic/model/provider/bot fields.
+- Done: share-target search keeps attachment compatibility filtering for new/existing single chats and shows targeted empty-state text when no destination matches.
+- Done: source-level mojibake scan is clean again; historical tool-output mojibake compatibility labels were moved behind ASCII Unicode escape constants.
+- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the share-target search change.
 - Done: provider context-window override input now accepts compact forms such as `1M`, `400K`, `1.5m`, `1,000,000`, and plain token counts instead of digits-only input.
 - Done: provider settings show the parsed token count while editing and disable saving for unrecognized context-window values, preventing accidental `1M -> 1 token` or `400K -> 400 tokens` saves.
 - Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ContextWindowTest` and `:app:assembleDebug` passed after the context-window input parsing change.
@@ -288,7 +292,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-012 | 群聊导出增强 | Planned | 群聊可导出文本/Markdown/长图，群消息可生成长图分享 |
 | NEXT-P1-013 | 长气泡侧边按钮真机体验回归 | Planned | 验证单聊/群聊长气泡上下跳转、浮动三点菜单、菜单展开不自动消失、与滚动条和回到底部按钮不重叠 |
 | NEXT-P1-014 | 系统分享真机回归 | Planned | 验证相册、文件管理器、浏览器分享到 App；覆盖单文件、多文件、纯文本、文件加文本说明和 App 前台分享 |
-| NEXT-P1-015 | 分享目标页搜索 | Planned | 分享目标较多时可搜索单聊、群聊和 Provider |
+| NEXT-P1-015 | 分享目标页搜索 | Done | 分享目标较多时可搜索单聊、群聊和 Provider；搜索覆盖新建单聊 Provider、已有单聊和已有群聊 |
 | NEXT-P1-016 | 背景预设真机回归 | Planned | 验证设置页增改删排序、新建/编辑群聊插入预设、删除预设后已保存群聊主题不变 |
 
 ### 6.2 P2 / P3

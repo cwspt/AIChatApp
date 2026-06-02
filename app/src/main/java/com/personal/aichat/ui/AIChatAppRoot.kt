@@ -5048,6 +5048,30 @@ private fun IncomingShareTargetDialog(
   onCreateConversation: (String) -> Unit,
   onOpenAttachment: (ChatAttachment) -> Unit
 ) {
+  var targetQuery by remember(draft.text, draft.attachments) { mutableStateOf("") }
+  val normalizedTargetQuery = targetQuery.trim()
+  val providerById = remember(state.providers) { state.providers.associateBy { it.id } }
+  val botById = remember(state.aiBots) { state.aiBots.associateBy { it.id } }
+  val groupBotsByGroupId = remember(state.groupMembers, state.aiBots) {
+    state.groupMembers
+      .groupBy { it.groupId }
+      .mapValues { (_, members) -> members.mapNotNull { botById[it.botId] } }
+  }
+  val creatableProviders = state.providers
+    .filter { !draft.hasAttachments || it.supportsAttachments }
+    .filter { it.matchesIncomingShareTargetQuery(normalizedTargetQuery) }
+  val filteredConversations = state.conversations.filter { conversation ->
+    conversation.matchesIncomingShareTargetQuery(providerById[conversation.providerId], normalizedTargetQuery)
+  }
+  val filteredGroups = state.groupChats.filter { group ->
+    group.matchesIncomingShareTargetQuery(
+      bots = groupBotsByGroupId[group.id].orEmpty(),
+      providerById = providerById,
+      query = normalizedTargetQuery
+    )
+  }
+  val hasVisibleTarget = creatableProviders.isNotEmpty() || filteredConversations.isNotEmpty() || filteredGroups.isNotEmpty()
+
   Dialog(
     onDismissRequest = onDismiss,
     properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -5107,6 +5131,21 @@ private fun IncomingShareTargetDialog(
             compact = true
           )
         }
+        OutlinedTextField(
+          value = targetQuery,
+          onValueChange = { targetQuery = it },
+          modifier = Modifier.fillMaxWidth(),
+          singleLine = true,
+          label = { Text("搜索单聊、群聊或 Provider") },
+          leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+          trailingIcon = {
+            if (targetQuery.isNotBlank()) {
+              IconButton(onClick = { targetQuery = "" }) {
+                Icon(Icons.Outlined.Close, contentDescription = "清空搜索")
+              }
+            }
+          }
+        )
         LazyColumn(
           verticalArrangement = Arrangement.spacedBy(8.dp),
           modifier = Modifier.fillMaxSize()
@@ -5114,11 +5153,10 @@ private fun IncomingShareTargetDialog(
           item(key = "new-conversation-section") {
             Text("新建单聊", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
           }
-          val creatableProviders = state.providers.filter { !draft.hasAttachments || it.supportsAttachments }
           if (creatableProviders.isEmpty()) {
             item(key = "new-conversation-empty") {
               Text(
-                "没有支持这些附件的单聊模型配置",
+                if (normalizedTargetQuery.isBlank()) "没有支持这些附件的单聊模型配置" else "没有匹配的单聊模型配置",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
               )
@@ -5131,12 +5169,12 @@ private fun IncomingShareTargetDialog(
               )
             }
           }
-          if (state.conversations.isNotEmpty()) {
+          if (filteredConversations.isNotEmpty()) {
             item(key = "conversation-section") {
               Text("已有单聊", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))
             }
-            items(state.conversations, key = { "conversation-${it.id}" }) { conversation ->
-              val provider = state.providers.firstOrNull { it.id == conversation.providerId }
+            items(filteredConversations, key = { "conversation-${it.id}" }) { conversation ->
+              val provider = providerById[conversation.providerId]
               val enabled = !draft.hasAttachments || provider?.supportsAttachments == true
               IncomingShareConversationRow(
                 conversation = conversation,
@@ -5147,11 +5185,11 @@ private fun IncomingShareTargetDialog(
               )
             }
           }
-          if (state.groupChats.isNotEmpty()) {
+          if (filteredGroups.isNotEmpty()) {
             item(key = "group-section") {
               Text("已有群聊", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))
             }
-            items(state.groupChats, key = { "group-${it.id}" }) { group ->
+            items(filteredGroups, key = { "group-${it.id}" }) { group ->
               IncomingShareGroupRow(
                 group = group,
                 memberCount = state.groupMembers.count { it.groupId == group.id },
@@ -5159,10 +5197,62 @@ private fun IncomingShareTargetDialog(
               )
             }
           }
+          if (normalizedTargetQuery.isNotBlank() && !hasVisibleTarget) {
+            item(key = "target-search-empty") {
+              Text(
+                "没有匹配的发送目标",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 12.dp)
+              )
+            }
+          }
         }
       }
     }
   }
+}
+
+private fun ChatProviderConfig.matchesIncomingShareTargetQuery(query: String): Boolean {
+  if (query.isBlank()) return true
+  return listOf(displayName, id, defaultModel, type.label).any { it.contains(query, ignoreCase = true) }
+}
+
+private fun ChatConversation.matchesIncomingShareTargetQuery(
+  provider: ChatProviderConfig?,
+  query: String
+): Boolean {
+  if (query.isBlank()) return true
+  return listOf(
+    title,
+    model,
+    groupName,
+    providerId,
+    provider?.displayName.orEmpty(),
+    provider?.defaultModel.orEmpty(),
+    provider?.type?.label.orEmpty()
+  ).any { it.contains(query, ignoreCase = true) }
+}
+
+private fun GroupChatRoom.matchesIncomingShareTargetQuery(
+  bots: List<AiBot>,
+  providerById: Map<String, ChatProviderConfig>,
+  query: String
+): Boolean {
+  if (query.isBlank()) return true
+  val groupFields = listOf(title, topic, summary)
+  val botFields = bots.flatMap { bot ->
+    val provider = providerById[bot.providerId]
+    listOf(
+      bot.name,
+      bot.model,
+      bot.providerId,
+      provider?.displayName.orEmpty(),
+      provider?.defaultModel.orEmpty(),
+      provider?.type?.label.orEmpty()
+    )
+  }
+  return (groupFields + botFields).any { it.contains(query, ignoreCase = true) }
 }
 
 @Composable
@@ -6580,8 +6670,8 @@ private fun extractQueryFromToolOutput(output: String?): String? {
   val labelIndex = lines.indexOfFirst {
     it.contains("查询") ||
       it.contains("搜索关键词") ||
-      it.contains("鏌ヨ") ||
-      it.contains("鎼滅储鍏抽敭")
+      it.contains(LegacyToolQueryLabel) ||
+      it.contains(LegacyToolSearchKeywordLabel)
   }
   if (labelIndex < 0) return null
   return lines.drop(labelIndex + 1)
@@ -6590,7 +6680,7 @@ private fun extractQueryFromToolOutput(output: String?): String? {
         !line.startsWith("http://") &&
         !line.startsWith("https://") &&
         !line.contains("网址") &&
-        !line.contains("缃戝潃")
+        !line.contains(LegacyToolUrlLabel)
     }
     ?.take(120)
 }
@@ -6643,6 +6733,11 @@ private fun String.jsonUnescape(): String {
 }
 
 private val PlainToolUrlRegex = Regex("https?://[^\\s<>\"'`\\]\\)\\}]+")
+
+// Historical mojibake labels emitted by older tool output.
+private const val LegacyToolQueryLabel = "\u93cc\u30e8"
+private const val LegacyToolSearchKeywordLabel = "\u93bc\u6ec5\u50a8\u934f\u62bd\u656d"
+private const val LegacyToolUrlLabel = "\u7f03\u621d\u6f43"
 
 private fun String.sectionAfter(label: String, until: String?): String? {
   val start = indexOf(label)
