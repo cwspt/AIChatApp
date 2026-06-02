@@ -2169,6 +2169,7 @@ private fun FavoriteSnippetsPage(
             items(filtered, key = { it.id }) { favorite ->
               FavoriteSnippetCard(
                 favorite = favorite,
+                query = normalizedQuery,
                 onClick = { selectedFavoriteId = favorite.id }
               )
             }
@@ -2391,7 +2392,11 @@ private fun FavoriteTagRenameDialog(
 }
 
 @Composable
-private fun FavoriteSnippetCard(favorite: FavoriteSnippet, onClick: () -> Unit) {
+private fun FavoriteSnippetCard(
+  favorite: FavoriteSnippet,
+  query: String,
+  onClick: () -> Unit
+) {
   Surface(
     color = MaterialTheme.colorScheme.surface,
     shape = RoundedCornerShape(8.dp),
@@ -2401,10 +2406,20 @@ private fun FavoriteSnippetCard(favorite: FavoriteSnippet, onClick: () -> Unit) 
       .clickable(onClick = onClick)
   ) {
     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-      Text(favorite.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      val highlightStyle = SpanStyle(
+        background = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+        color = MaterialTheme.colorScheme.onSurface,
+        fontWeight = FontWeight.SemiBold
+      )
+      Text(
+        highlightFavoriteMatch(favorite.title, query, highlightStyle),
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+      )
       if (favorite.description.isNotBlank()) {
         Text(
-          favorite.description,
+          highlightFavoriteMatch(favorite.description, query, highlightStyle),
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           maxLines = 2,
@@ -2414,14 +2429,27 @@ private fun FavoriteSnippetCard(favorite: FavoriteSnippet, onClick: () -> Unit) 
       if (favorite.tags.isNotEmpty()) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
           items(favorite.tags, key = { it }) { tag ->
-            AssistChip(onClick = {}, label = { Text(tag) }, leadingIcon = {
+            AssistChip(onClick = {}, label = { Text(highlightFavoriteMatch(tag, query, highlightStyle)) }, leadingIcon = {
               Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null, modifier = Modifier.size(14.dp))
             })
           }
         }
       }
+      favorite.favoriteBodySearchSnippet(query)?.let { snippet ->
+        Text(
+          highlightFavoriteMatch("正文：$snippet", query, highlightStyle),
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis
+        )
+      }
       Text(
-        "${favorite.messageCount} 条消息 · ${favorite.sourceConversationTitle} · ${favorite.sourceModel.orEmpty()}",
+        highlightFavoriteMatch(
+          "${favorite.messageCount} 条消息 · ${favorite.sourceConversationTitle} · ${favorite.sourceModel.orEmpty()}",
+          query,
+          highlightStyle
+        ),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         maxLines = 1,
@@ -2434,6 +2462,43 @@ private fun FavoriteSnippetCard(favorite: FavoriteSnippet, onClick: () -> Unit) 
       )
     }
   }
+}
+
+private fun highlightFavoriteMatch(text: String, query: String, style: SpanStyle): AnnotatedString {
+  if (query.isBlank() || text.isBlank()) return AnnotatedString(text)
+  return buildAnnotatedString {
+    var index = 0
+    while (index < text.length) {
+      val matchIndex = text.indexOf(query, startIndex = index, ignoreCase = true)
+      if (matchIndex < 0) {
+        append(text.substring(index))
+        break
+      }
+      append(text.substring(index, matchIndex))
+      withStyle(style) {
+        append(text.substring(matchIndex, matchIndex + query.length))
+      }
+      index = matchIndex + query.length
+    }
+  }
+}
+
+private fun FavoriteSnippet.favoriteBodySearchSnippet(query: String): String? {
+  if (query.isBlank()) return null
+  messages.forEach { message ->
+    val content = message.content.replace(Regex("\\s+"), " ").trim()
+    val index = content.indexOf(query, ignoreCase = true)
+    if (index >= 0) {
+      val start = (index - 36).coerceAtLeast(0)
+      val end = (index + query.length + 72).coerceAtMost(content.length)
+      return buildString {
+        if (start > 0) append("...")
+        append(content.substring(start, end))
+        if (end < content.length) append("...")
+      }
+    }
+  }
+  return null
 }
 
 @Composable
