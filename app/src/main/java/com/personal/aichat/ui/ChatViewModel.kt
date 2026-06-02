@@ -1415,11 +1415,23 @@ class ChatViewModel(
   }
 
   fun removeMessageFromFavorite(favoriteId: String, messageId: String) {
+    removeMessagesFromFavorite(favoriteId, setOf(messageId))
+  }
+
+  fun removeMessagesFromFavorite(favoriteId: String, messageIds: Set<String>) {
     viewModelScope.launch {
       runCatching {
-        repository.removeMessagesFromFavoriteSnippet(favoriteId, setOf(messageId))
-      }.onSuccess {
-        localState.update { current -> current.copy(error = "已从收藏移除") }
+        repository.removeMessagesFromFavoriteSnippet(favoriteId, messageIds)
+      }.onSuccess { updated ->
+        localState.update { current ->
+          current.copy(
+            error = if (updated == null) {
+              "收藏不存在"
+            } else {
+              "已从收藏移除 ${messageIds.size} 条消息"
+            }
+          )
+        }
       }.onFailure { error ->
         localState.update { current -> current.copy(error = error.message ?: "移除收藏消息失败") }
       }

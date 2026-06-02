@@ -779,7 +779,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onAddTagsToFavorites = viewModel::addTagsToFavoriteSnippets,
         onRenameTag = viewModel::renameFavoriteTag,
         onDeleteTag = viewModel::deleteFavoriteTag,
-        onRemoveMessage = viewModel::removeMessageFromFavorite,
+        onRemoveMessage = viewModel::removeMessagesFromFavorite,
         onJumpToSource = viewModel::jumpToFavoriteSource
       )
     }
@@ -2054,7 +2054,7 @@ private fun FavoriteSnippetsPage(
   onAddTagsToFavorites: (Set<String>, String) -> Unit,
   onRenameTag: (String, String) -> Unit,
   onDeleteTag: (String) -> Unit,
-  onRemoveMessage: (String, String) -> Unit,
+  onRemoveMessage: (String, Set<String>) -> Unit,
   onJumpToSource: (FavoriteSnippet) -> Unit
 ) {
   var query by remember { mutableStateOf("") }
@@ -2127,7 +2127,7 @@ private fun FavoriteSnippetsPage(
           onDelete(selectedFavorite.id)
           selectedFavoriteId = null
         },
-        onRemoveMessage = { messageId -> onRemoveMessage(selectedFavorite.id, messageId) },
+        onRemoveMessages = { messageIds -> onRemoveMessage(selectedFavorite.id, messageIds) },
         onJumpToSource = { onJumpToSource(selectedFavorite) }
       )
     } else {
@@ -2742,10 +2742,22 @@ private fun FavoriteSnippetDetail(
   onCopyText: () -> Unit,
   onEdit: () -> Unit,
   onDelete: () -> Unit,
-  onRemoveMessage: (String) -> Unit,
+  onRemoveMessages: (Set<String>) -> Unit,
   onJumpToSource: () -> Unit
 ) {
   var deleteConfirmOpen by remember(favorite.id) { mutableStateOf(false) }
+  var messageBatchMode by remember(favorite.id) { mutableStateOf(false) }
+  var selectedMessageIds by remember(favorite.id) { mutableStateOf<Set<String>>(emptySet()) }
+  var batchRemoveConfirmOpen by remember(favorite.id) { mutableStateOf(false) }
+  val selectedMessageCount = selectedMessageIds.size
+  val canBatchRemove = selectedMessageCount in 1 until favorite.messages.size
+  LaunchedEffect(favorite.id, favorite.messages) {
+    selectedMessageIds = selectedMessageIds.filterTo(mutableSetOf()) { id -> favorite.messages.any { it.id == id } }
+    if (favorite.messages.size <= 1) {
+      selectedMessageIds = emptySet()
+      messageBatchMode = false
+    }
+  }
   Column(
     modifier = Modifier
       .fillMaxSize()
@@ -2776,9 +2788,49 @@ private fun FavoriteSnippetDetail(
       onCopyText = onCopyText,
       onEdit = onEdit,
       onJumpToSource = onJumpToSource,
+      batchMode = messageBatchMode,
+      canBatchMessages = favorite.messages.size > 1,
+      onToggleBatchMode = {
+        messageBatchMode = !messageBatchMode
+        if (!messageBatchMode) selectedMessageIds = emptySet()
+      },
       onDelete = { deleteConfirmOpen = true }
     )
     FavoriteDetailMeta(favorite = favorite)
+    if (messageBatchMode) {
+      Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth()
+      ) {
+        Row(
+          modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          Text("已选择 $selectedMessageCount 条", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+          TextButton(
+            onClick = {
+              selectedMessageIds = if (selectedMessageIds.size == favorite.messages.size) {
+                emptySet()
+              } else {
+                favorite.messages.map { it.id }.toSet()
+              }
+            }
+          ) {
+            Text(if (selectedMessageIds.size == favorite.messages.size) "取消全选" else "全选")
+          }
+          TextButton(
+            onClick = { batchRemoveConfirmOpen = true },
+            enabled = canBatchRemove
+          ) {
+            Icon(Icons.Outlined.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(if (selectedMessageCount >= favorite.messages.size) "至少保留一条" else "移除")
+          }
+        }
+      }
+    }
     Column(
       modifier = Modifier
         .weight(1f)
@@ -2789,7 +2841,16 @@ private fun FavoriteSnippetDetail(
         FavoriteMessageBubble(
           message = message,
           canRemove = favorite.messages.size > 1,
-          onRemove = { onRemoveMessage(message.id) },
+          batchMode = messageBatchMode,
+          selected = message.id in selectedMessageIds,
+          onToggleSelected = {
+            selectedMessageIds = if (message.id in selectedMessageIds) {
+              selectedMessageIds - message.id
+            } else {
+              selectedMessageIds + message.id
+            }
+          },
+          onRemove = { onRemoveMessages(setOf(message.id)) },
           onOpenAttachment = onOpenAttachment
         )
       }
@@ -2815,6 +2876,28 @@ private fun FavoriteSnippetDetail(
       }
     )
   }
+  if (batchRemoveConfirmOpen) {
+    AlertDialog(
+      onDismissRequest = { batchRemoveConfirmOpen = false },
+      title = { Text("批量移除消息") },
+      text = { Text("确定要从这个收藏片段中移除选中的 $selectedMessageCount 条消息吗？原对话内容不会被删除。") },
+      confirmButton = {
+        Button(onClick = {
+          batchRemoveConfirmOpen = false
+          onRemoveMessages(selectedMessageIds)
+          selectedMessageIds = emptySet()
+          messageBatchMode = false
+        }) {
+          Text("移除")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { batchRemoveConfirmOpen = false }) {
+          Text("取消")
+        }
+      }
+    )
+  }
 }
 
 @Composable
@@ -2824,6 +2907,9 @@ private fun FavoriteDetailActions(
   onCopyText: () -> Unit,
   onEdit: () -> Unit,
   onJumpToSource: () -> Unit,
+  batchMode: Boolean,
+  canBatchMessages: Boolean,
+  onToggleBatchMode: () -> Unit,
   onDelete: () -> Unit
 ) {
   LazyRow(
@@ -2845,6 +2931,11 @@ private fun FavoriteDetailActions(
     }
     item {
       CompactFavoriteAction("来源", Icons.AutoMirrored.Outlined.OpenInNew, onJumpToSource)
+    }
+    if (canBatchMessages) {
+      item {
+        CompactFavoriteAction(if (batchMode) "退出批量" else "批量消息", Icons.Outlined.CheckCircle, onToggleBatchMode)
+      }
     }
     item {
       CompactFavoriteAction("删除", Icons.Outlined.Delete, onDelete)
@@ -2886,6 +2977,9 @@ private fun FavoriteDetailMeta(favorite: FavoriteSnippet) {
 private fun FavoriteMessageBubble(
   message: FavoriteSnippetMessage,
   canRemove: Boolean,
+  batchMode: Boolean,
+  selected: Boolean,
+  onToggleSelected: () -> Unit,
   onRemove: () -> Unit,
   onOpenAttachment: (ChatAttachment) -> Unit
 ) {
@@ -2894,13 +2988,23 @@ private fun FavoriteMessageBubble(
   var removeConfirmOpen by remember(message.id) { mutableStateOf(false) }
   Row(
     modifier = Modifier.fillMaxWidth(),
-    horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+    horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+    verticalAlignment = Alignment.Top
   ) {
+    if (batchMode) {
+      Checkbox(
+        checked = selected,
+        onCheckedChange = { onToggleSelected() },
+        modifier = Modifier.padding(top = 8.dp)
+      )
+    }
     Surface(
       color = if (isUser) userColors.container else MaterialTheme.colorScheme.surface,
       contentColor = if (isUser) userColors.content else MaterialTheme.colorScheme.onSurface,
       shape = RoundedCornerShape(8.dp),
-      modifier = Modifier.fillMaxWidth(if (isUser) 0.84f else 0.92f)
+      modifier = Modifier
+        .fillMaxWidth(if (isUser) 0.84f else 0.92f)
+        .then(if (batchMode) Modifier.clickable(onClick = onToggleSelected) else Modifier)
     ) {
       Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
@@ -2935,13 +3039,15 @@ private fun FavoriteMessageBubble(
             color = if (isUser) userColors.metadata else MaterialTheme.colorScheme.onSurfaceVariant
           )
         }
-        TextButton(
-          onClick = { removeConfirmOpen = true },
-          enabled = canRemove
-        ) {
-          Icon(Icons.Outlined.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
-          Spacer(Modifier.width(4.dp))
-          Text(if (canRemove) "从收藏移除" else "至少保留一条消息")
+        if (!batchMode) {
+          TextButton(
+            onClick = { removeConfirmOpen = true },
+            enabled = canRemove
+          ) {
+            Icon(Icons.Outlined.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(if (canRemove) "从收藏移除" else "至少保留一条消息")
+          }
         }
       }
     }

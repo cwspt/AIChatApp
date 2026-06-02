@@ -630,20 +630,21 @@ class ChatRepositoryForkTest {
     dao.upsertConversation(conversation("conv", providerId = "provider", model = "model-a"))
     dao.upsertMessage(message("u1", "conv", MessageRole.USER, "question", "provider", "model-a", 1))
     dao.upsertMessage(message("a1", "conv", MessageRole.ASSISTANT, "answer", "provider", "model-a", 2))
-    val favorite = repository.createFavoriteSnippet("conv", setOf("u1", "a1"), "Saved", "", "")
+    dao.upsertMessage(message("a2", "conv", MessageRole.ASSISTANT, "second answer", "provider", "model-a", 3))
+    val favorite = repository.createFavoriteSnippet("conv", setOf("u1", "a1", "a2"), "Saved", "", "")
 
-    val updated = repository.removeMessagesFromFavoriteSnippet(favorite.id, setOf("u1"))
+    val updated = repository.removeMessagesFromFavoriteSnippet(favorite.id, setOf("u1", "a1"))
     val emptyResult = runCatching {
-      repository.removeMessagesFromFavoriteSnippet(favorite.id, setOf("a1"))
+      repository.removeMessagesFromFavoriteSnippet(favorite.id, setOf("a2"))
     }
 
     assertNotNull(updated)
-    assertEquals(listOf("a1"), updated!!.messages.map { it.id })
+    assertEquals(listOf("a2"), updated!!.messages.map { it.id })
     assertEquals(1, updated.messageCount)
-    assertEquals("a1", updated.sourceFirstMessageId)
-    assertEquals("a1", updated.sourceLastMessageId)
+    assertEquals("a2", updated.sourceFirstMessageId)
+    assertEquals("a2", updated.sourceLastMessageId)
     assertTrue(emptyResult.isFailure)
-    assertEquals(listOf("a1"), repository.favoriteSnippetById(favorite.id)!!.messages.map { it.id })
+    assertEquals(listOf("a2"), repository.favoriteSnippetById(favorite.id)!!.messages.map { it.id })
   }
 
   @Test
