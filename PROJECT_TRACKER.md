@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: API configuration management now shows a provider capability matrix for image input, file input, web search tools, and reasoning support, with compact capability badges on each provider row.
+- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the provider capability matrix change.
 - Done: favorite detail view now supports selecting multiple messages in a snippet and removing them from the favorite while enforcing that at least one message remains.
 - Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the favorite batch message-removal change.
 - Done: favorite library now has a sort menu for recent updates, created time, title, and primary tag ordering after search/tag filtering.
@@ -315,7 +317,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | ID | 任务 | 状态 | 验收标准 |
 | --- | --- | --- | --- |
 | NEXT-P2-001 | PDF/文本 app 内预览 | Planned | PDF 或文本附件可在 app 内预览 |
-| NEXT-P2-002 | Provider 多模态能力矩阵 | Planned | 设置页展示每个 provider 是否支持图片、文件、搜索、reasoning |
+| NEXT-P2-002 | Provider 多模态能力矩阵 | Done | 设置页的 API 配置管理已展示每个 provider 是否支持图片输入、文件输入、搜索工具和 reasoning，并在每行显示紧凑能力徽章 |
 | NEXT-P2-003 | 二维码导入导出 Provider 配置 | Planned | 支持配置生成二维码和扫码导入 |
 | NEXT-P2-004 | UI 文件拆分 | Planned | `AIChatAppRoot.kt` 拆分为 chat/settings/drawer/markdown/components |
 | NEXT-P2-005 | Room migration 测试 | Planned | 从 schema 1 到最新 schema 自动迁移验证 |
