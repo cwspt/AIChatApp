@@ -756,6 +756,8 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onAttachmentMaxImageSourceMb = viewModel::setAttachmentMaxImageSourceMb,
         onExportProviderConfigs = { viewModel.exportProviderConfigsText(context) },
         onImportProviderConfigs = viewModel::importProviderConfigsText,
+        onExportBackgroundPresets = { viewModel.exportBackgroundPresetsText(context) },
+        onImportBackgroundPresets = viewModel::importBackgroundPresetsText,
         onOpenBotManager = viewModel::openBotManager,
         onSaveBackgroundPreset = viewModel::saveBackgroundPreset,
         onDeleteBackgroundPreset = viewModel::deleteBackgroundPreset,
@@ -4940,12 +4942,15 @@ private fun AppSettingsPage(
   onAttachmentMaxImageSourceMb: (Int) -> Unit,
   onExportProviderConfigs: () -> Unit,
   onImportProviderConfigs: (String) -> Unit,
+  onExportBackgroundPresets: () -> Unit,
+  onImportBackgroundPresets: (String) -> Unit,
   onOpenBotManager: () -> Unit,
   onSaveBackgroundPreset: (ChatBackgroundPreset?, String, String) -> Unit,
   onDeleteBackgroundPreset: (String) -> Unit,
   onMoveBackgroundPreset: (String, Int) -> Unit
 ) {
   var importDialogOpen by remember { mutableStateOf(false) }
+  var backgroundImportDialogOpen by remember { mutableStateOf(false) }
   var editingPreset by remember { mutableStateOf<ChatBackgroundPreset?>(null) }
   var creatingPreset by remember { mutableStateOf(false) }
   var backgroundPresetQuery by remember { mutableStateOf("") }
@@ -5131,6 +5136,21 @@ private fun AppSettingsPage(
             Spacer(Modifier.width(8.dp))
             Text("新增背景预设")
           }
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(
+              onClick = onExportBackgroundPresets,
+              enabled = state.appSettings.backgroundPresets.isNotEmpty()
+            ) {
+              Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(6.dp))
+              Text("导出 JSON")
+            }
+            TextButton(onClick = { backgroundImportDialogOpen = true }) {
+              Icon(Icons.Outlined.ImportExport, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(6.dp))
+              Text("导入 JSON")
+            }
+          }
           OutlinedTextField(
             value = backgroundPresetQuery,
             onValueChange = { backgroundPresetQuery = it },
@@ -5181,6 +5201,15 @@ private fun AppSettingsPage(
         onSaveBackgroundPreset(editingPreset, title, content)
         creatingPreset = false
         editingPreset = null
+      }
+    )
+  }
+  if (backgroundImportDialogOpen) {
+    BackgroundPresetImportDialog(
+      onDismiss = { backgroundImportDialogOpen = false },
+      onImport = { text ->
+        onImportBackgroundPresets(text)
+        backgroundImportDialogOpen = false
       }
     )
   }
@@ -5235,6 +5264,45 @@ private fun AttachmentLimitSlider(
       steps = (cleanRange.last - cleanRange.first - 1).coerceAtLeast(0)
     )
   }
+}
+
+@Composable
+private fun BackgroundPresetImportDialog(
+  onDismiss: () -> Unit,
+  onImport: (String) -> Unit
+) {
+  var text by remember { mutableStateOf("") }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("导入背景预设") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+          "粘贴从本 App 导出的背景预设 JSON。导入会追加为新预设，不会覆盖已有背景。",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        OutlinedTextField(
+          value = text,
+          onValueChange = { text = it },
+          label = { Text("背景预设 JSON") },
+          minLines = 8,
+          maxLines = 12,
+          modifier = Modifier.fillMaxWidth()
+        )
+      }
+    },
+    confirmButton = {
+      Button(onClick = { onImport(text) }, enabled = text.isNotBlank()) {
+        Text("导入")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("取消")
+      }
+    }
+  )
 }
 
 @Composable

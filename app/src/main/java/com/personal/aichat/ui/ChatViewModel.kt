@@ -12,6 +12,8 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import com.personal.aichat.AppForegroundTracker
 import com.personal.aichat.ChatGenerationService
 import com.personal.aichat.data.ChatRepository
@@ -58,6 +60,11 @@ import java.io.File
 import kotlin.math.max
 import kotlin.math.roundToInt
 import java.util.UUID
+
+private data class BackgroundPresetExportPayload(
+  val version: Int = 1,
+  val presets: List<ChatBackgroundPreset> = emptyList()
+)
 
 class ChatViewModel(
   private val repository: ChatRepository,
@@ -1790,6 +1797,54 @@ class ChatViewModel(
     }
   }
 
+  fun exportBackgroundPresetsText(context: Context) {
+    viewModelScope.launch {
+      val presets = uiState.value.appSettings.backgroundPresets.sortedBy { it.sortOrder }
+      val text = Gson().toJson(BackgroundPresetExportPayload(presets = presets))
+      val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+      clipboard.setPrimaryClip(ClipData.newPlainText("AIChat 背景预设", text))
+      val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/json"
+        putExtra(Intent.EXTRA_TEXT, text)
+      }
+      context.startActivity(Intent.createChooser(sendIntent, "导出背景预设 JSON"))
+    }
+  }
+
+  fun importBackgroundPresetsText(text: String) {
+    viewModelScope.launch {
+      runCatching {
+        val imported = parseBackgroundPresetImportText(text)
+        val current = uiState.value.appSettings.backgroundPresets.sortedBy { it.sortOrder }
+        val usedIds = current.map { it.id }.toMutableSet()
+        val now = System.currentTimeMillis()
+        val cleanImported = imported.mapNotNull { preset ->
+          val cleanContent = preset.content.trim()
+          if (cleanContent.isBlank()) {
+            null
+          } else {
+            preset.copy(
+              id = uniqueBackgroundPresetId(preset.id, usedIds),
+              title = preset.title.trim().ifBlank { "未命名背景" },
+              content = cleanContent,
+              createdAt = preset.createdAt.takeIf { it > 0L } ?: now,
+              updatedAt = now
+            )
+          }
+        }
+        require(cleanImported.isNotEmpty()) { "没有可导入的背景预设" }
+        preferencesRepository.setBackgroundPresets(
+          (current + cleanImported).mapIndexed { index, preset -> preset.copy(sortOrder = index) }
+        )
+        cleanImported.size
+      }.onSuccess { count ->
+        localState.update { it.copy(error = "已导入 $count 个背景预设") }
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "导入背景预设失败") }
+      }
+    }
+  }
+
   fun exportProviderConfigsText(context: Context) {
     viewModelScope.launch {
       val text = repository.exportProvidersText(includeApiKeys = true)
@@ -1936,6 +1991,34 @@ class ChatViewModel(
     }
   }
 }
+
+private fun parseBackgroundPresetImportText(text: String): List<ChatBackgroundPreset> {
+  val gson = Gson()
+  val cleanText = text.trim()
+  require(cleanText.isNotBlank()) { "请粘贴背景预设 JSON" }
+  val payload = runCatching {
+    gson.fromJson(cleanText, BackgroundPresetExportPayload::class.java)
+  }.getOrNull()
+  if (payload != null && payload.presets.isNotEmpty()) return payload.presets
+  val listType = object : TypeToken<List<ChatBackgroundPreset>>() {}.type
+  return runCatching {
+    gson.fromJson<List<ChatBackgroundPreset>>(cleanText, listType)
+  }.getOrNull()
+    ?: error("无法识别背景预设 JSON")
+}
+
+private fun uniqueBackgroundPresetId(rawId: String, usedIds: MutableSet<String>): String {
+  val clean = rawId
+    .trim()
+    .takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,80}")) }
+  var candidate = clean ?: newBackgroundPresetId()
+  while (!usedIds.add(candidate)) {
+    candidate = newBackgroundPresetId()
+  }
+  return candidate
+}
+
+private fun newBackgroundPresetId(): String = "bg_${UUID.randomUUID().toString().replace("-", "")}"
 
 private fun List<ChatConversation>.toConversationGroups(): List<ChatConversationGroup> {
   return groupBy { it.groupName.ifBlank { "默认" } }
