@@ -319,6 +319,25 @@ internal fun resolvedBotBubbleColorKey(botId: String, requestedKey: String): Str
   return BotBubblePalettes[hash % BotBubblePalettes.size].key
 }
 
+internal fun botAvatarLabel(name: String): String {
+  val clean = name.trim()
+  if (clean.isBlank()) return "AI"
+  val words = clean.split(Regex("\\s+")).filter { it.isNotBlank() }
+  val initials = if (words.size >= 2) {
+    words.take(2).mapNotNull { it.firstOrNull()?.uppercaseChar() }.joinToString("")
+  } else {
+    clean.take(2).uppercase(Locale.getDefault())
+  }
+  return initials.ifBlank { "AI" }
+}
+
+internal fun botIdentityCode(seed: String?): String {
+  val clean = seed?.trim().orEmpty()
+  if (clean.isBlank()) return "#BOT"
+  val hash = clean.fold(0) { acc, char -> (acc * 31 + char.code) and Int.MAX_VALUE }
+  return "#${(hash and 0xFFFF).toString(16).uppercase(Locale.ROOT).padStart(4, '0')}"
+}
+
 @Composable
 private fun botBubbleColors(bot: AiBot?): BotBubbleColors {
   val requestedKey = bot?.bubbleColorKey ?: "AUTO"
@@ -343,6 +362,36 @@ private fun markdownColorsForBotBubble(colors: BotBubbleColors): MarkdownRenderC
     border = colors.accent.copy(alpha = 0.42f),
     divider = colors.accent.copy(alpha = 0.34f)
   )
+}
+
+@Composable
+private fun BotIdentityAvatar(
+  label: String,
+  colors: BotBubbleColors,
+  modifier: Modifier = Modifier
+) {
+  Surface(
+    color = colors.accent,
+    contentColor = readableTextOn(colors.accent),
+    shape = RoundedCornerShape(999.dp),
+    modifier = modifier
+      .size(30.dp)
+      .border(1.dp, colors.content.copy(alpha = 0.22f), RoundedCornerShape(999.dp))
+  ) {
+    Box(contentAlignment = Alignment.Center) {
+      Text(
+        text = label,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1
+      )
+    }
+  }
+}
+
+private fun readableTextOn(color: Color): Color {
+  val luminance = (0.2126f * color.red) + (0.7152f * color.green) + (0.0722f * color.blue)
+  return if (luminance > 0.56f) Color(0xFF111111) else Color.White
 }
 
 private fun mixColors(base: Color, overlay: Color, overlayAlpha: Float): Color {
@@ -4118,6 +4167,13 @@ private fun GroupMessageBubble(
   val isUser = message.senderType == GroupMessageSenderType.USER
   val isBot = message.senderType == GroupMessageSenderType.BOT
   val botColors = botBubbleColors(bot)
+  val senderDisplayName = message.senderName.ifBlank { if (isUser) "用户" else "AI" }
+  val botDisplayName = bot?.name?.takeIf { it.isNotBlank() } ?: senderDisplayName
+  val botIdentityText = if (isBot) {
+    "身份 ${botIdentityCode(bot?.id ?: message.botId ?: message.senderName)} · ${botColors.label}"
+  } else {
+    null
+  }
   val useBotMarkdownColors = isBot && isDarkThemeColors()
   val markdownColors = remember(botColors, useBotMarkdownColors) {
     if (useBotMarkdownColors) markdownColorsForBotBubble(botColors) else null
@@ -4162,20 +4218,28 @@ private fun GroupMessageBubble(
       Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
           if (isBot) {
-            Box(
-              modifier = Modifier
-                .size(12.dp)
-                .background(botColors.accent, RoundedCornerShape(999.dp))
+            BotIdentityAvatar(
+              label = botAvatarLabel(botDisplayName),
+              colors = botColors
             )
-            Spacer(Modifier.width(7.dp))
+            Spacer(Modifier.width(9.dp))
           }
           Column(modifier = Modifier.weight(1f)) {
             Text(
-              text = message.senderName.ifBlank { if (isUser) "用户" else "AI" },
+              text = senderDisplayName,
               fontWeight = FontWeight.SemiBold,
               maxLines = 1,
               overflow = TextOverflow.Ellipsis
             )
+            botIdentityText?.let { identity ->
+              Text(
+                text = identity,
+                style = MaterialTheme.typography.bodySmall,
+                color = metadataColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+              )
+            }
             groupTurnLabel(message)?.let { label ->
               Text(
                 text = label,
@@ -4434,6 +4498,7 @@ private fun GroupBotPickerDialog(
       } else {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
           bots.forEach { bot ->
+            val colors = botBubbleColors(bot)
             Surface(
               color = MaterialTheme.colorScheme.surfaceVariant,
               shape = RoundedCornerShape(8.dp),
@@ -4441,9 +4506,25 @@ private fun GroupBotPickerDialog(
                 .fillMaxWidth()
                 .clickable { onSelect(bot.id) }
             ) {
-              Column(modifier = Modifier.padding(10.dp)) {
-                Text(bot.name, fontWeight = FontWeight.SemiBold)
-                Text(bot.model, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              Row(
+                modifier = Modifier.padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                BotIdentityAvatar(
+                  label = botAvatarLabel(bot.name),
+                  colors = colors
+                )
+                Spacer(Modifier.width(9.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                  Text(bot.name, fontWeight = FontWeight.SemiBold)
+                  Text(
+                    "身份 ${botIdentityCode(bot.id)} · ${colors.label} · ${bot.model}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                  )
+                }
               }
             }
           }
@@ -4516,18 +4597,19 @@ private fun BotManagerPage(
           Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
               Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                  modifier = Modifier
-                    .size(18.dp)
-                    .background(colors.accent, RoundedCornerShape(999.dp))
+                BotIdentityAvatar(
+                  label = botAvatarLabel(bot.name),
+                  colors = colors
                 )
                 Spacer(Modifier.width(9.dp))
                 Column(modifier = Modifier.weight(1f)) {
                   Text(bot.name, fontWeight = FontWeight.SemiBold)
                   Text(
-                    "$providerName · ${bot.model} · ${colors.label}",
+                    "身份 ${botIdentityCode(bot.id)} · $providerName · ${bot.model} · ${colors.label}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                   )
                 }
                 Switch(checked = bot.enabled, onCheckedChange = { onToggleEnabled(bot.id, it) })

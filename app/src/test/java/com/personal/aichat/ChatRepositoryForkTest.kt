@@ -41,6 +41,8 @@ import com.personal.aichat.ui.GroupMessageListItem
 import com.personal.aichat.ui.LongBubbleNavTarget
 import com.personal.aichat.ui.ToolCallCitation
 import com.personal.aichat.ui.VisibleListItemBounds
+import com.personal.aichat.ui.botAvatarLabel
+import com.personal.aichat.ui.botIdentityCode
 import com.personal.aichat.ui.chatMessageListItems
 import com.personal.aichat.ui.groupMessageListItems
 import com.personal.aichat.ui.longBubbleNavTarget
@@ -1224,6 +1226,15 @@ class ChatRepositoryForkTest {
     assertEquals(first, second)
     assertNotEquals("AUTO", first)
     assertEquals("ROSE", resolvedBotBubbleColorKey("bot-a", "ROSE"))
+  }
+
+  @Test
+  fun botIdentityLabelsAreCompactAndStable() {
+    assertEquals("AI", botAvatarLabel(""))
+    assertEquals("DS", botAvatarLabel("Deep Seek"))
+    assertEquals("小助", botAvatarLabel("小助手"))
+    assertEquals("#2DDB", botIdentityCode("bot-a"))
+    assertEquals("#C7DB", botIdentityCode("bot_123456"))
   }
 
   @Test
