@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: group chats now show a semi-automatic summary refresh prompt when a long discussion has no summary yet or has enough new messages after the last summary, reusing the existing summary bot picker for one-click updates.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest.groupSummaryRefreshHintPromptsWhenSummaryIsMissingAfterEnoughMessages --tests com.personal.aichat.ChatRepositoryForkTest.groupSummaryRefreshHintSkipsFreshSummary --tests com.personal.aichat.ChatRepositoryForkTest.groupSummaryRefreshHintPromptsWhenSummaryIsStale` passed after the group summary refresh prompt change.
 - Done: group auto-play now supports per-group saved player preferences for finite rounds, turn interval, and one retry for failed bot turns, with a group overflow settings dialog.
 - Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest.groupAutoPlayPreferenceDefaultsAndNormalizes --tests com.personal.aichat.ChatRepositoryForkTest.nextGroupAutoPlayBotCyclesAfterMostRecentBotMessage`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the group player enhancement.
 - Done: group-chat bot identity visuals now show stable avatar initials, a short identity code, and the resolved color label in bot bubbles, bot picker rows, and bot manager rows.
@@ -346,7 +348,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P2-010 | 群聊自动主持人 | Planned | 支持由主持人机器人控制下一位发言者、暂停和总结 |
 | NEXT-P2-011 | 群聊播放器增强 | Done | 群聊播放器可按群聊保存自动轮数、发言间隔和失败后重试一次的偏好，自动续播会按偏好暂停、延迟或重试 |
 | NEXT-P2-012 | 机器人头像和颜色 | Done | 群聊机器人气泡、点名选择器和机器人管理列表均显示稳定头像缩写、短身份码和解析后的颜色标签，便于快速扫描区分机器人 |
-| NEXT-P2-013 | 群摘要自动滚动更新 | Planned | 长讨论自动或半自动更新摘要，避免上下文无限增长 |
+| NEXT-P2-013 | 群摘要自动滚动更新 | Done | 群聊会在无摘要且消息较多、或上次摘要后积累较多新消息时提示生成/更新摘要，并复用总结机器人选择器执行半自动刷新 |
 | NEXT-P2-014 | 背景预设导入导出和分类搜索 | Done | 背景预设已支持设置页和群聊插入弹窗的关键词搜索、JSON 导出/分享与追加导入、分类编辑与分类筛选，并支持编辑群聊时按群聊保存和插入常用预设组合 |
 | NEXT-P3-001 | Anthropic adapter | Planned | Claude Messages API 文本流式对话 |
 | NEXT-P3-002 | Gemini adapter | Planned | Gemini GenerateContent 文本和多模态对话 |

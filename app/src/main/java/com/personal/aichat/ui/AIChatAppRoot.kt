@@ -3237,6 +3237,63 @@ private enum class GroupBotPickerMode {
   SUMMARIZE
 }
 
+private const val GroupSummaryInitialMessageThreshold = 8
+private const val GroupSummaryRefreshMessageThreshold = 12
+
+internal data class GroupSummaryRefreshHint(
+  val message: String,
+  val actionLabel: String,
+  val staleMessageCount: Int
+)
+
+internal fun groupSummaryRefreshHint(
+  room: GroupChatRoom,
+  messages: List<GroupChatMessage>,
+  initialThreshold: Int = GroupSummaryInitialMessageThreshold,
+  refreshThreshold: Int = GroupSummaryRefreshMessageThreshold
+): GroupSummaryRefreshHint? {
+  val completedDiscussionMessages = messages.filter { message ->
+    message.status == MessageStatus.COMPLETE &&
+      message.content.isNotBlank() &&
+      message.turnTrigger != GroupTurnTrigger.SUMMARY &&
+      (message.senderType == GroupMessageSenderType.USER || message.senderType == GroupMessageSenderType.BOT)
+  }
+  if (room.summary.isBlank()) {
+    val count = completedDiscussionMessages.size
+    return if (count >= initialThreshold) {
+      GroupSummaryRefreshHint(
+        message = "已有 $count 条讨论消息，可以生成群聊摘要。",
+        actionLabel = "生成摘要",
+        staleMessageCount = count
+      )
+    } else {
+      null
+    }
+  }
+
+  val latestSummaryCreatedAt = messages.asSequence()
+    .filter { message ->
+      message.status == MessageStatus.COMPLETE &&
+        message.content.isNotBlank() &&
+        message.turnTrigger == GroupTurnTrigger.SUMMARY
+    }
+    .maxOfOrNull { it.createdAt }
+  val staleCount = if (latestSummaryCreatedAt == null) {
+    completedDiscussionMessages.size
+  } else {
+    completedDiscussionMessages.count { it.createdAt > latestSummaryCreatedAt }
+  }
+  return if (staleCount >= refreshThreshold) {
+    GroupSummaryRefreshHint(
+      message = "上次摘要后已有 $staleCount 条新消息，建议更新摘要。",
+      actionLabel = "更新摘要",
+      staleMessageCount = staleCount
+    )
+  } else {
+    null
+  }
+}
+
 @Composable
 private fun GroupChatPage(
   state: ChatUiState,
@@ -3285,6 +3342,9 @@ private fun GroupChatPage(
   val groupBots = state.aiBots
     .filter { it.enabled && (memberBotIds.isEmpty() || it.id in memberBotIds) }
     .sortedWith(compareBy<AiBot> { bot -> state.groupMembers.firstOrNull { it.botId == bot.id }?.sortOrder ?: Int.MAX_VALUE }.thenBy { it.name })
+  val summaryRefreshHint = remember(selectedGroup?.id, selectedGroup?.summary, state.groupMessages) {
+    selectedGroup?.let { groupSummaryRefreshHint(it, state.groupMessages) }
+  }
 
   Surface(
     color = MaterialTheme.colorScheme.background,
@@ -3374,7 +3434,7 @@ private fun GroupChatPage(
           }
         }
       } else {
-        if (selectedGroup.summary.isNotBlank() || groupBots.isNotEmpty()) {
+        if (selectedGroup.summary.isNotBlank() || summaryRefreshHint != null || groupBots.isNotEmpty()) {
           Column(
             modifier = Modifier
               .fillMaxWidth()
@@ -3396,6 +3456,13 @@ private fun GroupChatPage(
                   modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
                 )
               }
+            }
+            summaryRefreshHint?.let { hint ->
+              GroupSummaryRefreshPrompt(
+                hint = hint,
+                enabled = groupBots.isNotEmpty() && !state.isSelectedGroupStreaming,
+                onClick = { pickerMode = GroupBotPickerMode.SUMMARIZE }
+              )
             }
             if (groupBots.isNotEmpty()) {
               LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -3519,6 +3586,44 @@ private fun GroupChatPage(
         }
       }
     )
+  }
+}
+
+@Composable
+private fun GroupSummaryRefreshPrompt(
+  hint: GroupSummaryRefreshHint,
+  enabled: Boolean,
+  onClick: () -> Unit
+) {
+  Surface(
+    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f),
+    shape = RoundedCornerShape(8.dp),
+    modifier = Modifier.fillMaxWidth()
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+      Icon(
+        imageVector = Icons.Outlined.Refresh,
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.onTertiaryContainer,
+        modifier = Modifier.size(18.dp)
+      )
+      Text(
+        text = hint.message,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onTertiaryContainer,
+        modifier = Modifier.weight(1f)
+      )
+      TextButton(
+        onClick = onClick,
+        enabled = enabled
+      ) {
+        Text(hint.actionLabel)
+      }
+    }
   }
 }
 

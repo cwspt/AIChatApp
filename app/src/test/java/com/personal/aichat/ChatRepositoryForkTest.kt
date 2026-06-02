@@ -25,6 +25,7 @@ import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ChatStreamEvent
 import com.personal.aichat.domain.AiBot
 import com.personal.aichat.domain.GroupChatMessage
+import com.personal.aichat.domain.GroupChatRoom
 import com.personal.aichat.domain.GroupAutoPlayPreference
 import com.personal.aichat.domain.GroupMessageSenderType
 import com.personal.aichat.domain.GroupTurnTrigger
@@ -47,6 +48,7 @@ import com.personal.aichat.ui.botAvatarLabel
 import com.personal.aichat.ui.botIdentityCode
 import com.personal.aichat.ui.chatMessageListItems
 import com.personal.aichat.ui.groupMessageListItems
+import com.personal.aichat.ui.groupSummaryRefreshHint
 import com.personal.aichat.ui.longBubbleNavTarget
 import com.personal.aichat.ui.nextGroupAutoPlayBotId
 import com.personal.aichat.ui.parseToolCallDetails
@@ -1233,6 +1235,47 @@ class ChatRepositoryForkTest {
   }
 
   @Test
+  fun groupSummaryRefreshHintPromptsWhenSummaryIsMissingAfterEnoughMessages() {
+    val room = testGroupRoom(summary = "")
+    val messages = (1..8).map { index ->
+      testGroupMessage("m$index", GroupMessageSenderType.USER, null, "User", createdAt = index.toLong())
+    }
+
+    val hint = groupSummaryRefreshHint(room, messages)
+
+    assertEquals("生成摘要", hint?.actionLabel)
+    assertEquals(8, hint?.staleMessageCount)
+  }
+
+  @Test
+  fun groupSummaryRefreshHintSkipsFreshSummary() {
+    val room = testGroupRoom(summary = "已有摘要")
+    val messages = listOf(
+      testGroupMessage("u1", GroupMessageSenderType.USER, null, "User", createdAt = 1),
+      testGroupMessage("s1", GroupMessageSenderType.BOT, "bot-a", "A", createdAt = 10, turnTrigger = GroupTurnTrigger.SUMMARY)
+    ) + (11..15).map { index ->
+      testGroupMessage("m$index", GroupMessageSenderType.USER, null, "User", createdAt = index.toLong())
+    }
+
+    assertNull(groupSummaryRefreshHint(room, messages))
+  }
+
+  @Test
+  fun groupSummaryRefreshHintPromptsWhenSummaryIsStale() {
+    val room = testGroupRoom(summary = "已有摘要")
+    val messages = listOf(
+      testGroupMessage("s1", GroupMessageSenderType.BOT, "bot-a", "A", createdAt = 10, turnTrigger = GroupTurnTrigger.SUMMARY)
+    ) + (11..22).map { index ->
+      testGroupMessage("m$index", GroupMessageSenderType.BOT, "bot-b", "B", createdAt = index.toLong())
+    }
+
+    val hint = groupSummaryRefreshHint(room, messages)
+
+    assertEquals("更新摘要", hint?.actionLabel)
+    assertEquals(12, hint?.staleMessageCount)
+  }
+
+  @Test
   fun autoBotBubbleColorKeyIsStableAndUsesPalette() {
     val first = resolvedBotBubbleColorKey("bot-a", "AUTO")
     val second = resolvedBotBubbleColorKey("bot-a", "AUTO")
@@ -1360,11 +1403,26 @@ class ChatRepositoryForkTest {
     updatedAt = 1
   )
 
+  private fun testGroupRoom(summary: String): GroupChatRoom = GroupChatRoom(
+    id = "group",
+    title = "Group",
+    topic = "",
+    summary = summary,
+    createdAt = 1,
+    updatedAt = 1,
+    isArchived = false,
+    isDeleted = false
+  )
+
   private fun testGroupMessage(
     id: String,
     senderType: GroupMessageSenderType,
     botId: String?,
-    senderName: String
+    senderName: String,
+    createdAt: Long = 1,
+    turnTrigger: GroupTurnTrigger = GroupTurnTrigger.UNKNOWN,
+    content: String = "content",
+    status: MessageStatus = MessageStatus.COMPLETE
   ): GroupChatMessage = GroupChatMessage(
     id = id,
     groupId = "group",
@@ -1372,13 +1430,14 @@ class ChatRepositoryForkTest {
     botId = botId,
     senderName = senderName,
     role = if (senderType == GroupMessageSenderType.USER) MessageRole.USER else MessageRole.ASSISTANT,
-    content = "content",
-    status = MessageStatus.COMPLETE,
+    content = content,
+    status = status,
     providerId = "provider",
     model = "model",
-    createdAt = 1,
-    updatedAt = 1,
-    errorMessage = null
+    createdAt = createdAt,
+    updatedAt = createdAt,
+    errorMessage = null,
+    turnTrigger = turnTrigger
   )
 }
 
