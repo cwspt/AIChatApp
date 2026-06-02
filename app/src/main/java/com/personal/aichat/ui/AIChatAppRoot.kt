@@ -244,53 +244,6 @@ private data class UserBubbleColors(
   val metadata: Color
 )
 
-internal data class LongBubbleNavTarget(
-  val index: Int,
-  val showUp: Boolean,
-  val showDown: Boolean,
-  val bottomOffset: Int,
-  val messageId: String? = null,
-  val showActions: Boolean = false
-)
-
-internal data class VisibleListItemBounds(
-  val index: Int,
-  val offset: Int,
-  val size: Int,
-  val messageId: String? = null,
-  val supportsActions: Boolean = false
-)
-
-internal sealed interface GroupMessageListItem {
-  val key: String
-  val messageIds: List<String>
-
-  data class Message(val message: GroupChatMessage) : GroupMessageListItem {
-    override val key: String = message.id
-    override val messageIds: List<String> = listOf(message.id)
-  }
-
-  data class ToolGroup(val messages: List<GroupChatMessage>) : GroupMessageListItem {
-    override val key: String = "tool_group_${messages.firstOrNull()?.id.orEmpty()}"
-    override val messageIds: List<String> = messages.map { it.id }
-  }
-}
-
-internal sealed interface ChatMessageListItem {
-  val key: String
-  val messageIds: List<String>
-
-  data class Message(val message: ChatMessage) : ChatMessageListItem {
-    override val key: String = message.id
-    override val messageIds: List<String> = listOf(message.id)
-  }
-
-  data class ToolGroup(val messages: List<ChatMessage>) : ChatMessageListItem {
-    override val key: String = "tool_group_${messages.firstOrNull()?.id.orEmpty()}"
-    override val messageIds: List<String> = messages.map { it.id }
-  }
-}
-
 private val BotBubblePalettes = listOf(
   BotBubblePalette("TEAL", "青绿", Color(0xFFD2F4EA), Color(0xFF073B32), Color(0xFF00866E), Color(0xFF163731), Color(0xFFE0FFF6), Color(0xFF46D3BA)),
   BotBubblePalette("BLUE", "蓝", Color(0xFFD8E9FF), Color(0xFF062B55), Color(0xFF1E6FD9), Color(0xFF162D47), Color(0xFFE5F1FF), Color(0xFF6EA8FF)),
@@ -1676,19 +1629,6 @@ private fun ForkSourceLabel(label: String) {
       maxLines = 1,
       overflow = TextOverflow.Ellipsis
     )
-  }
-}
-
-internal fun conversationForkSourceLabel(
-  conversation: ChatConversation,
-  sourceConversations: List<ChatConversation>
-): String? {
-  val sourceId = conversation.forkedFromConversationId ?: return null
-  val source = sourceConversations.firstOrNull { it.id == sourceId }
-  return if (source == null) {
-    "分叉来源不可用"
-  } else {
-    "分叉自 ${source.title.ifBlank { "未命名对话" }}"
   }
 }
 
@@ -4172,72 +4112,6 @@ private fun GroupMessageList(
   }
 }
 
-internal fun groupMessageListItems(messages: List<GroupChatMessage>): List<GroupMessageListItem> {
-  val result = mutableListOf<GroupMessageListItem>()
-  val toolGroups = messages
-    .filter { it.senderType == GroupMessageSenderType.TOOL }
-    .groupBy { it.groupTurnKey() }
-    .mapValues { (_, tools) -> tools.sortedBy { it.createdAt } }
-  val emittedToolKeys = mutableSetOf<GroupTurnKey>()
-
-  messages.forEach { message ->
-    if (message.senderType == GroupMessageSenderType.TOOL) {
-      val key = message.groupTurnKey()
-      if (emittedToolKeys.add(key)) {
-        result += GroupMessageListItem.ToolGroup(toolGroups.getValue(key))
-      }
-    } else {
-      if (message.senderType == GroupMessageSenderType.BOT) {
-        val key = message.groupTurnKey()
-        val tools = toolGroups[key].orEmpty()
-        if (tools.isNotEmpty() && emittedToolKeys.add(key)) {
-          result += GroupMessageListItem.ToolGroup(tools)
-        }
-      }
-      result += GroupMessageListItem.Message(message)
-    }
-  }
-  return result
-}
-
-internal fun chatMessageListItems(messages: List<ChatMessage>): List<ChatMessageListItem> {
-  val result = mutableListOf<ChatMessageListItem>()
-  val pendingTools = mutableListOf<ChatMessage>()
-  messages.forEach { message ->
-    if (message.role == MessageRole.TOOL) {
-      pendingTools += message
-    } else {
-      if (pendingTools.isNotEmpty()) {
-        result += ChatMessageListItem.ToolGroup(pendingTools.toList())
-        pendingTools.clear()
-      }
-      result += ChatMessageListItem.Message(message)
-    }
-  }
-  if (pendingTools.isNotEmpty()) {
-    result += ChatMessageListItem.ToolGroup(pendingTools.toList())
-  }
-  return result
-}
-
-private data class GroupTurnKey(
-  val groupId: String,
-  val botId: String?,
-  val trigger: GroupTurnTrigger,
-  val round: Int?,
-  val index: Int?,
-  val memberCount: Int?
-)
-
-private fun GroupChatMessage.groupTurnKey(): GroupTurnKey = GroupTurnKey(
-  groupId = groupId,
-  botId = botId,
-  trigger = turnTrigger,
-  round = turnRound,
-  index = turnIndex,
-  memberCount = turnMemberCount
-)
-
 private fun lazyListLongBubbleNavTarget(
   visibleItems: List<LazyListItemInfo>,
   viewportStart: Int,
@@ -4257,41 +4131,6 @@ private fun lazyListLongBubbleNavTarget(
   viewportEnd = viewportEnd,
   candidateIndexes = candidates.keys
 )
-
-internal fun longBubbleNavTarget(
-  visibleItems: List<VisibleListItemBounds>,
-  viewportStart: Int,
-  viewportEnd: Int,
-  candidateIndexes: Set<Int>
-): LongBubbleNavTarget? {
-  if (candidateIndexes.isEmpty() || viewportEnd <= viewportStart) return null
-  val viewportHeight = viewportEnd - viewportStart
-  val viewportCenter = viewportStart + viewportHeight / 2
-  return visibleItems
-    .asSequence()
-    .filter { it.index in candidateIndexes }
-    .mapNotNull { item ->
-      val itemTop = item.offset
-      val itemBottom = item.offset + item.size
-      val showUp = itemTop < viewportStart
-      val showDown = itemBottom > viewportEnd
-      val longEnough = item.size > viewportHeight
-      if (!showUp && !showDown) return@mapNotNull null
-      if (!longEnough && itemTop >= viewportStart && itemBottom <= viewportEnd) return@mapNotNull null
-      val distanceToCenter = kotlin.math.abs((itemTop + item.size / 2) - viewportCenter)
-      val bottomOffset = (item.size - viewportHeight).coerceAtLeast(0)
-      distanceToCenter to LongBubbleNavTarget(
-        index = item.index,
-        showUp = showUp,
-        showDown = showDown,
-        bottomOffset = bottomOffset,
-        messageId = item.messageId,
-        showActions = showUp && item.supportsActions && item.messageId != null
-      )
-    }
-    .minByOrNull { it.first }
-    ?.second
-}
 
 @Composable
 private fun LongBubbleNavOverlay(
@@ -4701,19 +4540,6 @@ private fun GroupChatMessage.toChatMessage(): ChatMessage {
     totalTokens = totalTokens,
     attachments = attachments
   )
-}
-
-internal fun collapsedGroupMessageSummary(message: GroupChatMessage): String {
-  if (message.content.isBlank()) {
-    return if (message.status == MessageStatus.STREAMING) "输出中..." else "无内容"
-  }
-  val firstLine = message.content
-    .lineSequence()
-    .map { it.trim() }
-    .firstOrNull { it.isNotBlank() }
-    .orEmpty()
-  val compact = firstLine.replace(Regex("\\s+"), " ")
-  return if (compact.length <= 30) compact else compact.take(30) + "..."
 }
 
 private fun groupToolSummary(details: List<ToolCallDetails>, count: Int, streaming: Boolean): String {
