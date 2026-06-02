@@ -97,6 +97,21 @@ interface ChatDao {
   @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC")
   suspend fun messagesForConversation(conversationId: String): List<MessageEntity>
 
+  @Query(
+    """
+    SELECT * FROM messages
+    WHERE role = 'ASSISTANT'
+      AND (
+        content LIKE '%DSML%' OR
+        content LIKE '%tool_calls%' OR
+        content LIKE '%<invoke%' OR
+        content LIKE '%<parameter%'
+      )
+    ORDER BY createdAt ASC
+    """
+  )
+  suspend fun assistantMessagesWithPossibleToolMarkup(): List<MessageEntity>
+
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun upsertMessage(message: MessageEntity)
 
@@ -227,6 +242,21 @@ interface ChatDao {
 
   @Query("SELECT * FROM group_messages WHERE groupId = :groupId ORDER BY createdAt ASC")
   suspend fun groupMessages(groupId: String): List<GroupMessageEntity>
+
+  @Query(
+    """
+    SELECT * FROM group_messages
+    WHERE role = 'ASSISTANT'
+      AND (
+        content LIKE '%DSML%' OR
+        content LIKE '%tool_calls%' OR
+        content LIKE '%<invoke%' OR
+        content LIKE '%<parameter%'
+      )
+    ORDER BY createdAt ASC
+    """
+  )
+  suspend fun groupAssistantMessagesWithPossibleToolMarkup(): List<GroupMessageEntity>
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun upsertGroupMessage(message: GroupMessageEntity)

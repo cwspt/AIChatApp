@@ -67,6 +67,89 @@ private const val CompressionTargetPercent = 60
 private const val CompressionRecentMessageKeep = 12
 private const val ProviderConfigQrPrefix = "aichat-provider-config-v1:"
 
+data class HistoricalDsmlCleanupResult(
+  val singleMessages: Int,
+  val groupMessages: Int
+) {
+  val totalMessages: Int
+    get() = singleMessages + groupMessages
+}
+
+private val HistoricalDsmlMarkerRegex = Regex(
+  "\uFF5C\uFF5CDSML\uFF5C\uFF5C|\u951D\u6ED0\u7D94DSML\u951D\u6ED0\u7D94",
+  RegexOption.IGNORE_CASE
+)
+private val HistoricalDsmlToolBlockRegex = Regex("""(?is)<\s*tool_calls\b[^>]*>.*?</\s*tool_calls\s*>""")
+private val HistoricalDsmlInvokeRegex = Regex("""(?is)<\s*invoke\s+name\s*=\s*["']([^"']+)["'][^>]*>(.*?)</\s*invoke\s*>""")
+private val HistoricalDsmlParameterRegex = Regex("""(?is)<\s*parameter\s+name\s*=\s*["']([^"']+)["'][^>]*>(.*?)</\s*parameter\s*>""")
+private val HistoricalDsmlLooseTagRegex = Regex("""(?is)</?\s*(tool_calls|invoke|parameter)\b[^>]*>""")
+
+internal fun cleanHistoricalDsmlAssistantContent(content: String): String {
+  val normalized = normalizeHistoricalDsmlMarkers(content)
+  if (!looksLikeHistoricalDsmlMarkup(normalized)) return content
+
+  val toolSummaries = HistoricalDsmlInvokeRegex.findAll(normalized)
+    .map { match ->
+      val toolName = normalizeHistoricalDsmlToolName(match.groupValues[1])
+      val parameters = HistoricalDsmlParameterRegex.findAll(match.groupValues[2])
+        .map { parameter ->
+          parameter.groupValues[1].trim() to decodeHistoricalDsmlXmlText(parameter.groupValues[2].trim())
+        }
+        .filter { (_, value) -> value.isNotBlank() }
+        .toList()
+      buildString {
+        append("工具调用：").append(toolName)
+        if (parameters.isNotEmpty()) {
+          append(" ")
+          append(parameters.joinToString("，") { (name, value) -> "$name=$value" })
+        }
+      }
+    }
+    .distinct()
+    .toList()
+
+  val visibleText = normalized
+    .replace(HistoricalDsmlToolBlockRegex, "\n")
+    .replace(HistoricalDsmlInvokeRegex, "\n")
+    .replace(HistoricalDsmlLooseTagRegex, "\n")
+    .lineSequence()
+    .map { it.trim() }
+    .filter { it.isNotBlank() }
+    .joinToString("\n")
+
+  return (listOf(visibleText) + toolSummaries)
+    .filter { it.isNotBlank() }
+    .joinToString("\n")
+    .trim()
+    .ifBlank { "（历史工具调用标记已清理）" }
+}
+
+private fun normalizeHistoricalDsmlMarkers(content: String): String {
+  return content.replace(HistoricalDsmlMarkerRegex, "")
+}
+
+private fun looksLikeHistoricalDsmlMarkup(content: String): Boolean {
+  return HistoricalDsmlToolBlockRegex.containsMatchIn(content) ||
+    HistoricalDsmlInvokeRegex.containsMatchIn(content) ||
+    HistoricalDsmlMarkerRegex.containsMatchIn(content)
+}
+
+private fun normalizeHistoricalDsmlToolName(name: String): String {
+  return when (val normalized = name.trim().lowercase()) {
+    "open_url", "open_url_page" -> "open"
+    else -> normalized.ifBlank { "tool" }
+  }
+}
+
+private fun decodeHistoricalDsmlXmlText(value: String): String {
+  return value
+    .replace("&amp;", "&")
+    .replace("&quot;", "\"")
+    .replace("&#39;", "'")
+    .replace("&lt;", "<")
+    .replace("&gt;", ">")
+}
+
 private data class ProviderConfigExport(
   val version: Int = 1,
   val exportedAt: Long = 0,
@@ -159,6 +242,32 @@ class ChatRepository(
 
   fun observeGroupMembers(groupId: String): Flow<List<GroupChatMember>> {
     return dao.observeGroupChatMembers(groupId).map { items -> items.map { it.toDomain() } }
+  }
+
+  suspend fun cleanupHistoricalDsmlToolMarkup(): HistoricalDsmlCleanupResult {
+    val updatedAt = System.currentTimeMillis()
+    var cleanedSingleMessages = 0
+    dao.assistantMessagesWithPossibleToolMarkup().forEach { message ->
+      val cleaned = cleanHistoricalDsmlAssistantContent(message.content)
+      if (cleaned != message.content) {
+        dao.upsertMessage(message.copy(content = cleaned, updatedAt = updatedAt))
+        cleanedSingleMessages += 1
+      }
+    }
+
+    var cleanedGroupMessages = 0
+    dao.groupAssistantMessagesWithPossibleToolMarkup().forEach { message ->
+      val cleaned = cleanHistoricalDsmlAssistantContent(message.content)
+      if (cleaned != message.content) {
+        dao.upsertGroupMessage(message.copy(content = cleaned, updatedAt = updatedAt))
+        cleanedGroupMessages += 1
+      }
+    }
+
+    return HistoricalDsmlCleanupResult(
+      singleMessages = cleanedSingleMessages,
+      groupMessages = cleanedGroupMessages
+    )
   }
 
   suspend fun favoriteSnippetById(id: String): FavoriteSnippet? {

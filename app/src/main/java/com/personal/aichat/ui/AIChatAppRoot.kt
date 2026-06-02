@@ -813,6 +813,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onThemeMode = viewModel::setThemeMode,
         onFontScale = viewModel::setFontScale,
         onDebugResponseLogging = viewModel::setDebugResponseLogging,
+        onCleanupHistoricalDsmlToolMarkup = viewModel::cleanupHistoricalDsmlToolMarkup,
         onWebSearchMode = viewModel::setWebSearchMode,
         onStreamingBubbleMotion = viewModel::setStreamingBubbleMotion,
         onAttachmentMaxFileMb = viewModel::setAttachmentMaxFileMb,
@@ -5340,6 +5341,7 @@ private fun AppSettingsPage(
   onThemeMode: (AppThemeMode) -> Unit,
   onFontScale: (Float) -> Unit,
   onDebugResponseLogging: (Boolean) -> Unit,
+  onCleanupHistoricalDsmlToolMarkup: () -> Unit,
   onWebSearchMode: (WebSearchMode) -> Unit,
   onStreamingBubbleMotion: (StreamingBubbleMotion) -> Unit,
   onAttachmentMaxFileMb: (Int) -> Unit,
@@ -5522,6 +5524,21 @@ private fun AppSettingsPage(
               checked = state.appSettings.debugResponseLogging,
               onCheckedChange = onDebugResponseLogging
             )
+          }
+          Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text("历史工具标记清理", fontWeight = FontWeight.SemiBold)
+              Text(
+                "清理旧版本可能写入正文的 DSML 工具调用标记，保留可读的工具调用摘要。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+            }
+            OutlinedButton(onClick = onCleanupHistoricalDsmlToolMarkup) {
+              Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(6.dp))
+              Text("清理")
+            }
           }
           Button(onClick = onOpenProviderManager) {
             Icon(Icons.Outlined.Settings, contentDescription = null)

@@ -2,6 +2,8 @@
 
 ## 2026-06-02 Local Update Summary
 
+- Done: Settings now includes a one-time cleanup action for historical assistant/group bot messages that saved raw DSML tool markup, converting matching XML blocks into readable tool-call summaries while leaving ordinary/user messages untouched.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest.historicalDsmlCleanerConvertsMarkupToReadableToolSummary --tests com.personal.aichat.ChatRepositoryForkTest.cleanupHistoricalDsmlToolMarkupUpdatesSingleAndGroupAssistantMessages`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the historical DSML cleanup tool change.
 - Done: grouped tool-call cards now vary their header/detail icons and background watermark by tool type, using search, page-open, file, or generic tool visuals for faster scanning.
 - Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest.toolCallVisualKindVariesByToolName` passed after the grouped tool-card visual-kind change.
 - Done: group chats now show a semi-automatic summary refresh prompt when a long discussion has no summary yet or has enough new messages after the last summary, reusing the existing summary bot picker for one-click updates.
@@ -57,7 +59,7 @@
 - Done: Markdown headings now render inline Markdown, so heading text such as `建议的**周模板**` no longer leaks raw `**` markers.
 - Done: DeepSeek/OpenAI-compatible DSML tool markup now handles the full-width `｜｜DSML｜｜` marker and normalizes model-emitted `open_url` / `open_url_page` tool names to the supported `open` tool, preventing raw DSML tool XML from being saved as assistant body text.
 - Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ProviderAdapterTest` and `:app:assembleDebug` passed after the DSML/open_url and Markdown heading fixes.
-- Planned: consider a one-time cleanup tool for historical assistant messages that already saved raw DSML markup before this fix; current fix prevents new leaks but does not rewrite existing chat history.
+- Done: Settings now provides a one-time cleanup action for historical assistant and group bot messages that already saved raw DSML markup; the cleanup rewrites matching tool XML blocks into readable tool-call summaries and leaves non-assistant messages untouched.
 
 ## 2026-05-29 Local Update Summary
 

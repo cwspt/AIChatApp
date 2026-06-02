@@ -2,6 +2,7 @@ package com.personal.aichat
 
 import com.personal.aichat.data.ChatRepository
 import com.personal.aichat.data.ChatSelectionStore
+import com.personal.aichat.data.cleanHistoricalDsmlAssistantContent
 import com.personal.aichat.data.local.AiBotEntity
 import com.personal.aichat.data.local.ChatDao
 import com.personal.aichat.data.local.ConversationEntity
@@ -977,6 +978,56 @@ class ChatRepositoryForkTest {
   }
 
   @Test
+  fun historicalDsmlCleanerConvertsMarkupToReadableToolSummary() {
+    val marker = "\uFF5C\uFF5CDSML\uFF5C\uFF5C"
+    val cleaned = cleanHistoricalDsmlAssistantContent(
+      """
+      先说明一段正常内容。
+      <${marker}tool_calls>
+      <${marker}invoke name="open_url">
+      <${marker}parameter name="url" string="true">https://example.com/a?x=1&amp;y=2</${marker}parameter>
+      </${marker}invoke>
+      </${marker}tool_calls>
+      """.trimIndent()
+    )
+
+    assertTrue(cleaned.contains("先说明一段正常内容。"))
+    assertTrue(cleaned.contains("工具调用：open"))
+    assertTrue(cleaned.contains("url=https://example.com/a?x=1&y=2"))
+    assertTrue(!cleaned.contains("DSML"))
+    assertTrue(!cleaned.contains("<invoke"))
+  }
+
+  @Test
+  fun cleanupHistoricalDsmlToolMarkupUpdatesSingleAndGroupAssistantMessages() = runTest {
+    val marker = "\uFF5C\uFF5CDSML\uFF5C\uFF5C"
+    val rawMarkup = """
+      <${marker}tool_calls>
+      <${marker}invoke name="open_page">
+      <${marker}parameter name="url" string="true">https://example.com/report</${marker}parameter>
+      </${marker}invoke>
+      </${marker}tool_calls>
+      """.trimIndent()
+    val dao = FakeChatDao()
+    dao.upsertMessage(message("a1", "conv", MessageRole.ASSISTANT, rawMarkup, "provider", "model", 1))
+    dao.upsertMessage(message("u1", "conv", MessageRole.USER, rawMarkup, "provider", "model", 2))
+    dao.upsertGroupMessage(groupMessage("g1", "group", GroupMessageSenderType.BOT, "bot", "Bot", rawMarkup, 3))
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore()
+    )
+
+    val result = repository.cleanupHistoricalDsmlToolMarkup()
+
+    assertEquals(1, result.singleMessages)
+    assertEquals(1, result.groupMessages)
+    assertTrue(dao.messagesForConversation("conv").first { it.id == "a1" }.content.contains("工具调用：open_page"))
+    assertEquals(rawMarkup, dao.messagesForConversation("conv").first { it.id == "u1" }.content)
+    assertTrue(dao.groupMessages("group").first { it.id == "g1" }.content.contains("url=https://example.com/report"))
+  }
+
+  @Test
   fun imageConversationGeneratesAssistantImageAttachment() = runTest {
     val dao = FakeChatDao()
     val adapter = RecordingAdapter()
@@ -1694,6 +1745,11 @@ private class FakeChatDao : ChatDao {
   override suspend fun messagesForConversation(conversationId: String): List<MessageEntity> =
     messagesForConversationInternal(conversationId)
 
+  override suspend fun assistantMessagesWithPossibleToolMarkup(): List<MessageEntity> =
+    messages.values
+      .filter { it.role == MessageRole.ASSISTANT.name && it.content.hasPossibleToolMarkup() }
+      .sortedBy { it.createdAt }
+
   override suspend fun upsertMessage(message: MessageEntity) {
     messages[message.id] = message
   }
@@ -1845,6 +1901,11 @@ private class FakeChatDao : ChatDao {
   override suspend fun groupMessages(groupId: String): List<GroupMessageEntity> =
     groupMessagesInternal(groupId)
 
+  override suspend fun groupAssistantMessagesWithPossibleToolMarkup(): List<GroupMessageEntity> =
+    groupMessages.values
+      .filter { it.role == MessageRole.ASSISTANT.name && it.content.hasPossibleToolMarkup() }
+      .sortedBy { it.createdAt }
+
   override suspend fun upsertGroupMessage(message: GroupMessageEntity) {
     groupMessages[message.id] = message
   }
@@ -1884,4 +1945,11 @@ private class FakeChatDao : ChatDao {
 
   private fun groupMessagesInternal(groupId: String): List<GroupMessageEntity> =
     groupMessages.values.filter { it.groupId == groupId }.sortedBy { it.createdAt }
+}
+
+private fun String.hasPossibleToolMarkup(): Boolean {
+  return contains("DSML", ignoreCase = true) ||
+    contains("tool_calls", ignoreCase = true) ||
+    contains("<invoke", ignoreCase = true) ||
+    contains("<parameter", ignoreCase = true)
 }

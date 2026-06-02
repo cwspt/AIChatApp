@@ -1739,6 +1739,26 @@ class ChatViewModel(
     }
   }
 
+  fun cleanupHistoricalDsmlToolMarkup() {
+    viewModelScope.launch {
+      runCatching {
+        repository.cleanupHistoricalDsmlToolMarkup()
+      }.onSuccess { result ->
+        localState.update {
+          it.copy(
+            error = if (result.totalMessages > 0) {
+              "已清理 ${result.totalMessages} 条历史工具标记"
+            } else {
+              "没有发现需要清理的历史工具标记"
+            }
+          )
+        }
+      }.onFailure { error ->
+        localState.update { it.copy(error = error.message ?: "清理历史工具标记失败") }
+      }
+    }
+  }
+
   fun setWebSearchMode(mode: WebSearchMode) {
     viewModelScope.launch {
       preferencesRepository.setWebSearchMode(mode)
