@@ -1,7 +1,14 @@
 # AIChatApp Project Tracker
 
+## 2026-06-03 Local Update Summary
+
+- Done: Single-chat/group-chat long-bubble floating action candidates are now precomputed when list items change instead of being rebuilt from the full message list during scroll; the helper also converts only visible candidate items before calculating the overlay target, and scroll auto-follow now observes only scroll start/end instead of reading bottom state on every scroll frame.
+- In Progress: `NEXT-P1-007` is now tracking the remaining scroll-jank investigation, especially whether the self-drawn scroll indicator still contributes to frame drops on device.
+- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and focused long-bubble navigation unit tests passed after the scroll hot-path optimization and chat action bar split.
+
 ## 2026-06-02 Local Update Summary
 
+- Done: UI splitting continued by extracting the chat action bar into `ChatActionBarComponents.kt`.
 - Done: Settings now includes a user-facing changelog section summarized from recent Git history, grouped by update date and focused on additions, fixes, and maintenance work.
 - Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and the pre-commit mojibake scan passed after the settings changelog change.
 - Done: UI splitting continued by extracting the shared message scroll indicator and LazyList scroll-position helpers into `ScrollComponents.kt`.
@@ -365,7 +372,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-004 | 搜索工具卡片细节优化 | Done | 工具卡片展开后优先显示查询词、打开 URL 和 citation URL，再保留原始输入/输出用于排查 |
 | NEXT-P1-005 | 真实 GPT Key 验证图片 + PDF 输入 | Planned | 真机选择图片/PDF 后 GPT 能正确识别内容 |
 | NEXT-P1-006 | 真实 DeepSeek Key 回归验证附件按钮隐藏 | Planned | DeepSeek 对话无附件按钮，纯文本/搜索功能正常 |
-| NEXT-P1-007 | 滚动卡顿专项优化 | Planned | 排查长气泡交界处滚动卡顿和自绘滚动条影响 |
+| NEXT-P1-007 | 滚动卡顿专项优化 | In Progress | 已先将单聊/群聊长气泡右侧浮动按钮候选计算移出滚动热路径，减少可见项 bounds 分配，并让自动跟随只在滚动开始/结束时检查是否到底；继续排查自绘滚动条和真机帧率表现 |
 | NEXT-P1-008 | provider 错误提示进一步中文化 | Done | 400/401/403/404/429、quota/billing、DNS、SSL、超时、Base URL 和 5xx 上游异常均给出更清晰的中文处理建议 |
 | NEXT-P1-009 | 收藏夹标签管理 | Done | 收藏夹标签管理弹窗已支持重命名、合并到已有标签和删除标签，收藏内容不受影响 |
 | NEXT-P1-010 | 收藏导入导出 | Done | 收藏夹支持全量 JSON 导出/导入恢复，并支持 Markdown 导出归档 |
@@ -383,7 +390,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P2-001 | PDF/文本 app 内预览 | Done | PDF 附件可在 app 内预览第一页，文本/JSON/Markdown/日志等文本附件可在 app 内滚动/选择预览，并保留系统应用打开入口 |
 | NEXT-P2-002 | Provider 多模态能力矩阵 | Done | 设置页的 API 配置管理已展示每个 provider 是否支持图片输入、文件输入、搜索工具和 reasoning，并在每行显示紧凑能力徽章 |
 | NEXT-P2-003 | 二维码导入导出 Provider 配置 | Done | 设置页可生成包含 Provider 配置的压缩二维码，扫码后复用导入流程新增配置，并有单元测试覆盖二维码载荷导入 |
-| NEXT-P2-004 | UI 文件拆分 | In Progress | 已将带单测覆盖的列表分组、长气泡导航目标、折叠摘要和分叉来源标签纯逻辑拆到 `UiListModels.kt`，将工具调用解析/摘要/引用/视觉类型模型拆到 `ToolCallModels.kt`，将会话抽屉/文件夹操作/归档行/移动文件夹对话框拆到 `ConversationDrawer.kt`，将聊天 Markdown 渲染拆到 `MarkdownRenderer.kt`，将工具调用卡片 UI 拆到 `ToolCallCards.kt`，将单聊顶部栏/元信息条/分享和溢出菜单拆到 `TopBarComponents.kt`，将附件条/图片网格/图片/PDF/文本预览拆到 `AttachmentComponents.kt`，将 composer 与生图参数控件拆到 `ComposerComponents.kt`，将 Provider 能力矩阵/徽章拆到 `ProviderCapabilityComponents.kt`，将机器人身份/气泡配色组件拆到 `BotIdentityComponents.kt`，将设置页子组件/导入与背景预设控件拆到 `SettingsComponents.kt`，将 Provider 管理列表/删除改绑对话框拆到 `ProviderManagerComponents.kt`，将 Provider 编辑表单/模型参数选择器拆到 `ProviderSettingsComponents.kt`，将系统分享入口目标选择/搜索结果行拆到 `IncomingShareComponents.kt`，将 Provider 菜单/新建与分叉 Provider 选择器拆到 `ProviderChoiceComponents.kt`，将单聊对话条/快捷操作/分组选择器拆到 `ConversationComponents.kt`，并将消息滚动指示器/滚动定位 helper 拆到 `ScrollComponents.kt`；后续继续拆 chat/settings/components |
+| NEXT-P2-004 | UI 文件拆分 | In Progress | 已将带单测覆盖的列表分组、长气泡导航目标、折叠摘要和分叉来源标签纯逻辑拆到 `UiListModels.kt`，将工具调用解析/摘要/引用/视觉类型模型拆到 `ToolCallModels.kt`，将会话抽屉/文件夹操作/归档行/移动文件夹对话框拆到 `ConversationDrawer.kt`，将聊天 Markdown 渲染拆到 `MarkdownRenderer.kt`，将工具调用卡片 UI 拆到 `ToolCallCards.kt`，将单聊顶部栏/元信息条/分享和溢出菜单拆到 `TopBarComponents.kt`，将附件条/图片网格/图片/PDF/文本预览拆到 `AttachmentComponents.kt`，将 composer 与生图参数控件拆到 `ComposerComponents.kt`，将 Provider 能力矩阵/徽章拆到 `ProviderCapabilityComponents.kt`，将机器人身份/气泡配色组件拆到 `BotIdentityComponents.kt`，将设置页子组件/导入与背景预设控件拆到 `SettingsComponents.kt`，将 Provider 管理列表/删除改绑对话框拆到 `ProviderManagerComponents.kt`，将 Provider 编辑表单/模型参数选择器拆到 `ProviderSettingsComponents.kt`，将系统分享入口目标选择/搜索结果行拆到 `IncomingShareComponents.kt`，将 Provider 菜单/新建与分叉 Provider 选择器拆到 `ProviderChoiceComponents.kt`，将单聊对话条/快捷操作/分组选择器拆到 `ConversationComponents.kt`，将消息滚动指示器/滚动定位 helper 拆到 `ScrollComponents.kt`，并将聊天操作栏拆到 `ChatActionBarComponents.kt`；后续继续拆 chat/settings/components |
 | NEXT-P2-005 | Room migration 测试 | Done | Robolectric 单测已验证带旧数据的 schema 1 可迁移到最新 schema，且每个已导出 schema 均可迁移到最新 schema；AndroidTest 版本也可编译 |
 | NEXT-P2-006 | 导出内容包含附件索引 | Done | Markdown/文本/长图导出会列出用户上传附件名称、MIME 类型和大小，单聊与群聊导出均有单测覆盖 |
 | NEXT-P2-007 | 文本级选区收藏 | Planned | 支持收藏气泡内选中的一段文字 |

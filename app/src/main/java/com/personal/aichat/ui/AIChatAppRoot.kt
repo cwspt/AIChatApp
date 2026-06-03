@@ -158,6 +158,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlin.math.roundToInt
 import com.personal.aichat.domain.ChatAttachment
 import com.personal.aichat.domain.AiBot
@@ -862,65 +863,6 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         attachment = attachment,
         onDismiss = { previewAttachment = null },
         onOpenExternal = { openAttachment(context, attachment) }
-      )
-    }
-  }
-}
-
-@Composable
-private fun ChatActionBar(
-  state: ChatUiState,
-  onTogglePin: (String, Boolean) -> Unit,
-  onArchive: (String) -> Unit,
-  onDelete: (String) -> Unit,
-  onRename: (String, String, String) -> Unit,
-  onToggleSelectionMode: (Boolean) -> Unit,
-  onShareText: () -> Unit,
-  onShareSelected: () -> Unit,
-  onShareImage: () -> Unit,
-  onShareSelectedImage: () -> Unit,
-  onShareMarkdown: () -> Unit
-) {
-  val selectedConversation = state.selectedConversation
-  Row(
-    modifier = Modifier
-      .fillMaxWidth()
-      .padding(horizontal = 16.dp, vertical = 6.dp),
-    verticalAlignment = Alignment.CenterVertically
-  ) {
-    Column(modifier = Modifier.weight(1f)) {
-      Text(
-        text = selectedConversation?.title ?: "未选择对话",
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onBackground,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis
-      )
-      Text(
-        text = selectedConversation?.let { "${conversationGroupLabel(it.groupName)} / ${it.model}" } ?: "从左上角聊天列表选择",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis
-      )
-    }
-    if (selectedConversation != null) {
-      ConversationQuickActions(
-        conversation = selectedConversation,
-        onTogglePin = onTogglePin,
-        onArchive = onArchive,
-        onDelete = onDelete,
-        onRename = onRename
-      )
-      ConversationShareMenu(
-        selectionMode = state.messageSelectionMode,
-        selectedCount = state.selectedMessageIds.size,
-        onToggleSelectionMode = onToggleSelectionMode,
-        onShareText = onShareText,
-        onShareSelected = onShareSelected,
-        onShareImage = onShareImage,
-        onShareSelectedImage = onShareSelectedImage,
-        onShareMarkdown = onShareMarkdown
       )
     }
   }
@@ -2818,33 +2760,36 @@ private fun GroupMessageList(
       lastItem > 0 && lastVisible < lastItem - 1
     }
   }
-  val groupLongBubbleNavTarget by remember(scrollHintVisible, listItems, expandedBotMessageIds, latestBotMessageId) {
+  val groupLongBubbleCandidates = remember(listItems, expandedBotMessageIds, latestBotMessageId) {
+    listItems.mapIndexedNotNull { index, item ->
+      val message = (item as? GroupMessageListItem.Message)?.message ?: return@mapIndexedNotNull null
+      val isExpandedBot = message.senderType == GroupMessageSenderType.BOT &&
+        (message.status == MessageStatus.STREAMING || message.id == latestBotMessageId || message.id in expandedBotMessageIds)
+      if (isExpandedBot) index to message.id else null
+    }.toMap()
+  }
+  val groupLongBubbleNavTarget by remember(scrollHintVisible, groupLongBubbleCandidates) {
     derivedStateOf {
       if (!scrollHintVisible) {
         null
       } else {
-        val visibleBotCandidates = listItems.mapIndexedNotNull { index, item ->
-          val message = (item as? GroupMessageListItem.Message)?.message ?: return@mapIndexedNotNull null
-          val isExpandedBot = message.senderType == GroupMessageSenderType.BOT &&
-            (message.status == MessageStatus.STREAMING || message.id == latestBotMessageId || message.id in expandedBotMessageIds)
-          if (isExpandedBot) index to message.id else null
-        }.toMap()
         lazyListLongBubbleNavTarget(
           visibleItems = listState.layoutInfo.visibleItemsInfo,
           viewportStart = listState.layoutInfo.viewportStartOffset,
           viewportEnd = listState.layoutInfo.viewportEndOffset,
-          candidates = visibleBotCandidates
+          candidates = groupLongBubbleCandidates
         )
       }
     }
   }
 
   LaunchedEffect(listState, groupId) {
-    snapshotFlow { listState.isScrollInProgress to listState.isAtBottom() }
-      .collect { (scrolling, atBottom) ->
+    snapshotFlow { listState.isScrollInProgress }
+      .distinctUntilChanged()
+      .collect { scrolling ->
         if (scrolling) scrollHintVisible = true
-        if (scrolling && !atBottom) autoFollow = false
-        if (atBottom) autoFollow = true
+        if (scrolling && !listState.isAtBottom()) autoFollow = false
+        if (!scrolling && listState.isAtBottom()) autoFollow = true
       }
   }
 
@@ -3044,13 +2989,14 @@ private fun lazyListLongBubbleNavTarget(
   viewportEnd: Int,
   candidates: Map<Int, String>
 ): LongBubbleNavTarget? = longBubbleNavTarget(
-  visibleItems = visibleItems.map { item ->
+  visibleItems = visibleItems.mapNotNull { item ->
+    val messageId = candidates[item.index] ?: return@mapNotNull null
     VisibleListItemBounds(
       index = item.index,
       offset = item.offset,
       size = item.size,
-      messageId = candidates[item.index],
-      supportsActions = candidates.containsKey(item.index)
+      messageId = messageId,
+      supportsActions = true
     )
   },
   viewportStart = viewportStart,
@@ -4552,30 +4498,33 @@ private fun MessageList(
       lastItem > 0 && lastVisible < lastItem - 1
     }
   }
-  val messageLongBubbleNavTarget by remember(scrollHintVisible, listItems) {
+  val messageLongBubbleCandidates = remember(listItems) {
+    listItems.mapIndexedNotNull { index, item ->
+      val message = (item as? ChatMessageListItem.Message)?.message ?: return@mapIndexedNotNull null
+      if (message.role == MessageRole.ASSISTANT) index to message.id else null
+    }.toMap()
+  }
+  val messageLongBubbleNavTarget by remember(scrollHintVisible, messageLongBubbleCandidates) {
     derivedStateOf {
       if (!scrollHintVisible) {
         null
       } else {
-        val assistantCandidates = listItems.mapIndexedNotNull { index, item ->
-          val message = (item as? ChatMessageListItem.Message)?.message ?: return@mapIndexedNotNull null
-          if (message.role == MessageRole.ASSISTANT) index to message.id else null
-        }.toMap()
         lazyListLongBubbleNavTarget(
           visibleItems = listState.layoutInfo.visibleItemsInfo,
           viewportStart = listState.layoutInfo.viewportStartOffset,
           viewportEnd = listState.layoutInfo.viewportEndOffset,
-          candidates = assistantCandidates
+          candidates = messageLongBubbleCandidates
         )
       }
     }
   }
   LaunchedEffect(listState, state.selectedConversationId) {
-    snapshotFlow { listState.isScrollInProgress to listState.isAtBottom() }
-      .collect { (scrolling, atBottom) ->
+    snapshotFlow { listState.isScrollInProgress }
+      .distinctUntilChanged()
+      .collect { scrolling ->
         if (scrolling) scrollHintVisible = true
-        if (scrolling && !atBottom) autoFollow = false
-        if (atBottom) autoFollow = true
+        if (scrolling && !listState.isAtBottom()) autoFollow = false
+        if (!scrolling && listState.isAtBottom()) autoFollow = true
       }
   }
   LaunchedEffect(scrollHintVisible, listState.isScrollInProgress, longBubbleActionsExpanded) {
