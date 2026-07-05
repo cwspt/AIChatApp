@@ -2909,7 +2909,7 @@ private fun GroupMessageList(
     val rangeTargetId = visibleRangeTargetId
     if (rangeTargetId != null) {
       FloatingActionPill(
-        label = "选择到这里",
+        label = "选择到此",
         icon = { Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp)) },
         onClick = { onSelectRangeTo(rangeTargetId) },
         modifier = Modifier
@@ -4676,7 +4676,7 @@ private fun MessageList(
     val rangeTargetId = visibleRangeTargetId
     if (rangeTargetId != null) {
       FloatingActionPill(
-        label = "选择到这里",
+        label = "选择到此",
         icon = { Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp)) },
         onClick = { onSelectRangeTo(rangeTargetId) },
         modifier = Modifier
