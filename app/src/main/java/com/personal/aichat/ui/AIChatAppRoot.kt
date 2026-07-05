@@ -2908,16 +2908,14 @@ private fun GroupMessageList(
     }
     val rangeTargetId = visibleRangeTargetId
     if (rangeTargetId != null) {
-      Button(
+      FloatingActionPill(
+        label = "选择到这里",
+        icon = { Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp)) },
         onClick = { onSelectRangeTo(rangeTargetId) },
         modifier = Modifier
           .align(Alignment.TopStart)
           .padding(start = 18.dp, top = 8.dp)
-      ) {
-        Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(6.dp))
-        Text("选择到这里")
-      }
+      )
     }
     MessageScrollIndicator(
       listState = listState,
@@ -2939,7 +2937,9 @@ private fun GroupMessageList(
         .padding(end = 4.dp)
     )
     if (showScrollToBottom && scrollHintVisible) {
-      Button(
+      FloatingActionPill(
+        label = "回到底部",
+        icon = { Icon(Icons.Outlined.ArrowDownward, contentDescription = null, modifier = Modifier.size(18.dp)) },
         onClick = {
           scope.launch {
             val last = listState.layoutInfo.totalItemsCount - 1
@@ -2952,11 +2952,7 @@ private fun GroupMessageList(
         modifier = Modifier
           .align(Alignment.BottomCenter)
           .padding(bottom = 12.dp)
-      ) {
-        Icon(Icons.Outlined.ArrowDownward, contentDescription = null, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(6.dp))
-        Text("回到底部")
-      }
+      )
     }
     LongBubbleNavOverlay(
       target = groupLongBubbleNavTarget,
@@ -3012,6 +3008,40 @@ private fun lazyListLongBubbleNavTarget(
   viewportEnd = viewportEnd,
   candidateIndexes = candidates.keys
 )
+
+@Composable
+private fun FloatingActionPill(
+  label: String,
+  icon: @Composable () -> Unit,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val shape = RoundedCornerShape(999.dp)
+  Surface(
+    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.94f),
+    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    shape = shape,
+    tonalElevation = 1.dp,
+    modifier = modifier
+      .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+      .clickable(onClick = onClick)
+      .defaultMinSize(minHeight = 34.dp)
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+      icon()
+      Text(
+        text = label,
+        style = MaterialTheme.typography.labelMedium,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+      )
+    }
+  }
+}
 
 @Composable
 private fun LongBubbleNavOverlay(
@@ -4624,16 +4654,14 @@ private fun MessageList(
     }
     val rangeTargetId = visibleRangeTargetId
     if (rangeTargetId != null) {
-      Button(
+      FloatingActionPill(
+        label = "选择到这里",
+        icon = { Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp)) },
         onClick = { onSelectRangeTo(rangeTargetId) },
         modifier = Modifier
           .align(Alignment.TopStart)
           .padding(start = 18.dp, top = 8.dp)
-      ) {
-        Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(6.dp))
-        Text("选择到这里")
-      }
+      )
     }
     MessageScrollIndicator(
       listState = listState,
@@ -4654,7 +4682,9 @@ private fun MessageList(
         .padding(end = 4.dp)
     )
     if (showScrollToBottom && scrollHintVisible) {
-      Button(
+      FloatingActionPill(
+        label = "回到底部",
+        icon = { Icon(Icons.Outlined.ArrowDownward, contentDescription = null, modifier = Modifier.size(18.dp)) },
         onClick = {
           scope.launch {
             val last = listState.layoutInfo.totalItemsCount - 1
@@ -4663,12 +4693,8 @@ private fun MessageList(
         },
         modifier = Modifier
           .align(Alignment.BottomCenter)
-        .padding(bottom = 12.dp)
-      ) {
-        Icon(Icons.Outlined.ArrowDownward, contentDescription = null, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(6.dp))
-        Text("回到底部")
-      }
+          .padding(bottom = 12.dp)
+      )
     }
     LongBubbleNavOverlay(
       target = messageLongBubbleNavTarget,
