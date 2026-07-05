@@ -8,8 +8,9 @@
 - Done: long-bubble side navigation targets now update through `snapshotFlow` for single-chat and group-chat lists, so scrolling only mutates Compose state when the actual jump target changes.
 - Done: selection-mode "select to here" targets and scroll-indicator visibility now use cached/snapshotFlow-driven list state, removing the remaining direct scroll-state reads from chat list composition.
 - Done: floating "select to here" and "back to bottom" controls now use compact pill styling in single-chat and group-chat lists, reducing content occlusion on narrow screens while keeping text labels visible.
+- Done: context-capacity metadata now uses a shorter phone-friendly label such as `上下文 62% · 49.1k 余`, keeping the top metadata strip easier to scan on narrow screens.
 - In Progress: `NEXT-P1-007` is now tracking the remaining scroll-jank investigation on the connected test device after the scroll-indicator hot-path reduction.
-- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and focused long-bubble navigation unit tests passed after the scroll hot-path optimization and chat action bar split; the debug APK was also reinstalled on `127.0.0.1:5555`, launched successfully, and light scroll samples showed 0 modern janky frames / 0 slow UI-thread or draw-command frames after both the scroll hot-path and compact floating-control updates.
+- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, focused long-bubble navigation tests, and the compact context-capacity label test passed after the scroll hot-path optimization and chat action bar split; the debug APK was also reinstalled on `127.0.0.1:5555`, launched successfully, and light scroll samples showed 0 modern janky frames / 0 slow UI-thread or draw-command frames after the scroll hot-path, compact floating-control, and compact context-label updates.
 
 ## 2026-06-02 Local Update Summary
 

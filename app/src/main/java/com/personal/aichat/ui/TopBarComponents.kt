@@ -486,9 +486,20 @@ private fun ConversationOverflowMenu(
 
 private fun formatContextCapacity(capacity: ContextCapacity?): String? {
   if (capacity == null) return null
+  return contextCapacityCompactLabel(capacity)
+}
+
+internal fun contextCapacityCompactLabel(capacity: ContextCapacity): String {
   val percent = capacity.usedPercent
-  if (percent == null || capacity.windowTokens == null) return "上下文上限未知"
+  if (percent == null || capacity.windowTokens == null) return "上下文未知"
   val remaining = capacity.remainingTokens ?: 0
   val summary = if (capacity.hasSummary) " · 已压缩" else ""
-  return "约 $percent% · 剩余约 ${formatTokenCount(remaining)} tokens$summary"
+  return "上下文 $percent% · ${formatCompactTokenCount(remaining)} 余$summary"
+}
+
+private fun formatCompactTokenCount(value: Int): String {
+  val formatted = formatTokenCount(value)
+  return formatted
+    .replace(".0M", "M")
+    .replace(".0k", "k")
 }

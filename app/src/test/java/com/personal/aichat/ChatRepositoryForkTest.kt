@@ -25,6 +25,8 @@ import com.personal.aichat.domain.ChatConversation
 import com.personal.aichat.domain.ChatMessage
 import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ChatStreamEvent
+import com.personal.aichat.domain.ContextCapacity
+import com.personal.aichat.domain.ContextCapacityStatus
 import com.personal.aichat.domain.AiBot
 import com.personal.aichat.domain.GroupChatMessage
 import com.personal.aichat.domain.GroupChatRoom
@@ -51,6 +53,7 @@ import com.personal.aichat.ui.botAvatarLabel
 import com.personal.aichat.ui.botIdentityCode
 import com.personal.aichat.ui.chatMessageListItems
 import com.personal.aichat.ui.conversationForkSourceLabel
+import com.personal.aichat.ui.contextCapacityCompactLabel
 import com.personal.aichat.ui.groupMessageListItems
 import com.personal.aichat.ui.groupSummaryRefreshHint
 import com.personal.aichat.ui.longBubbleNavTarget
@@ -193,6 +196,52 @@ class ChatRepositoryForkTest {
 
     assertEquals(4096, capacity?.windowTokens)
     assertNotNull(capacity?.usedPercent)
+  }
+
+  @Test
+  fun contextCapacityCompactLabelFitsPhoneMetadataStrip() {
+    assertEquals(
+      "上下文未知",
+      contextCapacityCompactLabel(
+        ContextCapacity(
+          windowTokens = null,
+          usedTokens = 1200,
+          reservedOutputTokens = 2048,
+          remainingTokens = null,
+          usedPercent = null,
+          status = ContextCapacityStatus.UNKNOWN,
+          hasSummary = false
+        )
+      )
+    )
+    assertEquals(
+      "上下文 62% · 49.1k 余",
+      contextCapacityCompactLabel(
+        ContextCapacity(
+          windowTokens = 128_000,
+          usedTokens = 78_900,
+          reservedOutputTokens = 4096,
+          remainingTokens = 49_100,
+          usedPercent = 62,
+          status = ContextCapacityStatus.OK,
+          hasSummary = false
+        )
+      )
+    )
+    assertEquals(
+      "上下文 88% · 8k 余 · 已压缩",
+      contextCapacityCompactLabel(
+        ContextCapacity(
+          windowTokens = 64_000,
+          usedTokens = 56_000,
+          reservedOutputTokens = 4096,
+          remainingTokens = 8_000,
+          usedPercent = 88,
+          status = ContextCapacityStatus.CRITICAL,
+          hasSummary = true
+        )
+      )
+    )
   }
 
   @Test
