@@ -11,8 +11,9 @@
 - Done: context-capacity metadata now uses a shorter phone-friendly label such as `上下文 62% · 49.1k 余`, keeping the top metadata strip easier to scan on narrow screens.
 - Done: each top metadata pill now caps long provider/model/topic text with ellipsis, so one very long label no longer dominates the horizontal strip on phones.
 - Done: tool-call cards now use a compact `选择到此` chip in selection mode, reducing action-row crowding while keeping range selection discoverable.
+- Done: single-chat and group-chat message bubbles now use the same compact `选择到此` chip in selection mode, making range selection less bulky across all bubble types.
 - In Progress: `NEXT-P1-007` is now tracking the remaining scroll-jank investigation on the connected test device after the scroll-indicator hot-path reduction.
-- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, focused long-bubble navigation tests, compact context-capacity label tests, and tool-call visual-kind tests passed after the scroll hot-path optimization and chat action bar split; the debug APK was also reinstalled on `127.0.0.1:5555`, launched successfully, and light scroll samples showed 0 modern janky frames / 0 slow UI-thread or draw-command frames after the scroll hot-path, compact floating-control, compact context-label, capped metadata-pill, and compact tool-card selection updates.
+- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, focused long-bubble navigation tests, compact context-capacity label tests, and tool-call visual-kind tests passed after the scroll hot-path optimization and chat action bar split; the debug APK was also reinstalled on `127.0.0.1:5555`, launched successfully, and light scroll samples showed 0 modern janky frames / 0 slow UI-thread or draw-command frames after the scroll hot-path, compact floating-control, compact context-label, capped metadata-pill, compact tool-card selection, and compact message-bubble selection updates.
 
 ## 2026-06-02 Local Update Summary
 

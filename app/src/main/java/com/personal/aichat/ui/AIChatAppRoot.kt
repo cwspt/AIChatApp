@@ -3044,6 +3044,31 @@ private fun FloatingActionPill(
 }
 
 @Composable
+private fun SelectRangeToInlineChip(
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val shape = RoundedCornerShape(999.dp)
+  Surface(
+    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
+    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    shape = shape,
+    modifier = modifier
+      .defaultMinSize(minHeight = 30.dp)
+      .clickable(onClick = onClick)
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+      Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(16.dp))
+      Text("选择到此", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+    }
+  }
+}
+
+@Composable
 private fun LongBubbleNavOverlay(
   target: LongBubbleNavTarget?,
   onJumpTop: (LongBubbleNavTarget) -> Unit,
@@ -3368,11 +3393,7 @@ private fun GroupMessageBubble(
           Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = selected, onCheckedChange = { onToggleSelected() })
             if (canSelectRangeTo) {
-              TextButton(onClick = onSelectRangeTo) {
-                Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("选择到这里")
-              }
+              SelectRangeToInlineChip(onClick = onSelectRangeTo)
             }
           }
         }
@@ -4962,11 +4983,7 @@ private fun MessageBubble(
               onCheckedChange = { onToggleSelected() }
             )
             if (canSelectRangeTo) {
-              TextButton(onClick = onSelectRangeTo) {
-                Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("选择到这里")
-              }
+              SelectRangeToInlineChip(onClick = onSelectRangeTo)
             }
           }
           IconButton(
