@@ -2736,6 +2736,8 @@ private fun GroupMessageList(
   val hasStreaming = messages.any { it.status == MessageStatus.STREAMING }
   var lastAutoFollowAt by remember(groupId) { mutableStateOf(0L) }
   var scrollHintVisible by remember(groupId) { mutableStateOf(false) }
+  var showScrollToBottom by remember(groupId) { mutableStateOf(false) }
+  var groupLongBubbleNavTarget by remember(groupId) { mutableStateOf<LongBubbleNavTarget?>(null) }
   var longBubbleActionsExpanded by remember(groupId) { mutableStateOf(false) }
   val latestBotMessageId = messages.lastOrNull { it.senderType == GroupMessageSenderType.BOT }?.id
   val botsById = remember(bots) { bots.associateBy { it.id } }
@@ -2753,13 +2755,6 @@ private fun GroupMessageList(
       }
     }
   }
-  val showScrollToBottom by remember(messages.size) {
-    derivedStateOf {
-      val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-      val lastItem = listState.layoutInfo.totalItemsCount - 1
-      lastItem > 0 && lastVisible < lastItem - 1
-    }
-  }
   val groupLongBubbleCandidates = remember(listItems, expandedBotMessageIds, latestBotMessageId) {
     listItems.mapIndexedNotNull { index, item ->
       val message = (item as? GroupMessageListItem.Message)?.message ?: return@mapIndexedNotNull null
@@ -2768,21 +2763,6 @@ private fun GroupMessageList(
       if (isExpandedBot) index to message.id else null
     }.toMap()
   }
-  val groupLongBubbleNavTarget by remember(scrollHintVisible, groupLongBubbleCandidates) {
-    derivedStateOf {
-      if (!scrollHintVisible) {
-        null
-      } else {
-        lazyListLongBubbleNavTarget(
-          visibleItems = listState.layoutInfo.visibleItemsInfo,
-          viewportStart = listState.layoutInfo.viewportStartOffset,
-          viewportEnd = listState.layoutInfo.viewportEndOffset,
-          candidates = groupLongBubbleCandidates
-        )
-      }
-    }
-  }
-
   LaunchedEffect(listState, groupId) {
     snapshotFlow { listState.isScrollInProgress }
       .distinctUntilChanged()
@@ -2791,6 +2771,29 @@ private fun GroupMessageList(
         if (scrolling && !listState.isAtBottom()) autoFollow = false
         if (!scrolling && listState.isAtBottom()) autoFollow = true
       }
+  }
+
+  LaunchedEffect(listState, groupId, listItems.size) {
+    snapshotFlow { listState.shouldShowScrollToBottom() }
+      .distinctUntilChanged()
+      .collect { showScrollToBottom = it }
+  }
+
+  LaunchedEffect(listState, groupId, scrollHintVisible, groupLongBubbleCandidates) {
+    if (!scrollHintVisible || groupLongBubbleCandidates.isEmpty()) {
+      groupLongBubbleNavTarget = null
+      return@LaunchedEffect
+    }
+    snapshotFlow {
+      lazyListLongBubbleNavTarget(
+        visibleItems = listState.layoutInfo.visibleItemsInfo,
+        viewportStart = listState.layoutInfo.viewportStartOffset,
+        viewportEnd = listState.layoutInfo.viewportEndOffset,
+        candidates = groupLongBubbleCandidates
+      )
+    }
+      .distinctUntilChanged()
+      .collect { groupLongBubbleNavTarget = it }
   }
 
   LaunchedEffect(scrollHintVisible, listState.isScrollInProgress, longBubbleActionsExpanded) {
@@ -2913,6 +2916,7 @@ private fun GroupMessageList(
     }
     MessageScrollIndicator(
       listState = listState,
+      visible = scrollHintVisible || listState.isScrollInProgress,
       onDragProgress = { progress ->
         autoFollow = false
         scrollHintVisible = true
@@ -4478,6 +4482,8 @@ private fun MessageList(
   val bottomAnchorIndex = listItems.size
   var lastAutoFollowAt by remember(state.selectedConversationId) { mutableStateOf(0L) }
   var scrollHintVisible by remember(state.selectedConversationId) { mutableStateOf(false) }
+  var showScrollToBottom by remember(state.selectedConversationId) { mutableStateOf(false) }
+  var messageLongBubbleNavTarget by remember(state.selectedConversationId) { mutableStateOf<LongBubbleNavTarget?>(null) }
   var longBubbleActionsExpanded by remember(state.selectedConversationId) { mutableStateOf(false) }
   val visibleRangeTargetId by remember(selectionMode, selectedMessageIds, listItems) {
     derivedStateOf {
@@ -4491,32 +4497,11 @@ private fun MessageList(
       }
     }
   }
-  val showScrollToBottom by remember(messages.size) {
-    derivedStateOf {
-      val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-      val lastItem = listState.layoutInfo.totalItemsCount - 1
-      lastItem > 0 && lastVisible < lastItem - 1
-    }
-  }
   val messageLongBubbleCandidates = remember(listItems) {
     listItems.mapIndexedNotNull { index, item ->
       val message = (item as? ChatMessageListItem.Message)?.message ?: return@mapIndexedNotNull null
       if (message.role == MessageRole.ASSISTANT) index to message.id else null
     }.toMap()
-  }
-  val messageLongBubbleNavTarget by remember(scrollHintVisible, messageLongBubbleCandidates) {
-    derivedStateOf {
-      if (!scrollHintVisible) {
-        null
-      } else {
-        lazyListLongBubbleNavTarget(
-          visibleItems = listState.layoutInfo.visibleItemsInfo,
-          viewportStart = listState.layoutInfo.viewportStartOffset,
-          viewportEnd = listState.layoutInfo.viewportEndOffset,
-          candidates = messageLongBubbleCandidates
-        )
-      }
-    }
   }
   LaunchedEffect(listState, state.selectedConversationId) {
     snapshotFlow { listState.isScrollInProgress }
@@ -4526,6 +4511,27 @@ private fun MessageList(
         if (scrolling && !listState.isAtBottom()) autoFollow = false
         if (!scrolling && listState.isAtBottom()) autoFollow = true
       }
+  }
+  LaunchedEffect(listState, state.selectedConversationId, listItems.size) {
+    snapshotFlow { listState.shouldShowScrollToBottom() }
+      .distinctUntilChanged()
+      .collect { showScrollToBottom = it }
+  }
+  LaunchedEffect(listState, state.selectedConversationId, scrollHintVisible, messageLongBubbleCandidates) {
+    if (!scrollHintVisible || messageLongBubbleCandidates.isEmpty()) {
+      messageLongBubbleNavTarget = null
+      return@LaunchedEffect
+    }
+    snapshotFlow {
+      lazyListLongBubbleNavTarget(
+        visibleItems = listState.layoutInfo.visibleItemsInfo,
+        viewportStart = listState.layoutInfo.viewportStartOffset,
+        viewportEnd = listState.layoutInfo.viewportEndOffset,
+        candidates = messageLongBubbleCandidates
+      )
+    }
+      .distinctUntilChanged()
+      .collect { messageLongBubbleNavTarget = it }
   }
   LaunchedEffect(scrollHintVisible, listState.isScrollInProgress, longBubbleActionsExpanded) {
     if (scrollHintVisible && !listState.isScrollInProgress && !longBubbleActionsExpanded) {
@@ -4621,6 +4627,7 @@ private fun MessageList(
     }
     MessageScrollIndicator(
       listState = listState,
+      visible = scrollHintVisible || listState.isScrollInProgress,
       onDragProgress = { progress ->
         scrollHintVisible = true
         scope.launch {

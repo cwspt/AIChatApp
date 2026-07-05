@@ -7,6 +7,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
@@ -20,10 +23,15 @@ import kotlin.math.roundToInt
 internal fun MessageScrollIndicator(
   listState: LazyListState,
   onDragProgress: (Float) -> Unit,
-  modifier: Modifier = Modifier
+  modifier: Modifier = Modifier,
+  visible: Boolean = true
 ) {
+  if (!visible) return
   val trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f)
   val thumbColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.72f)
+  val metrics by remember(listState) {
+    derivedStateOf { listState.scrollbarMetrics() }
+  }
   Box(
     modifier = modifier
       .width(5.dp)
@@ -36,11 +44,11 @@ internal fun MessageScrollIndicator(
       }
       .drawWithContent {
         drawContent()
-        val metrics = listState.scrollbarMetrics() ?: return@drawWithContent
+        val currentMetrics = metrics ?: return@drawWithContent
         val radius = size.width / 2f
         val thumbHeightPx = 38.dp.toPx().coerceAtMost(size.height)
         val travel = (size.height - thumbHeightPx).coerceAtLeast(0f)
-        val thumbTop = travel * metrics.progress
+        val thumbTop = travel * currentMetrics.progress
         drawRoundRect(
           color = trackColor,
           topLeft = Offset.Zero,
@@ -79,6 +87,12 @@ internal fun LazyListState.itemIndexForProgress(progress: Float): Int {
   val total = layoutInfo.totalItemsCount
   if (total <= 0) return 0
   return (progress.coerceIn(0f, 1f) * (total - 1)).roundToInt()
+}
+
+internal fun LazyListState.shouldShowScrollToBottom(extraItemThreshold: Int = 1): Boolean {
+  val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return false
+  val lastItem = layoutInfo.totalItemsCount - 1
+  return lastItem > 0 && lastVisible < lastItem - extraItemThreshold
 }
 
 private fun LazyListState.canScroll(): Boolean {

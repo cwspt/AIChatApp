@@ -3,7 +3,10 @@
 ## 2026-06-03 Local Update Summary
 
 - Done: Single-chat/group-chat long-bubble floating action candidates are now precomputed when list items change instead of being rebuilt from the full message list during scroll; the helper also converts only visible candidate items before calculating the overlay target, and scroll auto-follow now observes only scroll start/end instead of reading bottom state on every scroll frame.
-- In Progress: `NEXT-P1-007` is now tracking the remaining scroll-jank investigation, especially whether the self-drawn scroll indicator still contributes to frame drops on device.
+- Done: the self-drawn message scroll indicator now only composes while scroll hints are visible and precomputes scrollbar metrics outside the draw block, reducing LazyList layout reads during every draw pass.
+- Done: the single-chat and group-chat "back to bottom" visibility check now runs through `snapshotFlow` and only updates Compose state when the boolean changes, instead of reading LazyList layout info from composition on every scroll frame.
+- Done: long-bubble side navigation targets now update through `snapshotFlow` for single-chat and group-chat lists, so scrolling only mutates Compose state when the actual jump target changes.
+- In Progress: `NEXT-P1-007` is now tracking the remaining scroll-jank investigation on the connected test device after the scroll-indicator hot-path reduction.
 - Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and focused long-bubble navigation unit tests passed after the scroll hot-path optimization and chat action bar split.
 
 ## 2026-06-02 Local Update Summary
@@ -372,7 +375,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-004 | 搜索工具卡片细节优化 | Done | 工具卡片展开后优先显示查询词、打开 URL 和 citation URL，再保留原始输入/输出用于排查 |
 | NEXT-P1-005 | 真实 GPT Key 验证图片 + PDF 输入 | Planned | 真机选择图片/PDF 后 GPT 能正确识别内容 |
 | NEXT-P1-006 | 真实 DeepSeek Key 回归验证附件按钮隐藏 | Planned | DeepSeek 对话无附件按钮，纯文本/搜索功能正常 |
-| NEXT-P1-007 | 滚动卡顿专项优化 | In Progress | 已先将单聊/群聊长气泡右侧浮动按钮候选计算移出滚动热路径，减少可见项 bounds 分配，并让自动跟随只在滚动开始/结束时检查是否到底；继续排查自绘滚动条和真机帧率表现 |
+| NEXT-P1-007 | 滚动卡顿专项优化 | In Progress | 已将单聊/群聊长气泡右侧浮动按钮候选计算移出滚动热路径，减少可见项 bounds 分配，让自动跟随只在滚动开始/结束时检查是否到底；自绘滚动条现在仅在提示可见时组成，并把滚动指标计算移出 draw block；回到底部按钮显隐和长气泡侧边跳转目标均改为 snapshotFlow 变化驱动，继续在真机观察帧率表现 |
 | NEXT-P1-008 | provider 错误提示进一步中文化 | Done | 400/401/403/404/429、quota/billing、DNS、SSL、超时、Base URL 和 5xx 上游异常均给出更清晰的中文处理建议 |
 | NEXT-P1-009 | 收藏夹标签管理 | Done | 收藏夹标签管理弹窗已支持重命名、合并到已有标签和删除标签，收藏内容不受影响 |
 | NEXT-P1-010 | 收藏导入导出 | Done | 收藏夹支持全量 JSON 导出/导入恢复，并支持 Markdown 导出归档 |
