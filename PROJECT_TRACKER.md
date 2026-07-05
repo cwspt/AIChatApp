@@ -10,8 +10,9 @@
 - Done: floating "select to here" and "back to bottom" controls now use compact pill styling in single-chat and group-chat lists, reducing content occlusion on narrow screens while keeping text labels visible.
 - Done: context-capacity metadata now uses a shorter phone-friendly label such as `上下文 62% · 49.1k 余`, keeping the top metadata strip easier to scan on narrow screens.
 - Done: each top metadata pill now caps long provider/model/topic text with ellipsis, so one very long label no longer dominates the horizontal strip on phones.
+- Done: tool-call cards now use a compact `选择到此` chip in selection mode, reducing action-row crowding while keeping range selection discoverable.
 - In Progress: `NEXT-P1-007` is now tracking the remaining scroll-jank investigation on the connected test device after the scroll-indicator hot-path reduction.
-- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, focused long-bubble navigation tests, and the compact context-capacity label test passed after the scroll hot-path optimization and chat action bar split; the debug APK was also reinstalled on `127.0.0.1:5555`, launched successfully, and light scroll samples showed 0 modern janky frames / 0 slow UI-thread or draw-command frames after the scroll hot-path, compact floating-control, compact context-label, and capped metadata-pill updates.
+- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, focused long-bubble navigation tests, compact context-capacity label tests, and tool-call visual-kind tests passed after the scroll hot-path optimization and chat action bar split; the debug APK was also reinstalled on `127.0.0.1:5555`, launched successfully, and light scroll samples showed 0 modern janky frames / 0 slow UI-thread or draw-command frames after the scroll hot-path, compact floating-control, compact context-label, capped metadata-pill, and compact tool-card selection updates.
 
 ## 2026-06-02 Local Update Summary
 

@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -37,7 +38,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -259,11 +259,7 @@ internal fun ToolCallGroupBubble(
               Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = selected, onCheckedChange = { onToggleSelected() })
                 if (canSelectRangeTo) {
-                  TextButton(onClick = onSelectRangeTo) {
-                    Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("选择到这里")
-                  }
+                  SelectRangeToChip(onClick = onSelectRangeTo)
                 }
               }
             }
@@ -361,6 +357,31 @@ internal fun CompactExpandToggle(
 }
 
 @Composable
+private fun SelectRangeToChip(
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val shape = RoundedCornerShape(999.dp)
+  Surface(
+    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
+    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    shape = shape,
+    modifier = modifier
+      .defaultMinSize(minHeight = 30.dp)
+      .clickable(onClick = onClick)
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+      Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(16.dp))
+      Text("选择到此", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+    }
+  }
+}
+
+@Composable
 internal fun ToolCallItem(
   message: ChatMessage,
   selected: Boolean,
@@ -445,11 +466,7 @@ internal fun ToolCallItem(
             if (selectionMode) {
               Checkbox(checked = selected, onCheckedChange = { onToggleSelected() })
               if (canSelectRangeTo) {
-                TextButton(onClick = onSelectRangeTo) {
-                  Icon(Icons.Outlined.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
-                  Spacer(Modifier.width(4.dp))
-                  Text("选择到这里")
-                }
+                SelectRangeToChip(onClick = onSelectRangeTo)
               }
             }
             IconButton(onClick = onCopy, modifier = Modifier.size(32.dp)) {
