@@ -115,7 +115,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -2736,6 +2735,7 @@ private fun GroupMessageList(
   val hasStreaming = messages.any { it.status == MessageStatus.STREAMING }
   var lastAutoFollowAt by remember(groupId) { mutableStateOf(0L) }
   var scrollHintVisible by remember(groupId) { mutableStateOf(false) }
+  var isListScrolling by remember(groupId) { mutableStateOf(false) }
   var showScrollToBottom by remember(groupId) { mutableStateOf(false) }
   var groupLongBubbleNavTarget by remember(groupId) { mutableStateOf<LongBubbleNavTarget?>(null) }
   var longBubbleActionsExpanded by remember(groupId) { mutableStateOf(false) }
@@ -2743,18 +2743,7 @@ private fun GroupMessageList(
   val botsById = remember(bots) { bots.associateBy { it.id } }
   val listItems = remember(messages) { groupMessageListItems(messages) }
   val bottomAnchorIndex = listItems.size
-  val visibleRangeTargetId by remember(selectionMode, selectedMessageIds, messages) {
-    derivedStateOf {
-      if (!selectionMode || selectedMessageIds.isEmpty()) {
-        null
-      } else {
-        listState.layoutInfo.visibleItemsInfo
-          .mapNotNull { item -> listItems.getOrNull(item.index) }
-          .flatMap { it.messageIds }
-          .firstOrNull { it !in selectedMessageIds }
-      }
-    }
-  }
+  var visibleRangeTargetId by remember(groupId) { mutableStateOf<String?>(null) }
   val groupLongBubbleCandidates = remember(listItems, expandedBotMessageIds, latestBotMessageId) {
     listItems.mapIndexedNotNull { index, item ->
       val message = (item as? GroupMessageListItem.Message)?.message ?: return@mapIndexedNotNull null
@@ -2767,10 +2756,26 @@ private fun GroupMessageList(
     snapshotFlow { listState.isScrollInProgress }
       .distinctUntilChanged()
       .collect { scrolling ->
+        isListScrolling = scrolling
         if (scrolling) scrollHintVisible = true
         if (scrolling && !listState.isAtBottom()) autoFollow = false
         if (!scrolling && listState.isAtBottom()) autoFollow = true
       }
+  }
+
+  LaunchedEffect(listState, groupId, selectionMode, selectedMessageIds, listItems) {
+    if (!selectionMode || selectedMessageIds.isEmpty()) {
+      visibleRangeTargetId = null
+      return@LaunchedEffect
+    }
+    snapshotFlow {
+      listState.layoutInfo.visibleItemsInfo
+        .mapNotNull { item -> listItems.getOrNull(item.index) }
+        .flatMap { it.messageIds }
+        .firstOrNull { it !in selectedMessageIds }
+    }
+      .distinctUntilChanged()
+      .collect { visibleRangeTargetId = it }
   }
 
   LaunchedEffect(listState, groupId, listItems.size) {
@@ -2796,10 +2801,10 @@ private fun GroupMessageList(
       .collect { groupLongBubbleNavTarget = it }
   }
 
-  LaunchedEffect(scrollHintVisible, listState.isScrollInProgress, longBubbleActionsExpanded) {
-    if (scrollHintVisible && !listState.isScrollInProgress && !longBubbleActionsExpanded) {
+  LaunchedEffect(scrollHintVisible, isListScrolling, longBubbleActionsExpanded) {
+    if (scrollHintVisible && !isListScrolling && !longBubbleActionsExpanded) {
       delay(2_500)
-      if (!listState.isScrollInProgress && !longBubbleActionsExpanded) scrollHintVisible = false
+      if (!isListScrolling && !longBubbleActionsExpanded) scrollHintVisible = false
     }
   }
 
@@ -2916,7 +2921,7 @@ private fun GroupMessageList(
     }
     MessageScrollIndicator(
       listState = listState,
-      visible = scrollHintVisible || listState.isScrollInProgress,
+      visible = scrollHintVisible || isListScrolling,
       onDragProgress = { progress ->
         autoFollow = false
         scrollHintVisible = true
@@ -4482,21 +4487,11 @@ private fun MessageList(
   val bottomAnchorIndex = listItems.size
   var lastAutoFollowAt by remember(state.selectedConversationId) { mutableStateOf(0L) }
   var scrollHintVisible by remember(state.selectedConversationId) { mutableStateOf(false) }
+  var isListScrolling by remember(state.selectedConversationId) { mutableStateOf(false) }
   var showScrollToBottom by remember(state.selectedConversationId) { mutableStateOf(false) }
   var messageLongBubbleNavTarget by remember(state.selectedConversationId) { mutableStateOf<LongBubbleNavTarget?>(null) }
   var longBubbleActionsExpanded by remember(state.selectedConversationId) { mutableStateOf(false) }
-  val visibleRangeTargetId by remember(selectionMode, selectedMessageIds, listItems) {
-    derivedStateOf {
-      if (!selectionMode || selectedMessageIds.isEmpty()) {
-        null
-      } else {
-        listState.layoutInfo.visibleItemsInfo
-          .mapNotNull { item -> listItems.getOrNull(item.index) }
-          .flatMap { it.messageIds }
-          .firstOrNull { it !in selectedMessageIds }
-      }
-    }
-  }
+  var visibleRangeTargetId by remember(state.selectedConversationId) { mutableStateOf<String?>(null) }
   val messageLongBubbleCandidates = remember(listItems) {
     listItems.mapIndexedNotNull { index, item ->
       val message = (item as? ChatMessageListItem.Message)?.message ?: return@mapIndexedNotNull null
@@ -4507,10 +4502,25 @@ private fun MessageList(
     snapshotFlow { listState.isScrollInProgress }
       .distinctUntilChanged()
       .collect { scrolling ->
+        isListScrolling = scrolling
         if (scrolling) scrollHintVisible = true
         if (scrolling && !listState.isAtBottom()) autoFollow = false
         if (!scrolling && listState.isAtBottom()) autoFollow = true
       }
+  }
+  LaunchedEffect(listState, state.selectedConversationId, selectionMode, selectedMessageIds, listItems) {
+    if (!selectionMode || selectedMessageIds.isEmpty()) {
+      visibleRangeTargetId = null
+      return@LaunchedEffect
+    }
+    snapshotFlow {
+      listState.layoutInfo.visibleItemsInfo
+        .mapNotNull { item -> listItems.getOrNull(item.index) }
+        .flatMap { it.messageIds }
+        .firstOrNull { it !in selectedMessageIds }
+    }
+      .distinctUntilChanged()
+      .collect { visibleRangeTargetId = it }
   }
   LaunchedEffect(listState, state.selectedConversationId, listItems.size) {
     snapshotFlow { listState.shouldShowScrollToBottom() }
@@ -4533,10 +4543,10 @@ private fun MessageList(
       .distinctUntilChanged()
       .collect { messageLongBubbleNavTarget = it }
   }
-  LaunchedEffect(scrollHintVisible, listState.isScrollInProgress, longBubbleActionsExpanded) {
-    if (scrollHintVisible && !listState.isScrollInProgress && !longBubbleActionsExpanded) {
+  LaunchedEffect(scrollHintVisible, isListScrolling, longBubbleActionsExpanded) {
+    if (scrollHintVisible && !isListScrolling && !longBubbleActionsExpanded) {
       delay(2_500)
-      if (!listState.isScrollInProgress && !longBubbleActionsExpanded) scrollHintVisible = false
+      if (!isListScrolling && !longBubbleActionsExpanded) scrollHintVisible = false
     }
   }
   LaunchedEffect(messages.size, messages.lastOrNull()?.content, hasStreaming, autoFollow) {
@@ -4627,7 +4637,7 @@ private fun MessageList(
     }
     MessageScrollIndicator(
       listState = listState,
-      visible = scrollHintVisible || listState.isScrollInProgress,
+      visible = scrollHintVisible || isListScrolling,
       onDragProgress = { progress ->
         scrollHintVisible = true
         scope.launch {

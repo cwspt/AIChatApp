@@ -6,8 +6,9 @@
 - Done: the self-drawn message scroll indicator now only composes while scroll hints are visible and precomputes scrollbar metrics outside the draw block, reducing LazyList layout reads during every draw pass.
 - Done: the single-chat and group-chat "back to bottom" visibility check now runs through `snapshotFlow` and only updates Compose state when the boolean changes, instead of reading LazyList layout info from composition on every scroll frame.
 - Done: long-bubble side navigation targets now update through `snapshotFlow` for single-chat and group-chat lists, so scrolling only mutates Compose state when the actual jump target changes.
+- Done: selection-mode "select to here" targets and scroll-indicator visibility now use cached/snapshotFlow-driven list state, removing the remaining direct scroll-state reads from chat list composition.
 - In Progress: `NEXT-P1-007` is now tracking the remaining scroll-jank investigation on the connected test device after the scroll-indicator hot-path reduction.
-- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and focused long-bubble navigation unit tests passed after the scroll hot-path optimization and chat action bar split.
+- Validation: `:app:compileDebugKotlin`, `:app:assembleDebug`, and focused long-bubble navigation unit tests passed after the scroll hot-path optimization and chat action bar split; the debug APK was also reinstalled on `127.0.0.1:5555`, launched successfully, and a light scroll sample showed 0 modern janky frames / 0 slow UI-thread or draw-command frames.
 
 ## 2026-06-02 Local Update Summary
 
