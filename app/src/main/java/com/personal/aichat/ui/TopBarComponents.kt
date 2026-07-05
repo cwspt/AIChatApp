@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -203,7 +204,10 @@ private fun TopMetadataPill(item: TopMetadataItem) {
       text = item.text,
       style = MaterialTheme.typography.bodySmall,
       maxLines = 1,
-      modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier
+        .widthIn(max = 220.dp)
+        .padding(horizontal = 8.dp, vertical = 4.dp)
     )
   }
 }
