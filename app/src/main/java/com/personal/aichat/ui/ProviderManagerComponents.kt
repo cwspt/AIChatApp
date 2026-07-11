@@ -59,8 +59,7 @@ internal fun ProviderManagerDialog(
       color = MaterialTheme.colorScheme.surface,
       modifier = Modifier
         .fillMaxWidth()
-        .heightIn(max = 680.dp)
-        .padding(18.dp)
+        .heightIn(min = 360.dp, max = 680.dp)
     ) {
       Column(modifier = Modifier.padding(18.dp)) {
         Text(
@@ -78,7 +77,7 @@ internal fun ProviderManagerDialog(
         Spacer(Modifier.height(12.dp))
         Column(
           modifier = Modifier
-            .weight(1f, fill = false)
+            .weight(1f)
             .verticalScroll(rememberScrollState()),
           verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
