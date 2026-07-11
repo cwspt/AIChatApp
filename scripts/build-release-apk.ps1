@@ -7,10 +7,10 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
-$env:JAVA_HOME = "D:\Projects\Personal\AndroidApps\.devtools\android\jdk\jdk-17.0.18+8"
-$env:ANDROID_HOME = "D:\Projects\Personal\AndroidApps\.devtools\android\sdk"
+$env:JAVA_HOME = "D:\Projects\Personal\.devtools\android\jdk\jdk-17.0.18+8"
+$env:ANDROID_HOME = "D:\Projects\Personal\.devtools\android\sdk"
 $env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
-$env:GRADLE_USER_HOME = "D:\Projects\Personal\AndroidApps\.gradle-user-home"
+$env:GRADLE_USER_HOME = "D:\Projects\Personal\.gradle-user-home"
 $env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\cmdline-tools\latest\bin;$env:Path"
 
 function Fail($message) {

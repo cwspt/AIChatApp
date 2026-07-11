@@ -5,6 +5,8 @@
 - Done: Single-chat/group-chat long-bubble floating action candidates are now precomputed when list items change instead of being rebuilt from the full message list during scroll; the helper also converts only visible candidate items before calculating the overlay target, and scroll auto-follow now observes only scroll start/end instead of reading bottom state on every scroll frame.
 - Done: the self-drawn message scroll indicator now only composes while scroll hints are visible and precomputes scrollbar metrics outside the draw block, reducing LazyList layout reads during every draw pass.
 - Done: the API configuration capability matrix is collapsed by default; when expanded, its table has its own capped vertical scroll area while the API configuration list keeps the remaining visible dialog height and scrolls independently.
+- Done: the signed-release PowerShell script and local build instructions now use this workspace's current JDK, Android SDK, and Gradle user-home paths after the development directory moved.
+- Validation: `scripts/build-release-apk.ps1` completed a signed release build with the corrected paths; `app-release.apk` was generated and `apksigner verify --verbose --print-certs` confirmed its v2 signature.
 - Done: the single-chat and group-chat "back to bottom" visibility check now runs through `snapshotFlow` and only updates Compose state when the boolean changes, instead of reading LazyList layout info from composition on every scroll frame.
 - Done: long-bubble side navigation targets now update through `snapshotFlow` for single-chat and group-chat lists, so scrolling only mutates Compose state when the actual jump target changes.
 - Done: selection-mode "select to here" targets and scroll-indicator visibility now use cached/snapshotFlow-driven list state, removing the remaining direct scroll-state reads from chat list composition.
@@ -423,8 +425,8 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 本机 Android 环境：
 
 ```powershell
-$env:JAVA_HOME='D:\Projects\Personal\AndroidApps\.devtools\android\jdk\jdk-17.0.18+8'
-$env:ANDROID_HOME='D:\Projects\Personal\AndroidApps\.devtools\android\sdk'
+$env:JAVA_HOME='D:\Projects\Personal\.devtools\android\jdk\jdk-17.0.18+8'
+$env:ANDROID_HOME='D:\Projects\Personal\.devtools\android\sdk'
 $env:ANDROID_SDK_ROOT=$env:ANDROID_HOME
 $env:Path="$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\cmdline-tools\latest\bin;$env:Path"
 ```
