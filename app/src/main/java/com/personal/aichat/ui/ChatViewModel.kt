@@ -2022,6 +2022,12 @@ class ChatViewModel(
     viewModelScope.launch {
       val result = repository.deleteProvider(providerId)
       if (!result.deleted) {
+        if (result.wouldLeaveNoProvider) {
+          localState.update {
+            it.copy(error = "至少保留一个 API 配置。请先新增或导入其他配置后再删除。")
+          }
+          return@launch
+        }
         val botNames = result.blockingBots.joinToString("、") { it.name }
         localState.update {
           it.copy(

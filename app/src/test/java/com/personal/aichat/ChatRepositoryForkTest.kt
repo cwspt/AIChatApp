@@ -77,6 +77,64 @@ import java.io.File
 
 class ChatRepositoryForkTest {
   @Test
+  fun bootstrapDefaultsDoesNotRestoreDeletedDefaultProvider() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore()
+    )
+
+    repository.bootstrapDefaults()
+    assertEquals(3, dao.providerCount())
+
+    val deleted = repository.deleteProvider("openai-responses")
+    assertTrue(deleted.deleted)
+    assertNull(dao.providerById("openai-responses"))
+
+    repository.bootstrapDefaults()
+
+    assertEquals(2, dao.providerCount())
+    assertNull(dao.providerById("openai-responses"))
+  }
+
+  @Test
+  fun bootstrapDefaultsDoesNotAddDefaultsWhenCustomProviderExists() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore()
+    )
+    dao.upsertProvider(provider("custom", "custom-model"))
+
+    repository.bootstrapDefaults()
+
+    assertEquals(1, dao.providerCount())
+    assertNull(dao.providerById("tokenhub-proxy"))
+    assertNull(dao.providerById("openai-responses"))
+    assertNull(dao.providerById("openai-compatible"))
+  }
+
+  @Test
+  fun deleteProviderDoesNotReplaceLastProviderWithDefault() = runTest {
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore()
+    )
+    dao.upsertProvider(provider("only-provider", "custom-model"))
+
+    val result = repository.deleteProvider("only-provider")
+
+    assertTrue(!result.deleted)
+    assertTrue(result.wouldLeaveNoProvider)
+    assertNotNull(dao.providerById("only-provider"))
+    assertNull(dao.providerById("tokenhub-proxy"))
+  }
+
+  @Test
   fun forkFromUserMessageCopiesContextAndAutoGeneratesWithTargetModel() = runTest {
     val dao = FakeChatDao()
     val selection = FakeSelectionStore()

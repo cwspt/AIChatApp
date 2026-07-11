@@ -176,7 +176,8 @@ private data class ProviderConfigExportItem(
 
 data class DeleteProviderResult(
   val deleted: Boolean,
-  val blockingBots: List<AiBot> = emptyList()
+  val blockingBots: List<AiBot> = emptyList(),
+  val wouldLeaveNoProvider: Boolean = false
 )
 
 private data class FavoriteSnippetsExportPayload(
@@ -822,11 +823,9 @@ class ChatRepository(
   }
 
   suspend fun bootstrapDefaults() {
-    val existing = dao.observeProviders().first().map { it.id }.toSet()
+    if (dao.providerCount() > 0) return
     defaultProviders().forEach { provider ->
-      if (provider.id !in existing) {
-        dao.upsertProvider(provider)
-      }
+      dao.upsertProvider(provider)
     }
   }
 
@@ -932,11 +931,13 @@ class ChatRepository(
     if (blockingBots.isNotEmpty()) {
       return DeleteProviderResult(deleted = false, blockingBots = blockingBots)
     }
+    if (dao.providerCount() <= 1) {
+      return DeleteProviderResult(deleted = false, wouldLeaveNoProvider = true)
+    }
     dao.deleteProvider(providerId)
     provider.secretRef?.let { apiKeyStore.delete(it) }
-    val remainingProviders = dao.observeProviders().first()
-    val nextProvider = remainingProviders.firstOrNull()?.toDomain()
-      ?: defaultProviders().first().also { dao.upsertProvider(it) }.toDomain()
+    val nextProvider = dao.observeProviders().first().firstOrNull()?.toDomain()
+      ?: error("删除 API 配置后未找到可用配置")
     preferencesRepository.setSelectedProvider(nextProvider.id)
     return DeleteProviderResult(deleted = true)
   }
@@ -969,8 +970,9 @@ class ChatRepository(
   suspend fun ensureConversation(): ChatConversation {
     val existing = dao.latestConversation()
     if (existing != null) return existing.toDomain()
+    bootstrapDefaults()
     val provider = dao.observeProviders().first().firstOrNull()
-      ?: defaultProviders().first().also { dao.upsertProvider(it) }
+      ?: error("没有可用的 API 配置")
     return createConversation(provider.id, provider.defaultModel)
   }
 
