@@ -366,7 +366,6 @@ private fun MarkdownInlineText(
     )
     activeUrl?.let { url ->
       UrlActionMenu(
-        url = url,
         offset = popupOffset,
         onDismiss = { activeUrl = null },
         onCopy = {
@@ -384,7 +383,6 @@ private fun MarkdownInlineText(
 
 @Composable
 private fun UrlActionMenu(
-  url: String,
   offset: IntOffset,
   onDismiss: () -> Unit,
   onCopy: () -> Unit,

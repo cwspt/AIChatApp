@@ -18,6 +18,7 @@ import com.personal.aichat.AppForegroundTracker
 import com.personal.aichat.ChatGenerationService
 import com.personal.aichat.data.ChatRepository
 import com.personal.aichat.data.ChatSelectionStore
+import com.personal.aichat.data.ConversationExport
 import com.personal.aichat.domain.ChatAttachment
 import com.personal.aichat.domain.AiBot
 import com.personal.aichat.domain.AppSettings
@@ -50,6 +51,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
@@ -59,6 +61,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -964,14 +967,7 @@ class ChatViewModel(
     val conversationId = uiState.value.selectedConversationId ?: return
     viewModelScope.launch {
       val export = repository.conversationExport(conversationId) ?: return@launch
-      val uri = ConversationShareRenderer.saveImageToGallery(context, export)
-        ?: ConversationShareRenderer.writeImageExport(context, export)
-      val sendIntent = Intent(Intent.ACTION_SEND).apply {
-        type = "image/png"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-      }
-      context.startActivity(Intent.createChooser(sendIntent, "分享长图"))
+      shareImageExport(context, export, "分享长图")
     }
   }
 
@@ -984,14 +980,7 @@ class ChatViewModel(
       val selectedMessages = export.messages.filter { it.id in selectedIds }
       if (selectedMessages.isEmpty()) return@launch
       val selectedExport = export.copy(title = "${export.title}（节选）", messages = selectedMessages)
-      val uri = ConversationShareRenderer.saveImageToGallery(context, selectedExport)
-        ?: ConversationShareRenderer.writeImageExport(context, selectedExport)
-      val sendIntent = Intent(Intent.ACTION_SEND).apply {
-        type = "image/png"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-      }
-      context.startActivity(Intent.createChooser(sendIntent, "分享选中消息长图"))
+      shareImageExport(context, selectedExport, "分享选中消息长图")
     }
   }
 
@@ -1012,14 +1001,7 @@ class ChatViewModel(
     val conversationId = uiState.value.selectedConversationId ?: return
     viewModelScope.launch {
       val export = repository.messageExport(conversationId, messageId) ?: return@launch
-      val uri = ConversationShareRenderer.saveImageToGallery(context, export)
-        ?: ConversationShareRenderer.writeImageExport(context, export)
-      val sendIntent = Intent(Intent.ACTION_SEND).apply {
-        type = "image/png"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-      }
-      context.startActivity(Intent.createChooser(sendIntent, "分享消息图片"))
+      shareImageExport(context, export, "分享消息图片")
     }
   }
 
@@ -1079,14 +1061,7 @@ class ChatViewModel(
     val groupId = uiState.value.selectedGroupChatId ?: return
     viewModelScope.launch {
       val export = repository.groupChatExport(groupId) ?: return@launch
-      val uri = ConversationShareRenderer.saveImageToGallery(context, export)
-        ?: ConversationShareRenderer.writeImageExport(context, export)
-      val sendIntent = Intent(Intent.ACTION_SEND).apply {
-        type = "image/png"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-      }
-      context.startActivity(Intent.createChooser(sendIntent, "分享群聊长图"))
+      shareImageExport(context, export, "分享群聊长图")
     }
   }
 
@@ -1100,14 +1075,7 @@ class ChatViewModel(
       val selectedMessages = export.messages.filter { it.id in selectedIds }
       if (selectedMessages.isEmpty()) return@launch
       val selectedExport = export.copy(title = "${export.title}（节选）", messages = selectedMessages)
-      val uri = ConversationShareRenderer.saveImageToGallery(context, selectedExport)
-        ?: ConversationShareRenderer.writeImageExport(context, selectedExport)
-      val sendIntent = Intent(Intent.ACTION_SEND).apply {
-        type = "image/png"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-      }
-      context.startActivity(Intent.createChooser(sendIntent, "分享选中群消息长图"))
+      shareImageExport(context, selectedExport, "分享选中群消息长图")
     }
   }
 
@@ -1128,15 +1096,37 @@ class ChatViewModel(
     val groupId = uiState.value.selectedGroupChatId ?: return
     viewModelScope.launch {
       val export = repository.groupMessageExport(groupId, messageId) ?: return@launch
-      val uri = ConversationShareRenderer.saveImageToGallery(context, export)
-        ?: ConversationShareRenderer.writeImageExport(context, export)
-      val sendIntent = Intent(Intent.ACTION_SEND).apply {
-        type = "image/png"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-      }
-      context.startActivity(Intent.createChooser(sendIntent, "分享群消息图片"))
+      shareImageExport(context, export, "分享群消息图片")
     }
+  }
+
+  private suspend fun shareImageExport(
+    context: Context,
+    export: ConversationExport,
+    chooserTitle: String
+  ) {
+    val uris = withContext(Dispatchers.IO) {
+      runCatching {
+        ConversationShareRenderer.saveImageExports(context, export)
+          ?: ConversationShareRenderer.writeImageExports(context, export)
+      }.getOrElse { emptyList() }
+    }
+    if (uris.isEmpty()) {
+      localState.update { it.copy(error = "图片导出失败") }
+      return
+    }
+    val sendIntent = Intent(
+      if (uris.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE
+    ).apply {
+      type = "image/png"
+      if (uris.size == 1) {
+        putExtra(Intent.EXTRA_STREAM, uris.first())
+      } else {
+        putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+      }
+      addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(sendIntent, chooserTitle))
   }
 
   fun openForkProviderPicker(messageId: String) {
@@ -1560,14 +1550,7 @@ class ChatViewModel(
   fun shareFavoriteSnippetLongImage(favoriteId: String, context: Context) {
     viewModelScope.launch {
       val export = repository.favoriteSnippetExport(favoriteId) ?: return@launch
-      val uri = ConversationShareRenderer.saveImageToGallery(context, export)
-        ?: ConversationShareRenderer.writeImageExport(context, export)
-      val sendIntent = Intent(Intent.ACTION_SEND).apply {
-        type = "image/png"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-      }
-      context.startActivity(Intent.createChooser(sendIntent, "分享收藏长图"))
+      shareImageExport(context, export, "分享收藏长图")
     }
   }
 

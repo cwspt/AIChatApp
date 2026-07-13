@@ -12,6 +12,7 @@ import android.os.Build
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import com.personal.aichat.data.ConversationExport
+import com.personal.aichat.data.ConversationExportMessage
 import com.personal.aichat.data.withoutToolMessages
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
@@ -23,7 +24,8 @@ import java.util.TimeZone
 import kotlin.math.max
 
 object ConversationShareRenderer {
-  private const val MaxImageHeight = 30000
+  // Keep each allocation below roughly 50 MB on common devices. Long chats are paged.
+  private const val MaxImageHeight = 12000
   private const val ImageWidth = 1080
   private const val TitleLineHeight = 64f
   private const val MetaLineHeight = 40f
@@ -32,6 +34,9 @@ object ConversationShareRenderer {
   private const val CodeLineHeight = 45f
   private const val HeadingLineHeight = 58f
   private const val TableLineHeight = 42f
+  private const val ImagePageMessageHeightBudget = 10_000
+  private const val ImageMessageHeightBudget = 7_600
+  private const val MaxLineChunkLength = 1_200
 
   fun writeTextExport(context: Context, title: String, text: String): Uri {
     val file = exportFile(context, safeFileName(title, "md"))
@@ -39,49 +44,150 @@ object ConversationShareRenderer {
     return file.toShareUri(context)
   }
 
-  fun writeImageExport(context: Context, export: ConversationExport): Uri {
-    val bitmap = renderBitmap(export)
-    val file = exportFile(context, safeFileName(export.title, "png"))
-    file.outputStream().use { output ->
-      bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+  fun writeImageExports(context: Context, export: ConversationExport): List<Uri> {
+    val pages = imageExportPages(export)
+    return pages.mapIndexed { index, page ->
+      val bitmap = renderBitmap(page)
+      try {
+        val file = exportFile(context, imageFileName(export.title, index, pages.size))
+        file.outputStream().use { output ->
+          bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+        }
+        file.toShareUri(context)
+      } finally {
+        bitmap.recycle()
+      }
     }
-    bitmap.recycle()
-    return file.toShareUri(context)
   }
 
-  fun saveImageToGallery(context: Context, export: ConversationExport): Uri? {
-    val bitmap = renderBitmap(export)
+  fun saveImageExports(context: Context, export: ConversationExport): List<Uri>? {
     val resolver = context.contentResolver
-    val fileName = safeFileName(export.title, "png")
-    val values = ContentValues().apply {
-      put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-      put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/AI Chat")
-        put(MediaStore.Images.Media.IS_PENDING, 1)
+    val pages = imageExportPages(export)
+    val savedUris = mutableListOf<Uri>()
+    return runCatching {
+      pages.forEachIndexed { index, page ->
+        val fileName = imageFileName(export.title, index, pages.size)
+        val values = ContentValues().apply {
+          put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+          put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/AI Chat")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+          }
+        }
+        val uri = checkNotNull(resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values))
+        savedUris += uri
+        val bitmap = renderBitmap(page)
+        try {
+          checkNotNull(resolver.openOutputStream(uri)).use { output ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+          }
+        } finally {
+          bitmap.recycle()
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          values.clear()
+          values.put(MediaStore.Images.Media.IS_PENDING, 0)
+          resolver.update(uri, values, null, null)
+        }
+      }
+      savedUris.toList()
+    }.getOrElse {
+      savedUris.forEach { uri -> resolver.delete(uri, null, null) }
+      null
+    }
+  }
+
+  internal fun imageExportPages(export: ConversationExport): List<ConversationExport> {
+    val shareableExport = export.withoutToolMessages()
+    val pageMessages = mutableListOf<MutableList<ConversationExportMessage>>()
+    var currentPage = mutableListOf<ConversationExportMessage>()
+    var currentHeight = 0
+
+    splitExportMessagesForImagePages(shareableExport.messages).forEach { message ->
+      val messageHeight = estimateImageMessageHeight(message.content)
+      if (currentPage.isNotEmpty() && currentHeight + messageHeight > ImagePageMessageHeightBudget) {
+        pageMessages += currentPage
+        currentPage = mutableListOf()
+        currentHeight = 0
+      }
+      currentPage += message
+      currentHeight += messageHeight
+    }
+    if (currentPage.isNotEmpty() || pageMessages.isEmpty()) {
+      pageMessages += currentPage
+    }
+
+    val totalPages = pageMessages.size
+    return pageMessages.mapIndexed { index, messages ->
+      val pageTitle = if (totalPages == 1) {
+        shareableExport.title
+      } else {
+        "${shareableExport.title} (${index + 1}/$totalPages)"
+      }
+      shareableExport.copy(title = pageTitle, messages = messages)
+    }
+  }
+
+  private fun splitExportMessagesForImagePages(
+    messages: List<ConversationExportMessage>
+  ): List<ConversationExportMessage> = messages.flatMap { message ->
+    splitExportMessageForImagePages(message)
+  }
+
+  private fun splitExportMessageForImagePages(
+    message: ConversationExportMessage
+  ): List<ConversationExportMessage> {
+    val content = exportMessageContent(message)
+    if (estimateImageContentHeight(content) <= ImageMessageHeightBudget) return listOf(message)
+
+    val chunks = mutableListOf<String>()
+    val chunk = StringBuilder()
+    fun flushChunk() {
+      if (chunk.isNotEmpty()) {
+        chunks += chunk.toString()
+        chunk.clear()
       }
     }
-    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-    if (uri == null) {
-      bitmap.recycle()
-      return null
-    }
-    runCatching {
-      resolver.openOutputStream(uri)?.use { output ->
-        bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+    content.lines().forEach { line ->
+      splitImageExportLine(line).forEach { linePart ->
+        val next = if (chunk.isEmpty()) linePart else "${chunk}\n$linePart"
+        if (chunk.isNotEmpty() && estimateImageContentHeight(next) > ImageMessageHeightBudget) {
+          flushChunk()
+        }
+        if (chunk.isNotEmpty()) chunk.append('\n')
+        chunk.append(linePart)
       }
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        values.clear()
-        values.put(MediaStore.Images.Media.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
-      }
-    }.onFailure {
-      resolver.delete(uri, null, null)
-      bitmap.recycle()
-      return null
     }
-    bitmap.recycle()
-    return uri
+    flushChunk()
+    return chunks.mapIndexed { index, part ->
+      message.copy(id = "${message.id}-image-page-$index", content = part)
+    }
+  }
+
+  private fun splitImageExportLine(line: String): List<String> {
+    if (line.length <= MaxLineChunkLength) return listOf(line)
+    return line.chunked(MaxLineChunkLength)
+  }
+
+  private fun estimateImageMessageHeight(content: String): Int {
+    return RoleRowHeight.toInt() + 64 + 22 + estimateImageContentHeight(content)
+  }
+
+  private fun estimateImageContentHeight(content: String): Int {
+    var inCodeBlock = false
+    return content.lines().sumOf { line ->
+      val trimmed = line.trim()
+      when {
+        trimmed.startsWith("```") -> {
+          inCodeBlock = !inCodeBlock
+          36
+        }
+        inCodeBlock -> 52 + line.length * 3
+        looksLikeMarkdownTableRow(trimmed) -> 96 + line.length * 3
+        else -> 18 + line.length * 3
+      }
+    }.coerceAtLeast(BodyLineHeight.toInt())
   }
 
   private fun renderBitmap(export: ConversationExport): Bitmap {
@@ -460,6 +566,16 @@ object ConversationShareRenderer {
       .take(42)
       .ifBlank { "AIChat" }
     return "$cleaned.$ext"
+  }
+
+  private fun imageFileName(title: String, pageIndex: Int, pageCount: Int): String {
+    val pageSuffix = if (pageCount > 1) "_part-${pageIndex + 1}-of-$pageCount" else ""
+    val titleLimit = (42 - pageSuffix.length).coerceAtLeast(1)
+    val cleanedTitle = title.ifBlank { "AIChat" }
+      .replace(Regex("[\\\\/:*?\"<>|\\s]+"), "_")
+      .take(titleLimit)
+      .ifBlank { "AIChat" }
+    return "$cleanedTitle$pageSuffix.png"
   }
 
   private fun exportFile(context: Context, name: String): File {
