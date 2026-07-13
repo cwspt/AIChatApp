@@ -20,3 +20,7 @@ data class ConversationExportMessage(
   val createdAt: Long,
   val attachments: List<ChatAttachment> = emptyList()
 )
+
+fun ConversationExport.withoutToolMessages(): ConversationExport = copy(
+  messages = messages.filterNot { it.role == MessageRole.TOOL }
+)

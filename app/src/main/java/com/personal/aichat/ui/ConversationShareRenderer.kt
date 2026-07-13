@@ -12,6 +12,7 @@ import android.os.Build
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import com.personal.aichat.data.ConversationExport
+import com.personal.aichat.data.withoutToolMessages
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import java.io.File
@@ -23,6 +24,14 @@ import kotlin.math.max
 
 object ConversationShareRenderer {
   private const val MaxImageHeight = 30000
+  private const val ImageWidth = 1080
+  private const val TitleLineHeight = 64f
+  private const val MetaLineHeight = 40f
+  private const val RoleRowHeight = 44f
+  private const val BodyLineHeight = 54f
+  private const val CodeLineHeight = 45f
+  private const val HeadingLineHeight = 58f
+  private const val TableLineHeight = 42f
 
   fun writeTextExport(context: Context, title: String, text: String): Uri {
     val file = exportFile(context, safeFileName(title, "md"))
@@ -76,19 +85,20 @@ object ConversationShareRenderer {
   }
 
   private fun renderBitmap(export: ConversationExport): Bitmap {
-    val width = 1080
-    val padding = 48f
-    val bubblePadding = 28f
+    val shareableExport = export.withoutToolMessages()
+    val width = ImageWidth
+    val padding = 52f
+    val bubblePadding = 32f
     val maxBubbleWidth = width - padding * 2
-    val titlePaint = textPaint(42f, Color.rgb(27, 43, 35), Typeface.BOLD)
-    val metaPaint = textPaint(24f, Color.rgb(91, 108, 99))
-    val rolePaint = textPaint(24f, Color.rgb(91, 108, 99), Typeface.BOLD)
-    val bodyPaint = textPaint(31f, Color.rgb(26, 32, 29))
-    val boldPaint = textPaint(31f, Color.rgb(26, 32, 29), Typeface.BOLD)
-    val codePaint = textPaint(27f, Color.rgb(35, 45, 40), Typeface.NORMAL, Typeface.MONOSPACE)
-    val headingPaint = textPaint(34f, Color.rgb(27, 43, 35), Typeface.BOLD)
-    val errorPaint = textPaint(29f, Color.rgb(170, 48, 38))
-    val smallPaint = textPaint(22f, Color.rgb(112, 125, 118))
+    val titlePaint = textPaint(50f, Color.rgb(27, 43, 35), Typeface.BOLD)
+    val metaPaint = textPaint(28f, Color.rgb(91, 108, 99))
+    val rolePaint = textPaint(28f, Color.rgb(91, 108, 99), Typeface.BOLD)
+    val bodyPaint = textPaint(40f, Color.rgb(26, 32, 29))
+    val boldPaint = textPaint(40f, Color.rgb(26, 32, 29), Typeface.BOLD)
+    val codePaint = textPaint(34f, Color.rgb(35, 45, 40), Typeface.NORMAL, Typeface.MONOSPACE)
+    val headingPaint = textPaint(46f, Color.rgb(27, 43, 35), Typeface.BOLD)
+    val errorPaint = textPaint(40f, Color.rgb(170, 48, 38))
+    val smallPaint = textPaint(26f, Color.rgb(112, 125, 118))
     val paints = MarkdownPaints(
       body = bodyPaint,
       bold = boldPaint,
@@ -96,9 +106,12 @@ object ConversationShareRenderer {
       heading = headingPaint,
       error = errorPaint
     )
-    val titleLines = wrapText(export.title, titlePaint, width - padding * 2)
-    val metaLines = listOfNotNull(export.groupName?.let { "分组：$it" }, export.modelLabel?.let { "模型：$it" })
-    val messageLayouts = export.messages.map { message ->
+    val titleLines = wrapText(shareableExport.title, titlePaint, width - padding * 2)
+    val metaLines = listOfNotNull(
+      shareableExport.groupName?.let { "分组：$it" },
+      shareableExport.modelLabel?.let { "模型：$it" }
+    )
+    val messageLayouts = shareableExport.messages.map { message ->
       val content = exportMessageContent(message)
       RenderMessage(
         role = message.role,
@@ -114,12 +127,12 @@ object ConversationShareRenderer {
     }
 
     var height = padding
-    height += (titleLines.size * 54) + 18
-    height += max(1, metaLines.size) * 34 + 24
+    height += (titleLines.size * TitleLineHeight) + 20
+    height += max(1, metaLines.size) * MetaLineHeight + 28
     messageLayouts.forEach { item ->
-      height += 38
-      height += item.blocks.sumOf { it.height.toInt() } + 58
-      height += 18
+      height += RoleRowHeight
+      height += item.blocks.sumOf { it.height.toInt() } + bubblePadding.toInt() * 2
+      height += 22
     }
     height += padding
     val bitmapHeight = height.coerceAtMost(MaxImageHeight.toFloat()).toInt()
@@ -129,17 +142,17 @@ object ConversationShareRenderer {
 
     var y = padding
     titleLines.forEach { line ->
-      canvas.drawText(line, padding, y + 42, titlePaint)
-      y += 54
+      canvas.drawText(line, padding, y + titlePaint.textSize, titlePaint)
+      y += TitleLineHeight
     }
     y += 8
     if (metaLines.isEmpty()) {
-      canvas.drawText("AI Chat 导出", padding, y + 26, metaPaint)
-      y += 34
+      canvas.drawText("AI Chat 导出", padding, y + metaPaint.textSize, metaPaint)
+      y += MetaLineHeight
     } else {
       metaLines.forEach { line ->
-        canvas.drawText(line, padding, y + 26, metaPaint)
-        y += 34
+        canvas.drawText(line, padding, y + metaPaint.textSize, metaPaint)
+        y += MetaLineHeight
       }
     }
     y += 24
@@ -152,8 +165,8 @@ object ConversationShareRenderer {
         MessageRole.SYSTEM -> "系统"
         MessageRole.TOOL -> "工具"
       }
-      canvas.drawText("$roleName · ${item.time}", padding, y + 26, rolePaint)
-      y += 38
+      canvas.drawText("$roleName · ${item.time}", padding, y + rolePaint.textSize, rolePaint)
+      y += RoleRowHeight
       val bubbleHeight = item.blocks.sumOf { it.height.toInt() }.toFloat() + bubblePadding * 2
       val bubbleColor = when {
         item.failed -> Color.rgb(255, 239, 235)
@@ -167,8 +180,8 @@ object ConversationShareRenderer {
         y,
         width - padding,
         (y + bubbleHeight).coerceAtMost(bitmapHeight - padding),
-        28f,
-        28f,
+        30f,
+        30f,
         rectPaint
       )
       var textY = y + bubblePadding
@@ -178,7 +191,7 @@ object ConversationShareRenderer {
         }
         textY += block.height
       }
-      y += bubbleHeight + 18
+      y += bubbleHeight + 22
     }
 
     if (height > MaxImageHeight) {
@@ -211,7 +224,7 @@ object ConversationShareRenderer {
       if (text.isNotBlank()) {
         val paint = if (failed) paints.error else paints.body
         val lines = wrapText(cleanInlineMarkdown(text), paint, maxWidth)
-        blocks += RenderBlock.Text(lines, paint, lines.size * 42f + 8f)
+        blocks += RenderBlock.Text(lines, paint, BodyLineHeight, lines.size * BodyLineHeight + 10f)
       }
       paragraph.clear()
     }
@@ -220,7 +233,7 @@ object ConversationShareRenderer {
       val text = code.toString().trimEnd()
       if (text.isNotBlank()) {
         val lines = wrapText(text, paints.code, maxWidth - 24f)
-        blocks += RenderBlock.Code(lines, lines.size * 36f + 28f)
+        blocks += RenderBlock.Code(lines, lines.size * CodeLineHeight + 32f)
       }
       code.clear()
     }
@@ -234,7 +247,7 @@ object ConversationShareRenderer {
           val rowLines = (0 until columns).maxOf { column ->
             wrapText(cleanInlineMarkdown(row.getOrNull(column).orEmpty()), paints.body, columnWidth - 12f).size
           }
-          tableHeight += rowLines * 34f + 18f
+          tableHeight += rowLines * TableLineHeight + 22f
         }
         blocks += RenderBlock.Table(tableRows.toList(), columns, tableHeight)
         tableRows.clear()
@@ -284,7 +297,7 @@ object ConversationShareRenderer {
         flushParagraph()
         val text = cleanInlineMarkdown(trimmed.drop(headingLevel).trim())
         val lines = wrapText(text, paints.heading, maxWidth)
-        blocks += RenderBlock.Text(lines, paints.heading, lines.size * 46f + 12f)
+        blocks += RenderBlock.Text(lines, paints.heading, HeadingLineHeight, lines.size * HeadingLineHeight + 14f)
         return@forEach
       }
 
@@ -295,13 +308,13 @@ object ConversationShareRenderer {
           flushParagraph()
           val text = "• " + cleanInlineMarkdown(trimmed.drop(unordered.length).trim())
           val lines = wrapText(text, paints.body, maxWidth)
-          blocks += RenderBlock.Text(lines, paints.body, lines.size * 42f + 6f)
+          blocks += RenderBlock.Text(lines, paints.body, BodyLineHeight, lines.size * BodyLineHeight + 8f)
         }
         orderedMatch != null -> {
           flushParagraph()
           val text = "${orderedMatch.groupValues[1]}. " + cleanInlineMarkdown(orderedMatch.groupValues[2])
           val lines = wrapText(text, paints.body, maxWidth)
-          blocks += RenderBlock.Text(lines, paints.body, lines.size * 42f + 6f)
+          blocks += RenderBlock.Text(lines, paints.body, BodyLineHeight, lines.size * BodyLineHeight + 8f)
         }
         else -> {
           if (paragraph.isNotEmpty()) paragraph.append('\n')
@@ -313,7 +326,7 @@ object ConversationShareRenderer {
     if (inCode) flushCode()
     flushParagraph()
     flushTable()
-    return blocks.ifEmpty { listOf(RenderBlock.Text(listOf(" "), paints.body, 42f)) }
+    return blocks.ifEmpty { listOf(RenderBlock.Text(listOf(" "), paints.body, BodyLineHeight, BodyLineHeight)) }
   }
 
   private fun drawMarkdownBlock(
@@ -328,17 +341,17 @@ object ConversationShareRenderer {
         var y = top + block.paint.textSize
         block.lines.forEach { line ->
           canvas.drawText(line, left, y, block.paint)
-          y += 42f
+          y += block.lineHeight
         }
       }
       is RenderBlock.Code -> {
         val background = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(239, 243, 238) }
         canvas.drawRoundRect(left, top, right, top + block.height - 8f, 12f, 12f, background)
-        val paint = textPaint(27f, Color.rgb(35, 45, 40), Typeface.NORMAL, Typeface.MONOSPACE)
-        var y = top + 34f
+        val paint = textPaint(34f, Color.rgb(35, 45, 40), Typeface.NORMAL, Typeface.MONOSPACE)
+        var y = top + 42f
         block.lines.forEach { line ->
           canvas.drawText(line, left + 12f, y, paint)
-          y += 36f
+          y += CodeLineHeight
         }
       }
       is RenderBlock.Table -> {
@@ -356,15 +369,15 @@ object ConversationShareRenderer {
           strokeWidth = 1.2f
         }
         val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(235, 242, 236) }
-        val bodyPaint = textPaint(24f, Color.rgb(26, 32, 29))
-        val headerTextPaint = textPaint(24f, Color.rgb(26, 32, 29), Typeface.BOLD)
+        val bodyPaint = textPaint(30f, Color.rgb(26, 32, 29))
+        val headerTextPaint = textPaint(30f, Color.rgb(26, 32, 29), Typeface.BOLD)
         val columnWidth = (right - left) / block.columns
         var y = top
         block.rows.forEachIndexed { rowIndex, row ->
           val rowLineCounts = (0 until block.columns).map { column ->
             wrapText(cleanInlineMarkdown(row.getOrNull(column).orEmpty()), bodyPaint, columnWidth - 14f).size
           }
-          val rowHeight = (rowLineCounts.maxOrNull() ?: 1) * 32f + 18f
+          val rowHeight = (rowLineCounts.maxOrNull() ?: 1) * TableLineHeight + 22f
           if (rowIndex == 0) {
             canvas.drawRoundRect(left, y, right, y + rowHeight, 8f, 8f, headerPaint)
           }
@@ -372,10 +385,10 @@ object ConversationShareRenderer {
           (0 until block.columns).forEach { column ->
             val cellLeft = left + column * columnWidth
             val lines = wrapText(cleanInlineMarkdown(row.getOrNull(column).orEmpty()), bodyPaint, columnWidth - 14f)
-            var textY = y + 30f
+            var textY = y + 36f
             lines.forEach { line ->
               canvas.drawText(line, cellLeft + 7f, textY, if (rowIndex == 0) headerTextPaint else bodyPaint)
-              textY += 32f
+              textY += TableLineHeight
             }
             if (column > 0) {
               canvas.drawLine(cellLeft, y + 4f, cellLeft, y + rowHeight - 4f, columnLinePaint)
@@ -485,6 +498,7 @@ object ConversationShareRenderer {
     data class Text(
       val lines: List<String>,
       val paint: Paint,
+      val lineHeight: Float,
       override val height: Float
     ) : RenderBlock
 

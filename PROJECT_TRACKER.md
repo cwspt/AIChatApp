@@ -9,6 +9,8 @@
 - Validation: `scripts/build-release-apk.ps1` completed a signed release build with the corrected paths; `app-release.apk` was generated and `apksigner verify --verbose --print-certs` confirmed its v2 signature.
 - Done: default TokenHub, GPT, and DeepSeek configurations now seed only into an empty Provider store; deleting a default configuration is respected across app restarts, and deleting the final remaining configuration is blocked instead of silently recreating TokenHub.
 - Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ChatRepositoryForkTest` passed 61/61 assertions, `:app:assembleDebug` completed, and the debug APK was reinstalled and launched on `127.0.0.1:5555` without an application crash.
+- Done: shared long-image exports now omit tool/search-call records and use larger, remeasured text across normal Markdown, headings, code blocks, and tables for phone-readable sharing.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ConversationExportTest` passed, `:app:assembleDebug` passed, and the debug APK was reinstalled and launched on `127.0.0.1:5555` without an application crash.
 - Done: the single-chat and group-chat "back to bottom" visibility check now runs through `snapshotFlow` and only updates Compose state when the boolean changes, instead of reading LazyList layout info from composition on every scroll frame.
 - Done: long-bubble side navigation targets now update through `snapshotFlow` for single-chat and group-chat lists, so scrolling only mutates Compose state when the actual jump target changes.
 - Done: selection-mode "select to here" targets and scroll-indicator visibility now use cached/snapshotFlow-driven list state, removing the remaining direct scroll-state reads from chat list composition.
