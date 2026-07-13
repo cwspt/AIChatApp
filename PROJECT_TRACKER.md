@@ -2,6 +2,8 @@
 
 ## 2026-06-03 Local Update Summary
 
+- Done: AI Markdown responses now recognize raw HTTP(S) URLs and Markdown links. Tapping a URL opens a small nearby action menu with browser-open and copy actions; message selection mode retains its existing selection behavior instead of opening the menu.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.MarkdownRendererTest`, `:app:compileDebugKotlin`, and `:app:assembleDebug` passed. The debug APK was reinstalled and launched on `127.0.0.1:5555` without an application crash.
 - Done: Single-chat/group-chat long-bubble floating action candidates are now precomputed when list items change instead of being rebuilt from the full message list during scroll; the helper also converts only visible candidate items before calculating the overlay target, and scroll auto-follow now observes only scroll start/end instead of reading bottom state on every scroll frame.
 - Done: the self-drawn message scroll indicator now only composes while scroll hints are visible and precomputes scrollbar metrics outside the draw block, reducing LazyList layout reads during every draw pass.
 - Done: the API configuration capability matrix is collapsed by default; when expanded, its table has its own capped vertical scroll area while the API configuration list keeps the remaining visible dialog height and scrolls independently.

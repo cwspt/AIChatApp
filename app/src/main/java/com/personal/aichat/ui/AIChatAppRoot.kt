@@ -1961,7 +1961,7 @@ private fun FavoriteMessageBubble(
         if (isUser) {
           Text(message.content)
         } else {
-          MarkdownPreview(message.content)
+          MarkdownPreview(message.content, interactiveLinks = !batchMode)
         }
         if (message.attachments.isNotEmpty()) {
           AttachmentStrip(
@@ -3354,7 +3354,8 @@ private fun GroupMessageBubble(
             SelectionContainer {
               MarkdownPreview(
                 content = message.content,
-                colors = markdownColors
+                colors = markdownColors,
+                interactiveLinks = !selectionMode
               )
             }
           }
@@ -4924,7 +4925,7 @@ private fun MessageBubble(
           )
         } else {
           SelectionContainer {
-            MarkdownPreview(message.content)
+            MarkdownPreview(message.content, interactiveLinks = !selectionMode)
           }
         }
         if (message.attachments.isNotEmpty()) {
