@@ -2,6 +2,8 @@
 
 ## 2026-06-03 Local Update Summary
 
+- Done: when group creation has no enabled bots, the disabled state now provides a direct "Manage bots" action. It closes the unusable group dialog and opens the existing bot manager, removing the manual detour through Settings.
+- Validation: `:app:compileDebugKotlin` and `:app:assembleDebug` passed. On `127.0.0.1:5555`, the action opened the bot manager from the empty group dialog and returned to the empty group page without leaving a dialog behind.
 - Done: long image exports now paginate before rendering instead of clipping after one oversized bitmap. Each page stays below a 12,000px image height, oversized individual replies are split without dropping text, and multi-page exports are shared together through the system share sheet.
 - Done: all image export encoding and gallery writes now run off the main thread; single-page exports preserve the existing one-image share behavior.
 - Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ConversationShareRendererTest --tests com.personal.aichat.ChatRepositoryForkTest.groupExportAndShareTextIncludeAttachmentIndex` and `:app:assembleDebug` passed. On `127.0.0.1:5555`, a message image was saved to `Pictures/AI Chat` and opened in the Android chooser preview without a crash.

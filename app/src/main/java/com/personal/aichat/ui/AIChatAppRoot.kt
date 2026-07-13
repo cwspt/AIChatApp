@@ -739,6 +739,11 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
           groupChatDialogDraft = null
           viewModel.closeNewGroupChatDialog()
         },
+        onManageBots = {
+          groupChatDialogDraft = null
+          viewModel.closeNewGroupChatDialog()
+          viewModel.openBotManager()
+        },
         onCreate = { title, topic, botIds ->
           groupChatDialogDraft = null
           if (mode == GroupChatDialogMode.EDIT && editingGroup != null) {
@@ -3856,6 +3861,7 @@ private fun NewGroupChatDialog(
   initialTopic: String = "",
   initialSelectedBotIds: Set<String> = emptySet(),
   onDismiss: () -> Unit,
+  onManageBots: () -> Unit,
   onCreate: (String, String, List<String>) -> Unit,
   onSaveBackgroundPresetCombination: ((List<String>) -> Unit)? = null
 ) {
@@ -3910,7 +3916,12 @@ private fun NewGroupChatDialog(
         }
         Text("选择机器人", fontWeight = FontWeight.SemiBold)
         if (bots.isEmpty()) {
-          Text("还没有启用的机器人，请先到设置里创建。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+          Text("还没有启用的机器人。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+          TextButton(onClick = onManageBots) {
+            Icon(Icons.Outlined.Groups, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("管理机器人")
+          }
         } else {
           bots.forEach { bot ->
             Row(
