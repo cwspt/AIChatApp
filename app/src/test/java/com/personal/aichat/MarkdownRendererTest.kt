@@ -20,4 +20,25 @@ class MarkdownRendererTest {
       rendered.text
     )
   }
+
+  @Test
+  fun inlineMarkdownAnnotatesBareDomainsWithCanonicalHttpsUrls() {
+    val rendered = renderInlineMarkdown(
+      "Read help.openai.com/docs\u3002 [site](www.example.org/guide) and email team@example.com."
+    )
+
+    assertEquals(
+      listOf("https://help.openai.com/docs", "https://www.example.org/guide"),
+      rendered.getStringAnnotations("markdown_url", 0, rendered.length).map { it.item }
+    )
+    assertEquals(
+      "Read help.openai.com/docs\u3002 site and email team@example.com.",
+      rendered.text
+    )
+    val bareDomainStart = rendered.text.indexOf("help.openai.com")
+    assertEquals(
+      listOf("https://help.openai.com/docs"),
+      rendered.getStringAnnotations("markdown_url", bareDomainStart, bareDomainStart + 1).map { it.item }
+    )
+  }
 }

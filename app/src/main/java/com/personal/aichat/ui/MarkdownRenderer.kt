@@ -344,7 +344,8 @@ private fun MarkdownInlineText(
       detectTapGestures { position ->
         layoutResult?.let { layout ->
           val offset = layout.getOffsetForPosition(position)
-          val url = text.getStringAnnotations(UrlAnnotationTag, offset, offset).firstOrNull()?.item
+          val annotationEnd = (offset + 1).coerceAtMost(text.length)
+          val url = text.getStringAnnotations(UrlAnnotationTag, offset, annotationEnd).firstOrNull()?.item
           if (url != null) {
             activeUrl = url
             popupOffset = IntOffset(position.x.toInt(), position.y.toInt() + 12)
@@ -432,7 +433,9 @@ private fun openUrl(context: Context, url: String) {
 
 internal fun renderInlineMarkdown(text: String, linkColor: Color = Color.Unspecified): AnnotatedString = buildAnnotatedString {
   var index = 0
-  val pattern = Regex("(\\*\\*[^*]+\\*\\*)|(`[^`]+`)|(\\[[^]]+\\]\\(https?://[^\\s)]+\\))|(https?://[^\\s<>()\\[\\]{}\\\"']+)")
+  val pattern = Regex(
+    """(\*\*[^*]+\*\*)|(`[^`]+`)|(\[[^]]+\]\((?:https?://)?(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?:/[^\s)]*)?\))|(https?://[^\s<>()\[\]{}"']+)|((?<![@\w.-])(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?:/[^\s<>()\[\]{}"']+)?)"""
+  )
   pattern.findAll(text).forEach { match ->
     append(text.substring(index, match.range.first))
     val value = match.value
@@ -455,8 +458,12 @@ internal fun renderInlineMarkdown(text: String, linkColor: Color = Color.Unspeci
       }
       else -> {
         val url = value.trimEnd('.', ',', ';', ':', '!', '?', ')', ']', '}', '，', '。', '；', '：', '！', '？')
-        appendUrlLink(url, url, linkColor)
-        append(value.removePrefix(url))
+        val cleanUrl = url.trimEnd(
+          '.', ',', ';', ':', '!', '?', ')', ']', '}',
+          '\uFF0C', '\u3002', '\uFF1B', '\uFF1A', '\uFF01', '\uFF1F'
+        )
+        appendUrlLink(cleanUrl, cleanUrl, linkColor)
+        append(value.removePrefix(cleanUrl))
       }
     }
     index = match.range.last + 1
@@ -469,7 +476,7 @@ private fun AnnotatedString.Builder.appendUrlLink(label: String, url: String, li
     append(label)
     return
   }
-  pushStringAnnotation(UrlAnnotationTag, url)
+  pushStringAnnotation(UrlAnnotationTag, normalizeHttpUrl(url))
   withStyle(
     SpanStyle(
       color = linkColor,
@@ -480,4 +487,12 @@ private fun AnnotatedString.Builder.appendUrlLink(label: String, url: String, li
     append(label)
   }
   pop()
+}
+
+private fun normalizeHttpUrl(url: String): String {
+  return if (url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)) {
+    url
+  } else {
+    "https://$url"
+  }
 }

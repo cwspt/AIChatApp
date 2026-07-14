@@ -1966,7 +1966,13 @@ private fun FavoriteMessageBubble(
         if (isUser) {
           Text(message.content)
         } else {
-          MarkdownPreview(message.content, interactiveLinks = !batchMode)
+          if (batchMode) {
+            SelectionContainer {
+              MarkdownPreview(message.content, interactiveLinks = false)
+            }
+          } else {
+            MarkdownPreview(message.content)
+          }
         }
         if (message.attachments.isNotEmpty()) {
           AttachmentStrip(
@@ -3355,14 +3361,21 @@ private fun GroupMessageBubble(
               motion = streamingBubbleMotion,
               animatedDots = true
             )
-          } else {
+        } else {
+          if (selectionMode) {
             SelectionContainer {
               MarkdownPreview(
                 content = message.content,
                 colors = markdownColors,
-                interactiveLinks = !selectionMode
+                interactiveLinks = false
               )
             }
+          } else {
+            MarkdownPreview(
+              content = message.content,
+              colors = markdownColors
+            )
+          }
           }
         }
         if (message.attachments.isNotEmpty()) {
@@ -4935,8 +4948,12 @@ private fun MessageBubble(
             animatedDots = true
           )
         } else {
-          SelectionContainer {
-            MarkdownPreview(message.content, interactiveLinks = !selectionMode)
+          if (selectionMode) {
+            SelectionContainer {
+              MarkdownPreview(message.content, interactiveLinks = false)
+            }
+          } else {
+            MarkdownPreview(message.content)
           }
         }
         if (message.attachments.isNotEmpty()) {

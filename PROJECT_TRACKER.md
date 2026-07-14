@@ -2,6 +2,9 @@
 
 ## 2026-06-03 Local Update Summary
 
+- Done: AI responses now recognize common bare domains such as `help.openai.com` and `www.example.org/path` as links, while excluding email addresses. Link actions normalize bare domains to HTTPS for copy and browser open.
+- Done: regular message browsing no longer lets `SelectionContainer` intercept URL taps; batch-selection mode still retains its existing selection behavior and intentionally disables link actions.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.MarkdownRendererTest` and `:app:assembleDebug` passed. On `127.0.0.1:5555`, a real `help.openai.com` response link rendered underlined and opened the nearby browser/copy action menu without a crash.
 - Done: when group creation has no enabled bots, the disabled state now provides a direct "Manage bots" action. It closes the unusable group dialog and opens the existing bot manager, removing the manual detour through Settings.
 - Validation: `:app:compileDebugKotlin` and `:app:assembleDebug` passed. On `127.0.0.1:5555`, the action opened the bot manager from the empty group dialog and returned to the empty group page without leaving a dialog behind.
 - Done: long image exports now paginate before rendering instead of clipping after one oversized bitmap. Each page stays below a 12,000px image height, oversized individual replies are split without dropping text, and multi-page exports are shared together through the system share sheet.
