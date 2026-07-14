@@ -5,6 +5,7 @@ import com.personal.aichat.data.ConversationExportMessage
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.ui.ConversationShareRenderer
+import com.personal.aichat.ui.ConversationShareRenderer.ImageInlineStyle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -50,5 +51,21 @@ class ConversationShareRendererTest {
 
     assertTrue(pages.size > 1)
     assertEquals(content, pages.flatMap { it.messages }.joinToString("") { it.content.replace("\n", "") })
+  }
+
+  @Test
+  fun imageInlineMarkdownSpansPreserveRichStylesAndVisibleTextOrder() {
+    val text = "Normal **bold** with `code` and [OpenAI](https://openai.com), plus help.openai.com."
+
+    val spans = ConversationShareRenderer.imageInlineMarkdownSpans(text)
+
+    assertEquals(
+      "Normal bold with code and OpenAI, plus help.openai.com.",
+      spans.joinToString("") { it.text }
+    )
+    assertTrue(spans.any { it.text == "bold" && it.style == ImageInlineStyle.BOLD })
+    assertTrue(spans.any { it.text == "code" && it.style == ImageInlineStyle.INLINE_CODE })
+    assertTrue(spans.any { it.text == "OpenAI" && it.style == ImageInlineStyle.LINK })
+    assertTrue(spans.any { it.text == "help.openai.com" && it.style == ImageInlineStyle.LINK })
   }
 }

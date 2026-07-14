@@ -2,6 +2,8 @@
 
 ## 2026-06-03 Local Update Summary
 
+- Done: exported chat images now preserve Markdown visual hierarchy much more closely to in-app bubbles: distinct heading levels, mixed bold text, inline-code chips, emphasized underlined links, indented lists, code blocks, and richer table cells all use measured Canvas span layout instead of flattening content to one text style.
+- Validation: `:app:testDebugUnitTest --tests com.personal.aichat.ConversationShareRendererTest --rerun-tasks` passed 3/3 and `:app:assembleDebug` passed. The debug APK was installed on `127.0.0.1:5555`; exporting a real long Markdown reply produced a readable image with styled headings, bold text, inline code, links, lists, and tables, with no visible clipping or overlap.
 - Done: AI responses now recognize common bare domains such as `help.openai.com` and `www.example.org/path` as links, while excluding email addresses. Link actions normalize bare domains to HTTPS for copy and browser open.
 - Done: regular message browsing no longer lets `SelectionContainer` intercept URL taps; batch-selection mode still retains its existing selection behavior and intentionally disables link actions.
 - Validation: `:app:testDebugUnitTest --tests com.personal.aichat.MarkdownRendererTest` and `:app:assembleDebug` passed. On `127.0.0.1:5555`, a real `help.openai.com` response link rendered underlined and opened the nearby browser/copy action menu without a crash.

@@ -32,7 +32,9 @@ object ConversationShareRenderer {
   private const val RoleRowHeight = 44f
   private const val BodyLineHeight = 54f
   private const val CodeLineHeight = 45f
-  private const val HeadingLineHeight = 58f
+  private const val HeadingOneLineHeight = 70f
+  private const val HeadingTwoLineHeight = 64f
+  private const val HeadingThreeLineHeight = 58f
   private const val TableLineHeight = 42f
   private const val ImagePageMessageHeightBudget = 10_000
   private const val ImageMessageHeightBudget = 7_600
@@ -183,9 +185,10 @@ object ConversationShareRenderer {
           inCodeBlock = !inCodeBlock
           36
         }
-        inCodeBlock -> 52 + line.length * 3
-        looksLikeMarkdownTableRow(trimmed) -> 96 + line.length * 3
-        else -> 18 + line.length * 3
+        inCodeBlock -> 58 + line.length * 3
+        looksLikeMarkdownTableRow(trimmed) -> 104 + line.length * 3
+        trimmed.startsWith("#") -> 42 + line.length * 4
+        else -> 24 + line.length * 3
       }
     }.coerceAtLeast(BodyLineHeight.toInt())
   }
@@ -202,15 +205,25 @@ object ConversationShareRenderer {
     val bodyPaint = textPaint(40f, Color.rgb(26, 32, 29))
     val boldPaint = textPaint(40f, Color.rgb(26, 32, 29), Typeface.BOLD)
     val codePaint = textPaint(34f, Color.rgb(35, 45, 40), Typeface.NORMAL, Typeface.MONOSPACE)
-    val headingPaint = textPaint(46f, Color.rgb(27, 43, 35), Typeface.BOLD)
+    val linkPaint = textPaint(40f, Color.rgb(25, 103, 83), Typeface.BOLD)
+    val headingOnePaint = textPaint(52f, Color.rgb(27, 43, 35), Typeface.BOLD)
+    val headingTwoPaint = textPaint(46f, Color.rgb(27, 43, 35), Typeface.BOLD)
+    val headingThreePaint = textPaint(42f, Color.rgb(27, 43, 35), Typeface.BOLD)
     val errorPaint = textPaint(40f, Color.rgb(170, 48, 38))
+    val errorBoldPaint = textPaint(40f, Color.rgb(170, 48, 38), Typeface.BOLD)
+    val tableHeaderPaint = textPaint(30f, Color.rgb(26, 32, 29), Typeface.BOLD)
     val smallPaint = textPaint(26f, Color.rgb(112, 125, 118))
     val paints = MarkdownPaints(
       body = bodyPaint,
       bold = boldPaint,
       code = codePaint,
-      heading = headingPaint,
-      error = errorPaint
+      link = linkPaint,
+      headingOne = headingOnePaint,
+      headingTwo = headingTwoPaint,
+      headingThree = headingThreePaint,
+      error = errorPaint,
+      errorBold = errorBoldPaint,
+      tableHeader = tableHeaderPaint
     )
     val titleLines = wrapText(shareableExport.title, titlePaint, width - padding * 2)
     val metaLines = listOfNotNull(
@@ -293,7 +306,14 @@ object ConversationShareRenderer {
       var textY = y + bubblePadding
       item.blocks.forEach { block ->
         if (textY < bitmapHeight - padding) {
-          drawMarkdownBlock(canvas, block, padding + bubblePadding, textY, width - padding - bubblePadding)
+          drawMarkdownBlock(
+            canvas = canvas,
+            block = block,
+            left = padding + bubblePadding,
+            top = textY,
+            right = width - padding - bubblePadding,
+            paints = paints
+          )
         }
         textY += block.height
       }
@@ -328,9 +348,15 @@ object ConversationShareRenderer {
     fun flushParagraph() {
       val text = paragraph.toString().trim()
       if (text.isNotBlank()) {
-        val paint = if (failed) paints.error else paints.body
-        val lines = wrapText(cleanInlineMarkdown(text), paint, maxWidth)
-        blocks += RenderBlock.Text(lines, paint, BodyLineHeight, lines.size * BodyLineHeight + 10f)
+        val style = if (failed) ImageInlineStyle.ERROR else ImageInlineStyle.BODY
+        blocks += richTextBlock(
+          text = text,
+          defaultStyle = style,
+          paints = paints,
+          maxWidth = maxWidth,
+          lineHeight = BodyLineHeight,
+          bottomPadding = 12f
+        )
       }
       paragraph.clear()
     }
@@ -349,9 +375,15 @@ object ConversationShareRenderer {
         val columns = tableRows.maxOf { it.size }.coerceAtLeast(1)
         val columnWidth = (maxWidth - 24f) / columns
         var tableHeight = 18f
-        tableRows.forEach { row ->
+        tableRows.forEachIndexed { rowIndex, row ->
+          val cellStyle = if (rowIndex == 0) ImageInlineStyle.TABLE_HEADER else ImageInlineStyle.BODY
           val rowLines = (0 until columns).maxOf { column ->
-            wrapText(cleanInlineMarkdown(row.getOrNull(column).orEmpty()), paints.body, columnWidth - 12f).size
+            layoutInlineText(
+              imageInlineMarkdownSpans(row.getOrNull(column).orEmpty()),
+              cellStyle,
+              paints,
+              columnWidth - 12f
+            ).size
           }
           tableHeight += rowLines * TableLineHeight + 22f
         }
@@ -401,9 +433,24 @@ object ConversationShareRenderer {
       val headingLevel = trimmed.takeWhile { it == '#' }.length
       if (headingLevel in 1..4 && trimmed.getOrNull(headingLevel) == ' ') {
         flushParagraph()
-        val text = cleanInlineMarkdown(trimmed.drop(headingLevel).trim())
-        val lines = wrapText(text, paints.heading, maxWidth)
-        blocks += RenderBlock.Text(lines, paints.heading, HeadingLineHeight, lines.size * HeadingLineHeight + 14f)
+        val style = when (headingLevel) {
+          1 -> ImageInlineStyle.HEADING_ONE
+          2 -> ImageInlineStyle.HEADING_TWO
+          else -> ImageInlineStyle.HEADING_THREE
+        }
+        val lineHeight = when (headingLevel) {
+          1 -> HeadingOneLineHeight
+          2 -> HeadingTwoLineHeight
+          else -> HeadingThreeLineHeight
+        }
+        blocks += richTextBlock(
+          text = trimmed.drop(headingLevel).trim(),
+          defaultStyle = style,
+          paints = paints,
+          maxWidth = maxWidth,
+          lineHeight = lineHeight,
+          bottomPadding = 18f
+        )
         return@forEach
       }
 
@@ -412,15 +459,27 @@ object ConversationShareRenderer {
       when {
         unordered != null -> {
           flushParagraph()
-          val text = "• " + cleanInlineMarkdown(trimmed.drop(unordered.length).trim())
-          val lines = wrapText(text, paints.body, maxWidth)
-          blocks += RenderBlock.Text(lines, paints.body, BodyLineHeight, lines.size * BodyLineHeight + 8f)
+          blocks += richTextBlock(
+            text = trimmed.drop(unordered.length).trim(),
+            defaultStyle = if (failed) ImageInlineStyle.ERROR else ImageInlineStyle.BODY,
+            paints = paints,
+            maxWidth = maxWidth,
+            lineHeight = BodyLineHeight,
+            bottomPadding = 8f,
+            marker = "-"
+          )
         }
         orderedMatch != null -> {
           flushParagraph()
-          val text = "${orderedMatch.groupValues[1]}. " + cleanInlineMarkdown(orderedMatch.groupValues[2])
-          val lines = wrapText(text, paints.body, maxWidth)
-          blocks += RenderBlock.Text(lines, paints.body, BodyLineHeight, lines.size * BodyLineHeight + 8f)
+          blocks += richTextBlock(
+            text = orderedMatch.groupValues[2],
+            defaultStyle = if (failed) ImageInlineStyle.ERROR else ImageInlineStyle.BODY,
+            paints = paints,
+            maxWidth = maxWidth,
+            lineHeight = BodyLineHeight,
+            bottomPadding = 8f,
+            marker = "${orderedMatch.groupValues[1]}."
+          )
         }
         else -> {
           if (paragraph.isNotEmpty()) paragraph.append('\n')
@@ -432,7 +491,18 @@ object ConversationShareRenderer {
     if (inCode) flushCode()
     flushParagraph()
     flushTable()
-    return blocks.ifEmpty { listOf(RenderBlock.Text(listOf(" "), paints.body, BodyLineHeight, BodyLineHeight)) }
+    return blocks.ifEmpty {
+      listOf(
+        richTextBlock(
+          text = " ",
+          defaultStyle = ImageInlineStyle.BODY,
+          paints = paints,
+          maxWidth = maxWidth,
+          lineHeight = BodyLineHeight,
+          bottomPadding = 0f
+        )
+      )
+    }
   }
 
   private fun drawMarkdownBlock(
@@ -440,14 +510,22 @@ object ConversationShareRenderer {
     block: RenderBlock,
     left: Float,
     top: Float,
-    right: Float
+    right: Float,
+    paints: MarkdownPaints
   ) {
     when (block) {
       is RenderBlock.Text -> {
-        var y = top + block.paint.textSize
-        block.lines.forEach { line ->
-          canvas.drawText(line, left, y, block.paint)
-          y += block.lineHeight
+        val markerWidth = block.marker?.let { marker ->
+          paintForStyle(block.defaultStyle, paints).measureText(marker) + 18f
+        } ?: 0f
+        var lineTop = top
+        block.lines.forEachIndexed { index, line ->
+          val baseline = lineTop + lineMaxTextSize(line, paints)
+          if (index == 0 && block.marker != null) {
+            canvas.drawText(block.marker, left, baseline, paintForStyle(block.defaultStyle, paints))
+          }
+          drawRichTextLine(canvas, line, left + markerWidth, baseline, paints)
+          lineTop += block.lineHeight
         }
       }
       is RenderBlock.Code -> {
@@ -475,13 +553,17 @@ object ConversationShareRenderer {
           strokeWidth = 1.2f
         }
         val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(235, 242, 236) }
-        val bodyPaint = textPaint(30f, Color.rgb(26, 32, 29))
-        val headerTextPaint = textPaint(30f, Color.rgb(26, 32, 29), Typeface.BOLD)
         val columnWidth = (right - left) / block.columns
         var y = top
         block.rows.forEachIndexed { rowIndex, row ->
+          val cellStyle = if (rowIndex == 0) ImageInlineStyle.TABLE_HEADER else ImageInlineStyle.BODY
           val rowLineCounts = (0 until block.columns).map { column ->
-            wrapText(cleanInlineMarkdown(row.getOrNull(column).orEmpty()), bodyPaint, columnWidth - 14f).size
+            layoutInlineText(
+              imageInlineMarkdownSpans(row.getOrNull(column).orEmpty()),
+              cellStyle,
+              paints,
+              columnWidth - 14f
+            ).size
           }
           val rowHeight = (rowLineCounts.maxOrNull() ?: 1) * TableLineHeight + 22f
           if (rowIndex == 0) {
@@ -490,11 +572,22 @@ object ConversationShareRenderer {
           canvas.drawLine(left, y, right, y, if (rowIndex == 0) borderPaint else rowLinePaint)
           (0 until block.columns).forEach { column ->
             val cellLeft = left + column * columnWidth
-            val lines = wrapText(cleanInlineMarkdown(row.getOrNull(column).orEmpty()), bodyPaint, columnWidth - 14f)
-            var textY = y + 36f
+            val lines = layoutInlineText(
+              imageInlineMarkdownSpans(row.getOrNull(column).orEmpty()),
+              cellStyle,
+              paints,
+              columnWidth - 14f
+            )
+            var textTop = y + 10f
             lines.forEach { line ->
-              canvas.drawText(line, cellLeft + 7f, textY, if (rowIndex == 0) headerTextPaint else bodyPaint)
-              textY += TableLineHeight
+              drawRichTextLine(
+                canvas,
+                line,
+                cellLeft + 7f,
+                textTop + lineMaxTextSize(line, paints),
+                paints
+              )
+              textTop += TableLineHeight
             }
             if (column > 0) {
               canvas.drawLine(cellLeft, y + 4f, cellLeft, y + rowHeight - 4f, columnLinePaint)
@@ -508,11 +601,29 @@ object ConversationShareRenderer {
     }
   }
 
-  private fun cleanInlineMarkdown(text: String): String {
-    return text
-      .replace(Regex("\\*\\*([^*]+)\\*\\*"), "$1")
-      .replace(Regex("`([^`]+)`"), "$1")
-      .replace(Regex("\\[([^]]+)]\\([^)]+\\)"), "$1")
+  private fun richTextBlock(
+    text: String,
+    defaultStyle: ImageInlineStyle,
+    paints: MarkdownPaints,
+    maxWidth: Float,
+    lineHeight: Float,
+    bottomPadding: Float,
+    marker: String? = null
+  ): RenderBlock.Text {
+    val markerWidth = marker?.let { paintForStyle(defaultStyle, paints).measureText(it) + 18f } ?: 0f
+    val lines = layoutInlineText(
+      imageInlineMarkdownSpans(text),
+      defaultStyle,
+      paints,
+      (maxWidth - markerWidth).coerceAtLeast(48f)
+    )
+    return RenderBlock.Text(
+      lines = lines,
+      defaultStyle = defaultStyle,
+      marker = marker,
+      lineHeight = lineHeight,
+      height = lines.size * lineHeight + bottomPadding
+    )
   }
 
   private fun looksLikeMarkdownTableRow(line: String): Boolean {
@@ -528,6 +639,167 @@ object ConversationShareRenderer {
 
   private fun parseMarkdownTableRow(line: String): List<String> {
     return line.trim().trim('|').split('|').map { it.trim() }
+  }
+
+  internal fun imageInlineMarkdownSpans(text: String): List<ImageInlineSpan> {
+    val spans = mutableListOf<ImageInlineSpan>()
+    fun append(text: String, style: ImageInlineStyle) {
+      if (text.isEmpty()) return
+      val previous = spans.lastOrNull()
+      if (previous != null && previous.style == style) {
+        spans[spans.lastIndex] = previous.copy(text = previous.text + text)
+      } else {
+        spans += ImageInlineSpan(text, style)
+      }
+    }
+
+    val pattern = Regex(
+      """(\*\*[^*]+\*\*)|(`[^`]+`)|(\[[^]]+\]\((?:https?://)?(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?:/[^\s)]*)?\))|(https?://[^\s<>()\[\]{}"']+)|((?<![@\w.-])(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?:/[^\s<>()\[\]{}"']+)?)"""
+    )
+    var start = 0
+    pattern.findAll(text).forEach { match ->
+      append(text.substring(start, match.range.first), ImageInlineStyle.BODY)
+      val value = match.value
+      when {
+        value.startsWith("**") -> append(value.removePrefix("**").removeSuffix("**"), ImageInlineStyle.BOLD)
+        value.startsWith("`") -> append(value.removePrefix("`").removeSuffix("`"), ImageInlineStyle.INLINE_CODE)
+        value.startsWith("[") -> append(value.substringAfter('[').substringBefore("]("), ImageInlineStyle.LINK)
+        else -> {
+          val link = value.trimEnd('.', ',', ';', ':', '!', '?', ')', ']', '}', '\uFF0C', '\u3002', '\uFF1B', '\uFF1A', '\uFF01', '\uFF1F')
+          append(link, ImageInlineStyle.LINK)
+          append(value.removePrefix(link), ImageInlineStyle.BODY)
+        }
+      }
+      start = match.range.last + 1
+    }
+    append(text.substring(start), ImageInlineStyle.BODY)
+    return spans.ifEmpty { listOf(ImageInlineSpan("", ImageInlineStyle.BODY)) }
+  }
+
+  private fun layoutInlineText(
+    spans: List<ImageInlineSpan>,
+    defaultStyle: ImageInlineStyle,
+    paints: MarkdownPaints,
+    maxWidth: Float
+  ): List<RenderTextLine> {
+    val lines = mutableListOf<RenderTextLine>()
+    val current = mutableListOf<ImageInlineSpan>()
+    var currentWidth = 0f
+
+    fun appendCurrent(text: String, style: ImageInlineStyle) {
+      if (text.isEmpty()) return
+      val previous = current.lastOrNull()
+      if (previous != null && previous.style == style) {
+        current[current.lastIndex] = previous.copy(text = previous.text + text)
+      } else {
+        current += ImageInlineSpan(text, style)
+      }
+    }
+
+    fun finishLine() {
+      while (current.lastOrNull()?.text?.lastOrNull()?.isWhitespace() == true) {
+        val previous = current.removeAt(current.lastIndex)
+        val trimmed = previous.text.trimEnd()
+        if (trimmed.isNotEmpty()) current += previous.copy(text = trimmed)
+      }
+      lines += RenderTextLine(current.toList())
+      current.clear()
+      currentWidth = 0f
+    }
+
+    fun appendToken(token: String, style: ImageInlineStyle) {
+      if (token.isEmpty()) return
+      val paint = paintForStyle(style, paints)
+      if (current.isEmpty() && token.all(Char::isWhitespace)) return
+      val width = paint.measureText(token)
+      if (current.isNotEmpty() && currentWidth + width > maxWidth) {
+        finishLine()
+      }
+      if (current.isEmpty() && width > maxWidth && token.length > 1) {
+        token.forEach { character -> appendToken(character.toString(), style) }
+      } else {
+        appendCurrent(token, style)
+        currentWidth += width
+      }
+    }
+
+    spans.forEach { span ->
+      val style = effectiveInlineStyle(span.style, defaultStyle)
+      span.text.split('\n').forEachIndexed { index, part ->
+        splitInlineWrapTokens(part).forEach { token -> appendToken(token, style) }
+        if (index < span.text.count { it == '\n' }) finishLine()
+      }
+    }
+    if (current.isNotEmpty() || lines.isEmpty()) finishLine()
+    return lines
+  }
+
+  private fun splitInlineWrapTokens(text: String): List<String> {
+    if (text.isEmpty()) return emptyList()
+    return Regex("\\s+|[A-Za-z0-9_./:@%?&=#+~-]+|.").findAll(text).map { it.value }.toList()
+  }
+
+  private fun effectiveInlineStyle(style: ImageInlineStyle, defaultStyle: ImageInlineStyle): ImageInlineStyle {
+    return when (style) {
+      ImageInlineStyle.BODY -> defaultStyle
+      ImageInlineStyle.BOLD -> when (defaultStyle) {
+        ImageInlineStyle.ERROR -> ImageInlineStyle.ERROR_BOLD
+        ImageInlineStyle.TABLE_HEADER -> ImageInlineStyle.TABLE_HEADER
+        else -> ImageInlineStyle.BOLD
+      }
+      else -> style
+    }
+  }
+
+  private fun paintForStyle(style: ImageInlineStyle, paints: MarkdownPaints): Paint {
+    return when (style) {
+      ImageInlineStyle.BODY -> paints.body
+      ImageInlineStyle.BOLD -> paints.bold
+      ImageInlineStyle.INLINE_CODE -> paints.code
+      ImageInlineStyle.LINK -> paints.link
+      ImageInlineStyle.HEADING_ONE -> paints.headingOne
+      ImageInlineStyle.HEADING_TWO -> paints.headingTwo
+      ImageInlineStyle.HEADING_THREE -> paints.headingThree
+      ImageInlineStyle.ERROR -> paints.error
+      ImageInlineStyle.ERROR_BOLD -> paints.errorBold
+      ImageInlineStyle.TABLE_HEADER -> paints.tableHeader
+    }
+  }
+
+  private fun lineMaxTextSize(line: RenderTextLine, paints: MarkdownPaints): Float {
+    return line.spans.maxOfOrNull { paintForStyle(it.style, paints).textSize } ?: paints.body.textSize
+  }
+
+  private fun drawRichTextLine(
+    canvas: Canvas,
+    line: RenderTextLine,
+    left: Float,
+    baseline: Float,
+    paints: MarkdownPaints
+  ) {
+    var x = left
+    line.spans.forEach { span ->
+      val paint = paintForStyle(span.style, paints)
+      val width = paint.measureText(span.text)
+      if (span.style == ImageInlineStyle.INLINE_CODE && span.text.isNotEmpty()) {
+        val codeBackground = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(225, 235, 227) }
+        canvas.drawRoundRect(
+          x - 5f,
+          baseline - paint.textSize - 5f,
+          x + width + 5f,
+          baseline + 10f,
+          7f,
+          7f,
+          codeBackground
+        )
+      }
+      canvas.drawText(span.text, x, baseline, paint)
+      if (span.style == ImageInlineStyle.LINK && span.text.isNotEmpty()) {
+        val underline = Paint(paint).apply { strokeWidth = 2f }
+        canvas.drawLine(x, baseline + 5f, x + width, baseline + 5f, underline)
+      }
+      x += width
+    }
   }
 
   private fun wrapText(text: String, paint: Paint, maxWidth: Float): List<String> {
@@ -597,9 +869,34 @@ object ConversationShareRenderer {
     val body: Paint,
     val bold: Paint,
     val code: Paint,
-    val heading: Paint,
-    val error: Paint
+    val link: Paint,
+    val headingOne: Paint,
+    val headingTwo: Paint,
+    val headingThree: Paint,
+    val error: Paint,
+    val errorBold: Paint,
+    val tableHeader: Paint
   )
+
+  internal enum class ImageInlineStyle {
+    BODY,
+    BOLD,
+    INLINE_CODE,
+    LINK,
+    HEADING_ONE,
+    HEADING_TWO,
+    HEADING_THREE,
+    ERROR,
+    ERROR_BOLD,
+    TABLE_HEADER
+  }
+
+  internal data class ImageInlineSpan(
+    val text: String,
+    val style: ImageInlineStyle
+  )
+
+  private data class RenderTextLine(val spans: List<ImageInlineSpan>)
 
   private data class RenderMessage(
     val role: MessageRole,
@@ -612,8 +909,9 @@ object ConversationShareRenderer {
     val height: Float
 
     data class Text(
-      val lines: List<String>,
-      val paint: Paint,
+      val lines: List<RenderTextLine>,
+      val defaultStyle: ImageInlineStyle,
+      val marker: String?,
       val lineHeight: Float,
       override val height: Float
     ) : RenderBlock
