@@ -17,6 +17,7 @@ import com.personal.aichat.data.local.toDomain
 import com.personal.aichat.data.remote.OpenAiCompatibleChatAdapter
 import com.personal.aichat.data.remote.OpenAiResponsesAdapter
 import com.personal.aichat.data.remote.TokenHubProxyAdapter
+import com.personal.aichat.data.remote.retrySilentTransportFailures
 import com.personal.aichat.data.security.ApiKeyStore
 import com.personal.aichat.domain.AiBot
 import com.personal.aichat.domain.ChatCompletionOptions
@@ -1950,7 +1951,7 @@ class ChatRepository(
         captureRawResponseLog = false,
         webSearchMode = com.personal.aichat.domain.WebSearchMode.OFF
       )
-    ).collect { event ->
+    ).retrySilentTransportFailures().collect { event ->
       when (event) {
         is ChatStreamEvent.TextDelta -> output.append(event.text)
         is ChatStreamEvent.Failed -> throw IllegalStateException(event.message)
@@ -2211,7 +2212,7 @@ class ChatRepository(
           captureRawResponseLog = captureRawResponseLog,
           webSearchMode = appSettings.webSearchMode
         )
-      ).collect { event ->
+      ).retrySilentTransportFailures().collect { event ->
         when (event) {
           ChatStreamEvent.Started -> Unit
           is ChatStreamEvent.TextDelta -> {
@@ -2415,7 +2416,7 @@ class ChatRepository(
           captureRawResponseLog = false,
           webSearchMode = appSettings.webSearchMode
         )
-      ).collect { event ->
+      ).retrySilentTransportFailures().collect { event ->
         when (event) {
           ChatStreamEvent.Started -> Unit
           is ChatStreamEvent.TextDelta -> {
@@ -2926,6 +2927,7 @@ class ChatRepository(
       raw.contains("SocketTimeoutException", ignoreCase = true) ->
         "请求超时。请检查网络连接或增大请求超时时间。"
       raw.contains("Software caused connection abort", ignoreCase = true) ||
+        raw.contains("Broken pipe", ignoreCase = true) ||
         raw.contains("Connection reset", ignoreCase = true) ||
         raw.contains("Socket closed", ignoreCase = true) ->
         "流式连接意外中断。App 会在生成期间保持后台网络运行；如果仍然出现，请检查系统省电限制、Wi-Fi 休眠策略、VPN 或代理连接后重试。"

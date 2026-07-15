@@ -12,6 +12,7 @@ import com.personal.aichat.data.remote.defaultAiHttpClient
 import com.personal.aichat.data.remote.extractCompatibleMarkupToolCall
 import com.personal.aichat.data.remote.extractCompatibleToolCalls
 import com.personal.aichat.data.remote.extractTokenUsage
+import com.personal.aichat.data.remote.retrySilentTransportFailures
 import com.personal.aichat.domain.ChatAttachment
 import com.personal.aichat.domain.ChatCompletionOptions
 import com.personal.aichat.domain.ChatMessage
@@ -29,6 +30,7 @@ import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.ReasoningEffort
 import com.personal.aichat.domain.WebSearchMode
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -36,9 +38,44 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 import java.nio.file.Files
 
 class ProviderAdapterTest {
+  @Test
+  fun silentBrokenPipeRetriesStreamOnce() = runTest {
+    var attempts = 0
+    val events = flow {
+      attempts += 1
+      emit(ChatStreamEvent.Started)
+      if (attempts == 1) throw IOException("Broken pipe")
+      emit(ChatStreamEvent.TextDelta("recovered"))
+      emit(ChatStreamEvent.Completed)
+    }.retrySilentTransportFailures(retryDelayMillis = 0).toList()
+
+    assertEquals(2, attempts)
+    assertTrue(events.contains(ChatStreamEvent.TextDelta("recovered")))
+    assertEquals(ChatStreamEvent.Completed, events.last())
+  }
+
+  @Test
+  fun brokenPipeAfterTextDoesNotRestartAnswer() = runTest {
+    var attempts = 0
+    var failed = false
+    try {
+      flow {
+        attempts += 1
+        emit(ChatStreamEvent.TextDelta("partial"))
+        throw IOException("Broken pipe")
+      }.retrySilentTransportFailures(retryDelayMillis = 0).toList()
+    } catch (_: IOException) {
+      failed = true
+    }
+
+    assertTrue(failed)
+    assertEquals(1, attempts)
+  }
+
   @Test
   fun aiHttpClientKeepsLongStreamingConnectionsAlive() {
     val client = defaultAiHttpClient()

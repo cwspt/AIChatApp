@@ -6,17 +6,25 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
 class ChatGenerationService : Service() {
   private var generationWakeLock: PowerManager.WakeLock? = null
+  private var generationWifiLock: WifiManager.WifiLock? = null
+  private val lockTimeoutHandler = Handler(Looper.getMainLooper())
+  private val releaseLocksAfterTimeout = Runnable(::releaseGenerationLocks)
 
   internal val isCpuWakeLockHeld: Boolean
     get() = generationWakeLock?.isHeld == true
+  internal val isWifiLockHeld: Boolean
+    get() = generationWifiLock?.isHeld == true
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -24,30 +32,33 @@ class ChatGenerationService : Service() {
     ensureChannel()
     when (intent?.action) {
       ActionStop -> {
-        releaseGenerationWakeLock()
+        releaseGenerationLocks()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
       }
       ActionComplete -> {
-        releaseGenerationWakeLock()
+        releaseGenerationLocks()
         showCompletedNotification()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
       }
       else -> {
         startForeground(OngoingNotificationId, ongoingNotification())
-        acquireGenerationWakeLock()
+        acquireGenerationLocks()
       }
     }
     return START_NOT_STICKY
   }
 
   override fun onDestroy() {
-    releaseGenerationWakeLock()
+    releaseGenerationLocks()
     super.onDestroy()
   }
 
-  private fun acquireGenerationWakeLock() {
+  @Suppress("DEPRECATION")
+  private fun acquireGenerationLocks() {
+    lockTimeoutHandler.removeCallbacks(releaseLocksAfterTimeout)
+    lockTimeoutHandler.postDelayed(releaseLocksAfterTimeout, MaxWakeLockDurationMs)
     val wakeLock = generationWakeLock ?: getSystemService(PowerManager::class.java)
       .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:ChatGeneration")
       .apply { setReferenceCounted(false) }
@@ -55,9 +66,20 @@ class ChatGenerationService : Service() {
     if (!wakeLock.isHeld) {
       wakeLock.acquire(MaxWakeLockDurationMs)
     }
+
+    val wifiLock = generationWifiLock ?: getSystemService(WifiManager::class.java)
+      .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "$packageName:ChatGenerationWifi")
+      .apply { setReferenceCounted(false) }
+      .also { generationWifiLock = it }
+    if (!wifiLock.isHeld) {
+      wifiLock.acquire()
+    }
   }
 
-  private fun releaseGenerationWakeLock() {
+  private fun releaseGenerationLocks() {
+    lockTimeoutHandler.removeCallbacks(releaseLocksAfterTimeout)
+    generationWifiLock?.takeIf { it.isHeld }?.release()
+    generationWifiLock = null
     generationWakeLock?.takeIf { it.isHeld }?.release()
     generationWakeLock = null
   }

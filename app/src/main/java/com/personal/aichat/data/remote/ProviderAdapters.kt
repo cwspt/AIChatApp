@@ -16,9 +16,12 @@ import com.personal.aichat.domain.ProviderAdapter
 import com.personal.aichat.domain.WebSearchMode
 import android.os.Build
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.retryWhen
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
@@ -28,6 +31,7 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.conscrypt.Conscrypt
 import java.io.File
+import java.io.EOFException
 import java.io.IOException
 import java.security.Security
 import java.util.Base64
@@ -850,6 +854,43 @@ private suspend fun streamJsonLines(
       }
     }
   }
+}
+
+internal fun Flow<ChatStreamEvent>.retrySilentTransportFailures(
+  maxRetries: Long = 1,
+  retryDelayMillis: Long = 750
+): Flow<ChatStreamEvent> {
+  var hasTextOutput = false
+  return onEach { event ->
+    if (event is ChatStreamEvent.TextDelta && event.text.isNotBlank()) {
+      hasTextOutput = true
+    }
+  }.retryWhen { cause, attempt ->
+    val shouldRetry = !hasTextOutput &&
+      attempt < maxRetries &&
+      cause.isRecoverableStreamingTransportFailure()
+    if (shouldRetry && retryDelayMillis > 0) {
+      delay(retryDelayMillis)
+    }
+    shouldRetry
+  }
+}
+
+private fun Throwable.isRecoverableStreamingTransportFailure(): Boolean {
+  val causes = generateSequence(this) { it.cause }.toList()
+  if (causes.any { it is EOFException }) return true
+  val details = causes.joinToString(" | ") { cause ->
+    "${cause::class.java.simpleName}: ${cause.message.orEmpty()}"
+  }
+  return listOf(
+    "broken pipe",
+    "software caused connection abort",
+    "connection reset",
+    "socket closed",
+    "unexpected end of stream",
+    "stream was reset",
+    "http/2 connection shutdown"
+  ).any { marker -> details.contains(marker, ignoreCase = true) }
 }
 
 private fun parseProviderErrorMessage(body: String): String? {

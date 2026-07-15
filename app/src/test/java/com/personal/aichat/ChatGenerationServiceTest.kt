@@ -20,9 +20,11 @@ class ChatGenerationServiceTest {
     service.onStartCommand(Intent(service, ChatGenerationService::class.java), 0, 1)
 
     assertTrue(service.isCpuWakeLockHeld)
+    assertTrue(service.isWifiLockHeld)
 
     controller.destroy()
 
     assertFalse(service.isCpuWakeLockHeld)
+    assertFalse(service.isWifiLockHeld)
   }
 }
