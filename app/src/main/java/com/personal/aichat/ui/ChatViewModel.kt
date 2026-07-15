@@ -716,7 +716,7 @@ class ChatViewModel(
   private fun Int.mbToBytes(): Long = this.toLong() * 1024L * 1024L
 
   private fun launchStreamingJob(conversationId: String, block: suspend () -> Unit) {
-    val wasIdle = sendJobsByConversationId.isEmpty()
+    val wasIdle = sendJobsByConversationId.isEmpty() && groupJobsByGroupId.isEmpty()
     if (wasIdle) {
       appContext?.let { context ->
         runCatching { ChatGenerationService.start(context) }
@@ -733,7 +733,7 @@ class ChatViewModel(
       } finally {
         sendJobsByConversationId.remove(conversationId)
         localState.update { it.copy(streamingConversationIds = it.streamingConversationIds - conversationId) }
-        if (sendJobsByConversationId.isEmpty()) {
+        if (sendJobsByConversationId.isEmpty() && groupJobsByGroupId.isEmpty()) {
           appContext?.let { context ->
             if (completed && !AppForegroundTracker.isForeground) {
               runCatching { ChatGenerationService.complete(context) }

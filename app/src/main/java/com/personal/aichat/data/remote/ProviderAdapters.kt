@@ -777,6 +777,7 @@ fun defaultAiHttpClient(): OkHttpClient {
     .connectTimeout(30, TimeUnit.SECONDS)
     .readTimeout(0, TimeUnit.SECONDS)
     .writeTimeout(60, TimeUnit.SECONDS)
+    .pingInterval(30, TimeUnit.SECONDS)
     .build()
 }
 

@@ -2925,6 +2925,10 @@ class ChatRepository(
         "域名无法解析。请检查 Base URL 是否正确。"
       raw.contains("SocketTimeoutException", ignoreCase = true) ->
         "请求超时。请检查网络连接或增大请求超时时间。"
+      raw.contains("Software caused connection abort", ignoreCase = true) ||
+        raw.contains("Connection reset", ignoreCase = true) ||
+        raw.contains("Socket closed", ignoreCase = true) ->
+        "流式连接意外中断。App 会在生成期间保持后台网络运行；如果仍然出现，请检查系统省电限制、Wi-Fi 休眠策略、VPN 或代理连接后重试。"
       raw.contains("failed to connect", ignoreCase = true) ->
         "无法连接到服务器。请检查 Base URL、网络和代理设置。"
       raw.contains("HTTP 400", ignoreCase = true) || raw.contains("invalid_request_error", ignoreCase = true) ->

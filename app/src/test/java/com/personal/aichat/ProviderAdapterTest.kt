@@ -8,6 +8,7 @@ import com.personal.aichat.data.remote.WebPageClient
 import com.personal.aichat.data.remote.WebPageResponse
 import com.personal.aichat.data.remote.WebSearchResponse
 import com.personal.aichat.data.remote.WebSearchResult
+import com.personal.aichat.data.remote.defaultAiHttpClient
 import com.personal.aichat.data.remote.extractCompatibleMarkupToolCall
 import com.personal.aichat.data.remote.extractCompatibleToolCalls
 import com.personal.aichat.data.remote.extractTokenUsage
@@ -38,6 +39,14 @@ import org.junit.Test
 import java.nio.file.Files
 
 class ProviderAdapterTest {
+  @Test
+  fun aiHttpClientKeepsLongStreamingConnectionsAlive() {
+    val client = defaultAiHttpClient()
+
+    assertEquals(30_000, client.pingIntervalMillis)
+    assertEquals(0, client.readTimeoutMillis)
+  }
+
   @Test
   fun sseParserCollectsDataLines() {
     val parser = SseParser()

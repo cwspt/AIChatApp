@@ -8,29 +8,58 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
 class ChatGenerationService : Service() {
+  private var generationWakeLock: PowerManager.WakeLock? = null
+
+  internal val isCpuWakeLockHeld: Boolean
+    get() = generationWakeLock?.isHeld == true
+
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     ensureChannel()
     when (intent?.action) {
       ActionStop -> {
+        releaseGenerationWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
       }
       ActionComplete -> {
+        releaseGenerationWakeLock()
         showCompletedNotification()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
       }
       else -> {
         startForeground(OngoingNotificationId, ongoingNotification())
+        acquireGenerationWakeLock()
       }
     }
     return START_NOT_STICKY
+  }
+
+  override fun onDestroy() {
+    releaseGenerationWakeLock()
+    super.onDestroy()
+  }
+
+  private fun acquireGenerationWakeLock() {
+    val wakeLock = generationWakeLock ?: getSystemService(PowerManager::class.java)
+      .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:ChatGeneration")
+      .apply { setReferenceCounted(false) }
+      .also { generationWakeLock = it }
+    if (!wakeLock.isHeld) {
+      wakeLock.acquire(MaxWakeLockDurationMs)
+    }
+  }
+
+  private fun releaseGenerationWakeLock() {
+    generationWakeLock?.takeIf { it.isHeld }?.release()
+    generationWakeLock = null
   }
 
   private fun ongoingNotification() = NotificationCompat.Builder(this, ChannelId)
@@ -84,6 +113,7 @@ class ChatGenerationService : Service() {
     private const val ActionStart = "com.personal.aichat.action.START_GENERATION"
     private const val ActionStop = "com.personal.aichat.action.STOP_GENERATION"
     private const val ActionComplete = "com.personal.aichat.action.COMPLETE_GENERATION"
+    private const val MaxWakeLockDurationMs = 2 * 60 * 60 * 1000L
 
     fun start(context: Context) {
       val intent = Intent(context, ChatGenerationService::class.java).setAction(ActionStart)
