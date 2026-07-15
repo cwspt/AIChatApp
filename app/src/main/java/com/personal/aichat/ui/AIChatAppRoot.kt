@@ -131,6 +131,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.AnnotatedString
@@ -149,6 +150,9 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -334,6 +338,18 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
   val state by viewModel.uiState.collectAsState()
   val editingProvider = state.editingProvider
   val context = LocalContext.current
+  val localView = LocalView.current
+  val shouldKeepScreenOn = shouldKeepScreenOnForGeneration(
+    enabled = state.appSettings.keepScreenOnWhileGenerating,
+    streamingConversationIds = state.streamingConversationIds,
+    streamingGroupIds = state.streamingGroupIds
+  )
+  DisposableEffect(localView) {
+    onDispose { localView.keepScreenOn = false }
+  }
+  LaunchedEffect(localView, shouldKeepScreenOn) {
+    localView.keepScreenOn = shouldKeepScreenOn
+  }
   var drawerOpen by remember { mutableStateOf(false) }
   var previewImage by remember { mutableStateOf<ChatAttachment?>(null) }
   var previewAttachment by remember { mutableStateOf<ChatAttachment?>(null) }
@@ -597,6 +613,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onCleanupHistoricalDsmlToolMarkup = viewModel::cleanupHistoricalDsmlToolMarkup,
         onWebSearchMode = viewModel::setWebSearchMode,
         onStreamingBubbleMotion = viewModel::setStreamingBubbleMotion,
+        onKeepScreenOnWhileGenerating = viewModel::setKeepScreenOnWhileGenerating,
         onAttachmentMaxFileMb = viewModel::setAttachmentMaxFileMb,
         onAttachmentMaxPendingMb = viewModel::setAttachmentMaxPendingMb,
         onAttachmentMaxImageSourceMb = viewModel::setAttachmentMaxImageSourceMb,
@@ -3392,6 +3409,13 @@ private fun GroupMessageBubble(
             color = if (message.errorMessage == "已停止") metadataColor else MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodySmall
           )
+          if (isStreamingConnectionInterruption(message.errorMessage)) {
+            OutlinedButton(onClick = { requestUnrestrictedBackgroundGeneration(context) }) {
+              Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(6.dp))
+              Text("后台权限")
+            }
+          }
         }
         if (isBot && message.status == MessageStatus.STREAMING && message.content.isNotBlank()) {
           StreamingStatusIndicator(
@@ -4160,6 +4184,7 @@ private fun AppSettingsPage(
   onCleanupHistoricalDsmlToolMarkup: () -> Unit,
   onWebSearchMode: (WebSearchMode) -> Unit,
   onStreamingBubbleMotion: (StreamingBubbleMotion) -> Unit,
+  onKeepScreenOnWhileGenerating: (Boolean) -> Unit,
   onAttachmentMaxFileMb: (Int) -> Unit,
   onAttachmentMaxPendingMb: (Int) -> Unit,
   onAttachmentMaxImageSourceMb: (Int) -> Unit,
@@ -4181,6 +4206,17 @@ private fun AppSettingsPage(
   var creatingPreset by remember { mutableStateOf(false) }
   var backgroundPresetQuery by remember { mutableStateOf("") }
   var backgroundPresetCategoryFilter by remember { mutableStateOf<String?>(null) }
+  var batteryOptimizationIgnored by remember { mutableStateOf(isBatteryOptimizationIgnored(context)) }
+  val lifecycleOwner = LocalLifecycleOwner.current
+  DisposableEffect(lifecycleOwner, context) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) {
+        batteryOptimizationIgnored = isBatteryOptimizationIgnored(context)
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
   val sortedBackgroundPresets = remember(state.appSettings.backgroundPresets) {
     state.appSettings.backgroundPresets.sortedBy { it.sortOrder }
   }
@@ -4279,6 +4315,53 @@ private fun AppSettingsPage(
               )
             }
           }
+        }
+
+        SettingsSection(title = "后台生成") {
+          Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text("AI 回复时保持亮屏", fontWeight = FontWeight.SemiBold)
+              Text(
+                "等待 AI 思考或流式输出时阻止自然息屏；手动锁屏仍会关闭屏幕。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+            }
+            Switch(
+              checked = state.appSettings.keepScreenOnWhileGenerating,
+              onCheckedChange = onKeepScreenOnWhileGenerating
+            )
+          }
+          Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text("息屏后持续生成", fontWeight = FontWeight.SemiBold)
+              Text(
+                if (batteryOptimizationIgnored) {
+                  "已允许 App 在息屏和系统省电期间继续接收流式回复。"
+                } else {
+                  "系统电池优化可能在息屏后冻结网络，即使前台服务仍在运行。"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+            }
+            if (batteryOptimizationIgnored) {
+              Icon(
+                Icons.Outlined.CheckCircle,
+                contentDescription = "已允许后台生成",
+                tint = MaterialTheme.colorScheme.primary
+              )
+            } else {
+              OutlinedButton(onClick = { requestUnrestrictedBackgroundGeneration(context) }) {
+                Text("允许")
+              }
+            }
+          }
+          Text(
+            "仅在 AI 正在回复时使用前台服务、CPU 锁和 Wi-Fi 锁；回复结束后立即释放。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+          )
         }
 
         SettingsSection(title = "附件限制") {
@@ -4902,6 +4985,7 @@ private fun MessageBubble(
   imageMode: Boolean = false,
   streamingBubbleMotion: StreamingBubbleMotion
 ) {
+  val context = LocalContext.current
   val isUser = message.role == MessageRole.USER
   val userColors = userBubbleColors()
   var shareMenuOpen by remember { mutableStateOf(false) }
@@ -4979,6 +5063,13 @@ private fun MessageBubble(
             color = MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodySmall
           )
+          if (isStreamingConnectionInterruption(message.errorMessage)) {
+            OutlinedButton(onClick = { requestUnrestrictedBackgroundGeneration(context) }) {
+              Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(6.dp))
+              Text("后台权限")
+            }
+          }
         }
         formatMessageMetadata(message)?.let { metadata ->
           Spacer(Modifier.height(8.dp))

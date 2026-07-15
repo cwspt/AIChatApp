@@ -37,6 +37,7 @@ interface ChatSelectionStore {
   suspend fun setDebugResponseLogging(enabled: Boolean)
   suspend fun setWebSearchMode(mode: WebSearchMode)
   suspend fun setStreamingBubbleMotion(motion: StreamingBubbleMotion)
+  suspend fun setKeepScreenOnWhileGenerating(enabled: Boolean)
   suspend fun setAttachmentLimits(maxFileMb: Int, maxPendingMb: Int, maxImageSourceMb: Int)
   suspend fun setBackgroundPresets(presets: List<ChatBackgroundPreset>)
   suspend fun setGroupBackgroundPresetCombination(groupId: String, presetIds: List<String>)
@@ -56,6 +57,7 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
   private val debugResponseLoggingKey = booleanPreferencesKey("debug_response_logging")
   private val webSearchModeKey = stringPreferencesKey("web_search_mode")
   private val streamingBubbleMotionKey = stringPreferencesKey("streaming_bubble_motion")
+  private val keepScreenOnWhileGeneratingKey = booleanPreferencesKey("keep_screen_on_while_generating")
   private val attachmentMaxFileMbKey = intPreferencesKey("attachment_max_file_mb")
   private val attachmentMaxPendingMbKey = intPreferencesKey("attachment_max_pending_mb")
   private val attachmentMaxImageSourceMbKey = intPreferencesKey("attachment_max_image_source_mb")
@@ -87,6 +89,7 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
       streamingBubbleMotion = preferences[streamingBubbleMotionKey]
         ?.let { runCatching { StreamingBubbleMotion.valueOf(it) }.getOrNull() }
         ?: StreamingBubbleMotion.STANDARD,
+      keepScreenOnWhileGenerating = preferences[keepScreenOnWhileGeneratingKey] ?: true,
       attachmentMaxFileMb = (preferences[attachmentMaxFileMbKey] ?: DEFAULT_ATTACHMENT_MAX_FILE_MB)
         .coerceIn(MinAttachmentFileMb, MaxAttachmentFileMb),
       attachmentMaxPendingMb = (preferences[attachmentMaxPendingMbKey] ?: DEFAULT_ATTACHMENT_MAX_PENDING_MB)
@@ -144,6 +147,12 @@ class ChatPreferencesRepository(private val context: Context) : ChatSelectionSto
   override suspend fun setStreamingBubbleMotion(motion: StreamingBubbleMotion) {
     context.chatPreferencesDataStore.edit { preferences ->
       preferences[streamingBubbleMotionKey] = motion.name
+    }
+  }
+
+  override suspend fun setKeepScreenOnWhileGenerating(enabled: Boolean) {
+    context.chatPreferencesDataStore.edit { preferences ->
+      preferences[keepScreenOnWhileGeneratingKey] = enabled
     }
   }
 

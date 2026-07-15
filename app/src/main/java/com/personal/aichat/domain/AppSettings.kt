@@ -56,6 +56,7 @@ data class AppSettings(
   val debugResponseLogging: Boolean = false,
   val webSearchMode: WebSearchMode = WebSearchMode.OFF,
   val streamingBubbleMotion: StreamingBubbleMotion = StreamingBubbleMotion.STANDARD,
+  val keepScreenOnWhileGenerating: Boolean = true,
   val attachmentMaxFileMb: Int = DEFAULT_ATTACHMENT_MAX_FILE_MB,
   val attachmentMaxPendingMb: Int = DEFAULT_ATTACHMENT_MAX_PENDING_MB,
   val attachmentMaxImageSourceMb: Int = DEFAULT_ATTACHMENT_MAX_IMAGE_SOURCE_MB,

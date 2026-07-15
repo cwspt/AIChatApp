@@ -60,6 +60,7 @@ import com.personal.aichat.ui.longBubbleNavTarget
 import com.personal.aichat.ui.nextGroupAutoPlayBotId
 import com.personal.aichat.ui.parseToolCallDetails
 import com.personal.aichat.ui.resolvedBotBubbleColorKey
+import com.personal.aichat.ui.shouldKeepScreenOnForGeneration
 import com.personal.aichat.ui.toolCallVisualKind
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -76,6 +77,24 @@ import org.junit.Test
 import java.io.File
 
 class ChatRepositoryForkTest {
+  @Test
+  fun keepScreenOnWhileGeneratingDefaultsOnAndTracksActiveGeneration() {
+    assertTrue(AppSettings().keepScreenOnWhileGenerating)
+    assertTrue(shouldKeepScreenOnForGeneration(true, setOf("conversation"), emptySet()))
+    assertTrue(shouldKeepScreenOnForGeneration(true, emptySet(), setOf("group")))
+    assertEquals(false, shouldKeepScreenOnForGeneration(false, setOf("conversation"), setOf("group")))
+    assertEquals(false, shouldKeepScreenOnForGeneration(true, emptySet(), emptySet()))
+  }
+
+  @Test
+  fun keepScreenOnPreferenceCanBeDisabled() = runTest {
+    val selection = FakeSelectionStore()
+
+    selection.setKeepScreenOnWhileGenerating(false)
+
+    assertEquals(false, selection.appSettings.value.keepScreenOnWhileGenerating)
+  }
+
   @Test
   fun bootstrapDefaultsDoesNotRestoreDeletedDefaultProvider() = runTest {
     val dao = FakeChatDao()
@@ -1718,6 +1737,10 @@ private class FakeSelectionStore : ChatSelectionStore {
 
   override suspend fun setStreamingBubbleMotion(motion: StreamingBubbleMotion) {
     appSettings.value = appSettings.value.copy(streamingBubbleMotion = motion)
+  }
+
+  override suspend fun setKeepScreenOnWhileGenerating(enabled: Boolean) {
+    appSettings.value = appSettings.value.copy(keepScreenOnWhileGenerating = enabled)
   }
 
   override suspend fun setAttachmentLimits(maxFileMb: Int, maxPendingMb: Int, maxImageSourceMb: Int) {

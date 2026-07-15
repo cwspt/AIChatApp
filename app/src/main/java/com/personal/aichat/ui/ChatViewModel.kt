@@ -1754,6 +1754,12 @@ class ChatViewModel(
     }
   }
 
+  fun setKeepScreenOnWhileGenerating(enabled: Boolean) {
+    viewModelScope.launch {
+      preferencesRepository.setKeepScreenOnWhileGenerating(enabled)
+    }
+  }
+
   fun setAttachmentMaxFileMb(value: Int) {
     val current = uiState.value.appSettings
     viewModelScope.launch {

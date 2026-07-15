@@ -198,6 +198,41 @@ class ProviderAdapterTest {
   }
 
   @Test
+  fun openAiResponsesRetryReusesIdempotencyKey() = runTest {
+    val server = MockWebServer()
+    repeat(2) {
+      server.enqueue(
+        MockResponse()
+          .setResponseCode(200)
+          .setHeader("Content-Type", "text/event-stream")
+          .setBody("event: response.completed\ndata: {\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"total_tokens\":3}}\n\n")
+      )
+    }
+    server.start()
+    try {
+      val responseFlow = OpenAiResponsesAdapter().streamChat(
+        config = providerConfig(
+          type = ProviderType.OPENAI_RESPONSES,
+          baseUrl = server.url("/v1").toString().trimEnd('/')
+        ),
+        apiKey = "test-key",
+        messages = listOf(userMessage("hello")),
+        options = ChatCompletionOptions(model = "gpt-test")
+      )
+
+      responseFlow.toList()
+      responseFlow.toList()
+
+      val firstKey = server.takeRequest().getHeader("Idempotency-Key")
+      val secondKey = server.takeRequest().getHeader("Idempotency-Key")
+      assertFalse(firstKey.isNullOrBlank())
+      assertEquals(firstKey, secondKey)
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
   fun openAiResponsesAdapterSendsImageAndFileAttachments() = runTest {
     val imageFile = Files.createTempFile("aichat-image", ".png").toFile().apply {
       writeBytes(byteArrayOf(1, 2, 3, 4))

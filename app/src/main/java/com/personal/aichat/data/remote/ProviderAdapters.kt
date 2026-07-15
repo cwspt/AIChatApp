@@ -35,6 +35,7 @@ import java.io.EOFException
 import java.io.IOException
 import java.security.Security
 import java.util.Base64
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 private val JsonMediaType = "application/json; charset=utf-8".toMediaType()
@@ -48,6 +49,20 @@ class OpenAiResponsesAdapter(
     apiKey: String?,
     messages: List<ChatMessage>,
     options: ChatCompletionOptions
+  ): Flow<ChatStreamEvent> = streamChatWithIdempotency(
+    config = config,
+    apiKey = apiKey,
+    messages = messages,
+    options = options,
+    idempotencyKey = UUID.randomUUID().toString()
+  )
+
+  private fun streamChatWithIdempotency(
+    config: ChatProviderConfig,
+    apiKey: String?,
+    messages: List<ChatMessage>,
+    options: ChatCompletionOptions,
+    idempotencyKey: String
   ): Flow<ChatStreamEvent> = flow {
     emit(ChatStreamEvent.Started)
     val webSearchEnabled = options.webSearchMode != WebSearchMode.OFF
@@ -92,6 +107,7 @@ class OpenAiResponsesAdapter(
     val request = Request.Builder()
       .url(config.baseUrl.trimEnd('/') + "/responses")
       .headers(config.headersWithAuth(apiKey))
+      .header("Idempotency-Key", idempotencyKey)
       .post(body.toRequestBody(JsonMediaType))
       .build()
 

@@ -2930,7 +2930,7 @@ class ChatRepository(
         raw.contains("Broken pipe", ignoreCase = true) ||
         raw.contains("Connection reset", ignoreCase = true) ||
         raw.contains("Socket closed", ignoreCase = true) ->
-        "流式连接意外中断。App 会在生成期间保持后台网络运行；如果仍然出现，请检查系统省电限制、Wi-Fi 休眠策略、VPN 或代理连接后重试。"
+        "流式连接意外中断。若发生在息屏后，请点“后台权限”允许 App 不受电池优化限制；否则请检查 Wi-Fi、VPN 或代理连接后重试。"
       raw.contains("failed to connect", ignoreCase = true) ->
         "无法连接到服务器。请检查 Base URL、网络和代理设置。"
       raw.contains("HTTP 400", ignoreCase = true) || raw.contains("invalid_request_error", ignoreCase = true) ->
