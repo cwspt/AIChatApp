@@ -386,6 +386,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
   val incomingShareOpen = state.incomingShareDraft?.open == true
   val backHandled = previewImage != null ||
     state.providerRebindDeleteSourceId != null ||
+    state.pendingImageExportChoice != null ||
     state.error != null ||
     state.deleteConfirmOpen ||
     appendFavoritePickerOpen ||
@@ -408,6 +409,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
     when {
       previewImage != null -> previewImage = null
       state.providerRebindDeleteSourceId != null -> viewModel.cancelProviderRebindDelete()
+      state.pendingImageExportChoice != null -> viewModel.dismissImageExportChoice()
       state.error != null -> viewModel.clearError()
       state.deleteConfirmOpen -> viewModel.cancelDeleteConversation()
       appendFavoritePickerOpen -> appendFavoritePickerOpen = false
@@ -848,6 +850,19 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
             Text("取消")
           }
         }
+      )
+    }
+
+    state.pendingImageExportChoice?.let { choice ->
+      ImageExportChoiceDialog(
+        choice = choice,
+        onExportPaged = {
+          viewModel.confirmImageExport(ConversationShareRenderer.ImageExportMode.PAGED, context)
+        },
+        onExportSingle = {
+          viewModel.confirmImageExport(ConversationShareRenderer.ImageExportMode.SINGLE, context)
+        },
+        onDismiss = viewModel::dismissImageExportChoice
       )
     }
 

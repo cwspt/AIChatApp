@@ -77,6 +77,11 @@ private data class GroupAutoPlaySession(
   val retriedBotId: String? = null
 )
 
+private data class PendingImageExportPayload(
+  val export: ConversationExport,
+  val chooserTitle: String
+)
+
 class ChatViewModel(
   private val repository: ChatRepository,
   private val preferencesRepository: ChatSelectionStore,
@@ -88,6 +93,8 @@ class ChatViewModel(
   private val lastGroupTurnCompletedByGroupId = mutableMapOf<String, Boolean>()
   private val groupAutoPlaySessionsByGroupId = mutableMapOf<String, GroupAutoPlaySession>()
   private var pendingDeleteConversationId: String? = null
+  private var pendingImageExport: PendingImageExportPayload? = null
+  private var imageExportJob: Job? = null
 
   private val conversationLists = combine(
     repository.conversations,
@@ -965,9 +972,8 @@ class ChatViewModel(
 
   fun shareConversationLongImage(context: Context) {
     val conversationId = uiState.value.selectedConversationId ?: return
-    viewModelScope.launch {
-      val export = repository.conversationExport(conversationId) ?: return@launch
-      shareImageExport(context, export, "分享长图")
+    requestImageExport(context, "分享长图") {
+      repository.conversationExport(conversationId)
     }
   }
 
@@ -975,12 +981,11 @@ class ChatViewModel(
     val conversationId = uiState.value.selectedConversationId ?: return
     val selectedIds = uiState.value.selectedMessageIds
     if (selectedIds.isEmpty()) return
-    viewModelScope.launch {
-      val export = repository.conversationExport(conversationId) ?: return@launch
+    requestImageExport(context, "分享选中消息长图") {
+      val export = repository.conversationExport(conversationId) ?: return@requestImageExport null
       val selectedMessages = export.messages.filter { it.id in selectedIds }
-      if (selectedMessages.isEmpty()) return@launch
-      val selectedExport = export.copy(title = "${export.title}（节选）", messages = selectedMessages)
-      shareImageExport(context, selectedExport, "分享选中消息长图")
+      if (selectedMessages.isEmpty()) return@requestImageExport null
+      export.copy(title = "${export.title}（节选）", messages = selectedMessages)
     }
   }
 
@@ -999,9 +1004,8 @@ class ChatViewModel(
 
   fun shareMessageImage(messageId: String, context: Context) {
     val conversationId = uiState.value.selectedConversationId ?: return
-    viewModelScope.launch {
-      val export = repository.messageExport(conversationId, messageId) ?: return@launch
-      shareImageExport(context, export, "分享消息图片")
+    requestImageExport(context, "分享消息图片") {
+      repository.messageExport(conversationId, messageId)
     }
   }
 
@@ -1059,9 +1063,8 @@ class ChatViewModel(
 
   fun shareGroupChatLongImage(context: Context) {
     val groupId = uiState.value.selectedGroupChatId ?: return
-    viewModelScope.launch {
-      val export = repository.groupChatExport(groupId) ?: return@launch
-      shareImageExport(context, export, "分享群聊长图")
+    requestImageExport(context, "分享群聊长图") {
+      repository.groupChatExport(groupId)
     }
   }
 
@@ -1070,12 +1073,11 @@ class ChatViewModel(
     val groupId = state.selectedGroupChatId ?: return
     val selectedIds = state.selectedMessageIds
     if (selectedIds.isEmpty()) return
-    viewModelScope.launch {
-      val export = repository.groupChatExport(groupId) ?: return@launch
+    requestImageExport(context, "分享选中群消息长图") {
+      val export = repository.groupChatExport(groupId) ?: return@requestImageExport null
       val selectedMessages = export.messages.filter { it.id in selectedIds }
-      if (selectedMessages.isEmpty()) return@launch
-      val selectedExport = export.copy(title = "${export.title}（节选）", messages = selectedMessages)
-      shareImageExport(context, selectedExport, "分享选中群消息长图")
+      if (selectedMessages.isEmpty()) return@requestImageExport null
+      export.copy(title = "${export.title}（节选）", messages = selectedMessages)
     }
   }
 
@@ -1094,25 +1096,85 @@ class ChatViewModel(
 
   fun shareGroupMessageImage(messageId: String, context: Context) {
     val groupId = uiState.value.selectedGroupChatId ?: return
-    viewModelScope.launch {
-      val export = repository.groupMessageExport(groupId, messageId) ?: return@launch
-      shareImageExport(context, export, "分享群消息图片")
+    requestImageExport(context, "分享群消息图片") {
+      repository.groupMessageExport(groupId, messageId)
     }
+  }
+
+  private fun requestImageExport(
+    context: Context,
+    chooserTitle: String,
+    exportProvider: suspend () -> ConversationExport?
+  ) {
+    imageExportJob?.cancel()
+    pendingImageExport = null
+    localState.update { it.copy(pendingImageExportChoice = null) }
+    imageExportJob = viewModelScope.launch {
+      val export = exportProvider() ?: return@launch
+      val plan = withContext(Dispatchers.Default) {
+        ConversationShareRenderer.imageExportPlan(export)
+      }
+      if (plan.pageCount <= 1) {
+        shareImageExport(context, export, chooserTitle, ConversationShareRenderer.ImageExportMode.PAGED)
+      } else {
+        pendingImageExport = PendingImageExportPayload(export, chooserTitle)
+        localState.update {
+          it.copy(
+            pendingImageExportChoice = ImageExportChoiceState(
+              pageCount = plan.pageCount,
+              singleImageAllowed = plan.singleImageAllowed
+            )
+          )
+        }
+      }
+    }
+  }
+
+  internal fun confirmImageExport(
+    mode: ConversationShareRenderer.ImageExportMode,
+    context: Context
+  ) {
+    val payload = pendingImageExport ?: return
+    val choice = localState.value.pendingImageExportChoice ?: return
+    if (mode == ConversationShareRenderer.ImageExportMode.SINGLE && !choice.singleImageAllowed) return
+    imageExportJob?.cancel()
+    pendingImageExport = null
+    localState.update { it.copy(pendingImageExportChoice = null) }
+    imageExportJob = viewModelScope.launch {
+      shareImageExport(context, payload.export, payload.chooserTitle, mode)
+    }
+  }
+
+  internal fun dismissImageExportChoice() {
+    pendingImageExport = null
+    localState.update { it.copy(pendingImageExportChoice = null) }
   }
 
   private suspend fun shareImageExport(
     context: Context,
     export: ConversationExport,
-    chooserTitle: String
+    chooserTitle: String,
+    mode: ConversationShareRenderer.ImageExportMode
   ) {
     val uris = withContext(Dispatchers.IO) {
       runCatching {
-        ConversationShareRenderer.saveImageExports(context, export)
-          ?: ConversationShareRenderer.writeImageExports(context, export)
-      }.getOrElse { emptyList() }
+        ConversationShareRenderer.saveImageExports(context, export, mode)
+          ?: ConversationShareRenderer.writeImageExports(context, export, mode)
+      }.getOrElse { error ->
+        if (error is CancellationException) throw error
+        emptyList()
+      }
     }
     if (uris.isEmpty()) {
-      localState.update { it.copy(error = "图片导出失败") }
+      localState.update {
+        it.copy(
+          error = if (mode == ConversationShareRenderer.ImageExportMode.SINGLE) {
+            "单张长图导出失败，请改用分图"
+          } else {
+            "图片导出失败"
+          }
+        )
+      }
       return
     }
     val sendIntent = Intent(
@@ -1548,9 +1610,8 @@ class ChatViewModel(
   }
 
   fun shareFavoriteSnippetLongImage(favoriteId: String, context: Context) {
-    viewModelScope.launch {
-      val export = repository.favoriteSnippetExport(favoriteId) ?: return@launch
-      shareImageExport(context, export, "分享收藏长图")
+    requestImageExport(context, "分享收藏长图") {
+      repository.favoriteSnippetExport(favoriteId)
     }
   }
 

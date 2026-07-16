@@ -29,6 +29,11 @@ data class IncomingShareDraft(
     get() = attachments.isNotEmpty()
 }
 
+data class ImageExportChoiceState(
+  val pageCount: Int,
+  val singleImageAllowed: Boolean
+)
+
 data class ChatUiState(
   val providers: List<ChatProviderConfig> = emptyList(),
   val conversations: List<ChatConversation> = emptyList(),
@@ -74,6 +79,7 @@ data class ChatUiState(
   val deleteTargetConversationId: String? = null,
   val providerRebindDeleteSourceId: String? = null,
   val providerRebindDeleteBotIds: List<String> = emptyList(),
+  val pendingImageExportChoice: ImageExportChoiceState? = null,
   val error: String? = null
 ) {
   val selectedConversation: ChatConversation?

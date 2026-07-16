@@ -1,5 +1,11 @@
 # AIChatApp Project Tracker
 
+## 2026-07-16 Local Update Summary
+
+- Done: long-image sharing now measures the real Canvas/Markdown layout before deciding whether to paginate. Exports that fit within 12,000px stay as one image; longer exports ask whether to share the predicted page count or, when the measured height is at most 24,000px, combine into one RGB_565 image with the same approximate bitmap-memory budget.
+- Done: the export-mode choice covers single messages, full/selected single chats, full/selected group chats, and favorites. Very long exports only offer safe pagination, cancellation creates no files, and rendering now fails instead of silently clipping content beyond the selected mode's height limit.
+- Validation: the full `:app:testDebugUnitTest` suite, focused Robolectric renderer tests, `:app:compileDebugKotlin`, and `:app:assembleDebug` passed. No Android test device was connected for the final dialog/share-sheet interaction check.
+
 ## 2026-06-03 Local Update Summary
 
 - Done: Settings now includes an "AI 回复时保持亮屏" switch, enabled by default. While any single-chat or group-chat generation is active, the Compose root prevents natural screen-off; it releases the screen-on request immediately after all generation finishes or when the user disables the switch. Manual device locking still turns the screen off, while the existing foreground-service and battery-optimization protection continues background generation.
@@ -387,7 +393,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | RISK-001 | 附件使用 Base64 data URL，图片/文件过大时会导致请求体和 token 成本过高 | Watch | P1 | 增加大小限制、图片压缩、Files API 上传 |
 | RISK-002 | DeepSeek 当前不支持图片/文件附件 | Done | P1 | 默认关闭附件按钮，保留 provider 开关 |
 | RISK-003 | OpenAI hosted web_search 不一定暴露所有内部访问 URL | Watch | P1 | 保留 raw log 和多策略解析 |
-| RISK-004 | 长图导出超长对话可能触达 Bitmap 内存限制 | Done | P1 | 图片导出已按保守高度分页，单页限制为 12000px，并以多图片系统分享替代单张截断 |
+| RISK-004 | 长图导出超长对话可能触达 Bitmap 内存限制 | Done | P1 | 分页模式单页限制为 12000px；真实布局不超过 24000px 时可由用户选择 RGB_565 安全单图，继续变长则只允许多图分享，渲染超限会失败而不截断 |
 | RISK-005 | `AIChatAppRoot.kt` 文件过大 | Watch | P2 | 后续按 screen/component/dialog/markdown 拆分 |
 | RISK-006 | 中文乱码可能仍残留在旧代码或历史 tracker 文本里 | Watch | P1 | 每次提交前执行 mojibake 扫描 |
 | RISK-007 | Room migration 版本增长较快 | Done | P2 | 已新增 Room migration 自动化测试，覆盖 schema 1 到最新版本及每个导出 schema 到最新版本 |
@@ -420,6 +426,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-014 | 系统分享真机回归 | Planned | 验证相册、文件管理器、浏览器分享到 App；覆盖单文件、多文件、纯文本、文件加文本说明和 App 前台分享 |
 | NEXT-P1-015 | 分享目标页搜索 | Done | 分享目标较多时可搜索单聊、群聊和 Provider；搜索覆盖新建单聊 Provider、已有单聊和已有群聊 |
 | NEXT-P1-016 | 背景预设真机回归 | Planned | 验证设置页增改删排序、新建/编辑群聊插入预设、删除预设后已保存群聊主题不变 |
+| NEXT-P1-017 | 长图导出方式选择 | Done | 所有长图入口先按真实布局判断；超过 12000px 时询问分图或安全单图，单图上限 24000px，超限只允许分图且不截断内容 |
 
 ### 6.2 P2 / P3
 

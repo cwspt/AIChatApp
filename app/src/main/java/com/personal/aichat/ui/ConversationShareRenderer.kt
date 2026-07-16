@@ -21,12 +21,16 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import kotlin.math.ceil
 import kotlin.math.max
 
 object ConversationShareRenderer {
   // Keep each allocation below roughly 50 MB on common devices. Long chats are paged.
   private const val MaxImageHeight = 12000
+  private const val MaxSingleImageHeight = 24000
   private const val ImageWidth = 1080
+  private const val ImagePadding = 52f
+  private const val BubblePadding = 32f
   private const val TitleLineHeight = 64f
   private const val MetaLineHeight = 40f
   private const val RoleRowHeight = 44f
@@ -40,16 +44,35 @@ object ConversationShareRenderer {
   private const val ImageMessageHeightBudget = 7_600
   private const val MaxLineChunkLength = 1_200
 
+  internal enum class ImageExportMode {
+    SINGLE,
+    PAGED
+  }
+
+  internal data class ImageExportPlan(
+    val standardHeightPx: Int,
+    val pageCount: Int,
+    val singleImageAllowed: Boolean
+  )
+
   fun writeTextExport(context: Context, title: String, text: String): Uri {
     val file = exportFile(context, safeFileName(title, "md"))
     file.writeText(text, Charsets.UTF_8)
     return file.toShareUri(context)
   }
 
-  fun writeImageExports(context: Context, export: ConversationExport): List<Uri> {
-    val pages = imageExportPages(export)
+  internal fun writeImageExports(
+    context: Context,
+    export: ConversationExport,
+    mode: ImageExportMode
+  ): List<Uri> {
+    val pages = imageExportsForMode(export, mode)
     return pages.mapIndexed { index, page ->
-      val bitmap = renderBitmap(page)
+      val bitmap = renderBitmap(
+        export = page,
+        maxHeight = imageMaxHeight(mode),
+        config = imageBitmapConfig(mode)
+      )
       try {
         val file = exportFile(context, imageFileName(export.title, index, pages.size))
         file.outputStream().use { output ->
@@ -62,9 +85,13 @@ object ConversationShareRenderer {
     }
   }
 
-  fun saveImageExports(context: Context, export: ConversationExport): List<Uri>? {
+  internal fun saveImageExports(
+    context: Context,
+    export: ConversationExport,
+    mode: ImageExportMode
+  ): List<Uri>? {
     val resolver = context.contentResolver
-    val pages = imageExportPages(export)
+    val pages = imageExportsForMode(export, mode)
     val savedUris = mutableListOf<Uri>()
     return runCatching {
       pages.forEachIndexed { index, page ->
@@ -79,7 +106,11 @@ object ConversationShareRenderer {
         }
         val uri = checkNotNull(resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values))
         savedUris += uri
-        val bitmap = renderBitmap(page)
+        val bitmap = renderBitmap(
+          export = page,
+          maxHeight = imageMaxHeight(mode),
+          config = imageBitmapConfig(mode)
+        )
         try {
           checkNotNull(resolver.openOutputStream(uri)).use { output ->
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
@@ -100,8 +131,49 @@ object ConversationShareRenderer {
     }
   }
 
+  internal fun imageExportPlan(export: ConversationExport): ImageExportPlan {
+    val shareableExport = export.withoutToolMessages()
+    val standardHeight = buildImageRenderLayout(shareableExport).height
+    val pageCount = if (standardHeight <= MaxImageHeight) 1 else imageExportPages(shareableExport).size
+    return ImageExportPlan(
+      standardHeightPx = standardHeight,
+      pageCount = pageCount,
+      singleImageAllowed = standardHeight <= MaxSingleImageHeight
+    )
+  }
+
+  internal fun imageMaxHeight(mode: ImageExportMode): Int = when (mode) {
+    ImageExportMode.SINGLE -> MaxSingleImageHeight
+    ImageExportMode.PAGED -> MaxImageHeight
+  }
+
+  internal fun imageBitmapConfig(mode: ImageExportMode): Bitmap.Config = when (mode) {
+    ImageExportMode.SINGLE -> Bitmap.Config.RGB_565
+    ImageExportMode.PAGED -> Bitmap.Config.ARGB_8888
+  }
+
+  private fun imageExportsForMode(
+    export: ConversationExport,
+    mode: ImageExportMode
+  ): List<ConversationExport> {
+    val shareableExport = export.withoutToolMessages()
+    return when (mode) {
+      ImageExportMode.PAGED -> imageExportPages(shareableExport)
+      ImageExportMode.SINGLE -> {
+        val height = buildImageRenderLayout(shareableExport).height
+        require(height <= MaxSingleImageHeight) {
+          "Single image height $height exceeds $MaxSingleImageHeight"
+        }
+        listOf(shareableExport)
+      }
+    }
+  }
+
   internal fun imageExportPages(export: ConversationExport): List<ConversationExport> {
     val shareableExport = export.withoutToolMessages()
+    if (buildImageRenderLayout(shareableExport).height <= MaxImageHeight) {
+      return listOf(shareableExport)
+    }
     val pageMessages = mutableListOf<MutableList<ConversationExportMessage>>()
     var currentPage = mutableListOf<ConversationExportMessage>()
     var currentHeight = 0
@@ -120,14 +192,55 @@ object ConversationShareRenderer {
       pageMessages += currentPage
     }
 
-    val totalPages = pageMessages.size
-    return pageMessages.mapIndexed { index, messages ->
+    val safePageMessages = pageMessages.flatMap { messages ->
+      splitPageMessagesToExactHeight(shareableExport, messages)
+    }
+    val totalPages = safePageMessages.size
+    return safePageMessages.mapIndexed { index, messages ->
       val pageTitle = if (totalPages == 1) {
         shareableExport.title
       } else {
         "${shareableExport.title} (${index + 1}/$totalPages)"
       }
       shareableExport.copy(title = pageTitle, messages = messages)
+    }
+  }
+
+  private fun splitPageMessagesToExactHeight(
+    export: ConversationExport,
+    messages: List<ConversationExportMessage>
+  ): List<List<ConversationExportMessage>> {
+    if (messages.isEmpty()) return listOf(emptyList())
+    val measurementExport = export.copy(
+      title = "${export.title} (999/999)",
+      messages = messages
+    )
+    if (buildImageRenderLayout(measurementExport).height <= MaxImageHeight) {
+      return listOf(messages)
+    }
+    if (messages.size > 1) {
+      val splitIndex = messages.size / 2
+      return splitPageMessagesToExactHeight(export, messages.take(splitIndex)) +
+        splitPageMessagesToExactHeight(export, messages.drop(splitIndex))
+    }
+    val message = messages.single()
+    val content = exportMessageContent(message)
+    require(content.length > 1) { "Image export message cannot fit within $MaxImageHeight px" }
+    val splitIndex = preferredContentSplitIndex(content)
+    val first = message.copy(id = "${message.id}-exact-0", content = content.substring(0, splitIndex))
+    val second = message.copy(id = "${message.id}-exact-1", content = content.substring(splitIndex))
+    return splitPageMessagesToExactHeight(export, listOf(first)) +
+      splitPageMessagesToExactHeight(export, listOf(second))
+  }
+
+  private fun preferredContentSplitIndex(content: String): Int {
+    val midpoint = content.length / 2
+    val before = content.lastIndexOf('\n', startIndex = midpoint)
+    val after = content.indexOf('\n', startIndex = midpoint)
+    return when {
+      before > 0 && midpoint - before <= content.length / 4 -> before + 1
+      after in 1 until content.lastIndex && after - midpoint <= content.length / 4 -> after + 1
+      else -> midpoint.coerceIn(1, content.lastIndex)
     }
   }
 
@@ -193,11 +306,11 @@ object ConversationShareRenderer {
     }.coerceAtLeast(BodyLineHeight.toInt())
   }
 
-  private fun renderBitmap(export: ConversationExport): Bitmap {
+  private fun buildImageRenderLayout(export: ConversationExport): ImageRenderLayout {
     val shareableExport = export.withoutToolMessages()
     val width = ImageWidth
-    val padding = 52f
-    val bubblePadding = 32f
+    val padding = ImagePadding
+    val bubblePadding = BubblePadding
     val maxBubbleWidth = width - padding * 2
     val titlePaint = textPaint(50f, Color.rgb(27, 43, 35), Typeface.BOLD)
     val metaPaint = textPaint(28f, Color.rgb(91, 108, 99))
@@ -212,7 +325,6 @@ object ConversationShareRenderer {
     val errorPaint = textPaint(40f, Color.rgb(170, 48, 38))
     val errorBoldPaint = textPaint(40f, Color.rgb(170, 48, 38), Typeface.BOLD)
     val tableHeaderPaint = textPaint(30f, Color.rgb(26, 32, 29), Typeface.BOLD)
-    val smallPaint = textPaint(26f, Color.rgb(112, 125, 118))
     val paints = MarkdownPaints(
       body = bodyPaint,
       bold = boldPaint,
@@ -254,39 +366,66 @@ object ConversationShareRenderer {
       height += 22
     }
     height += padding
-    val bitmapHeight = height.coerceAtMost(MaxImageHeight.toFloat()).toInt()
-    val bitmap = Bitmap.createBitmap(width, bitmapHeight, Bitmap.Config.ARGB_8888)
+    return ImageRenderLayout(
+      width = width,
+      padding = padding,
+      bubblePadding = bubblePadding,
+      titlePaint = titlePaint,
+      metaPaint = metaPaint,
+      rolePaint = rolePaint,
+      paints = paints,
+      titleLines = titleLines,
+      metaLines = metaLines,
+      messages = messageLayouts,
+      height = ceil(height.toDouble()).toInt().coerceAtLeast(1)
+    )
+  }
+
+  private fun renderBitmap(
+    export: ConversationExport,
+    maxHeight: Int,
+    config: Bitmap.Config
+  ): Bitmap {
+    val layout = buildImageRenderLayout(export)
+    require(layout.height <= maxHeight) {
+      "Image height ${layout.height} exceeds $maxHeight"
+    }
+    val bitmap = Bitmap.createBitmap(layout.width, layout.height, config)
     val canvas = Canvas(bitmap)
     canvas.drawColor(Color.rgb(246, 243, 236))
 
-    var y = padding
-    titleLines.forEach { line ->
-      canvas.drawText(line, padding, y + titlePaint.textSize, titlePaint)
+    var y = layout.padding
+    layout.titleLines.forEach { line ->
+      canvas.drawText(line, layout.padding, y + layout.titlePaint.textSize, layout.titlePaint)
       y += TitleLineHeight
     }
     y += 8
-    if (metaLines.isEmpty()) {
-      canvas.drawText("AI Chat 导出", padding, y + metaPaint.textSize, metaPaint)
+    if (layout.metaLines.isEmpty()) {
+      canvas.drawText("AI Chat 导出", layout.padding, y + layout.metaPaint.textSize, layout.metaPaint)
       y += MetaLineHeight
     } else {
-      metaLines.forEach { line ->
-        canvas.drawText(line, padding, y + metaPaint.textSize, metaPaint)
+      layout.metaLines.forEach { line ->
+        canvas.drawText(line, layout.padding, y + layout.metaPaint.textSize, layout.metaPaint)
         y += MetaLineHeight
       }
     }
     y += 24
 
-    messageLayouts.forEach { item ->
-      if (y > bitmapHeight - padding) return@forEach
+    layout.messages.forEach { item ->
       val roleName = when (item.role) {
         MessageRole.USER -> "我"
         MessageRole.ASSISTANT -> "AI"
         MessageRole.SYSTEM -> "系统"
         MessageRole.TOOL -> "工具"
       }
-      canvas.drawText("$roleName · ${item.time}", padding, y + rolePaint.textSize, rolePaint)
+      canvas.drawText(
+        "$roleName · ${item.time}",
+        layout.padding,
+        y + layout.rolePaint.textSize,
+        layout.rolePaint
+      )
       y += RoleRowHeight
-      val bubbleHeight = item.blocks.sumOf { it.height.toInt() }.toFloat() + bubblePadding * 2
+      val bubbleHeight = item.blocks.sumOf { it.height.toInt() }.toFloat() + layout.bubblePadding * 2
       val bubbleColor = when {
         item.failed -> Color.rgb(255, 239, 235)
         item.role == MessageRole.USER -> Color.rgb(216, 236, 220)
@@ -295,33 +434,27 @@ object ConversationShareRenderer {
       }
       val rectPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = bubbleColor }
       canvas.drawRoundRect(
-        padding,
+        layout.padding,
         y,
-        width - padding,
-        (y + bubbleHeight).coerceAtMost(bitmapHeight - padding),
+        layout.width - layout.padding,
+        y + bubbleHeight,
         30f,
         30f,
         rectPaint
       )
-      var textY = y + bubblePadding
+      var textY = y + layout.bubblePadding
       item.blocks.forEach { block ->
-        if (textY < bitmapHeight - padding) {
-          drawMarkdownBlock(
-            canvas = canvas,
-            block = block,
-            left = padding + bubblePadding,
-            top = textY,
-            right = width - padding - bubblePadding,
-            paints = paints
-          )
-        }
+        drawMarkdownBlock(
+          canvas = canvas,
+          block = block,
+          left = layout.padding + layout.bubblePadding,
+          top = textY,
+          right = layout.width - layout.padding - layout.bubblePadding,
+          paints = layout.paints
+        )
         textY += block.height
       }
       y += bubbleHeight + 22
-    }
-
-    if (height > MaxImageHeight) {
-      canvas.drawText("内容较长，图片已截断；建议使用“文件分享”导出完整 Markdown。", padding, bitmapHeight - padding, smallPaint)
     }
     return bitmap
   }
@@ -716,7 +849,15 @@ object ConversationShareRenderer {
         finishLine()
       }
       if (current.isEmpty() && width > maxWidth && token.length > 1) {
-        token.forEach { character -> appendToken(character.toString(), style) }
+        var remaining = token
+        while (remaining.isNotEmpty()) {
+          val count = paint.breakText(remaining, true, maxWidth, null).coerceAtLeast(1)
+          val part = remaining.take(count)
+          appendCurrent(part, style)
+          currentWidth = paint.measureText(part)
+          remaining = remaining.drop(count)
+          if (remaining.isNotEmpty()) finishLine()
+        }
       } else {
         appendCurrent(token, style)
         currentWidth += width
@@ -864,6 +1005,20 @@ object ConversationShareRenderer {
       timeZone = TimeZone.getDefault()
     }.format(Date(timestamp))
   }
+
+  private data class ImageRenderLayout(
+    val width: Int,
+    val padding: Float,
+    val bubblePadding: Float,
+    val titlePaint: Paint,
+    val metaPaint: Paint,
+    val rolePaint: Paint,
+    val paints: MarkdownPaints,
+    val titleLines: List<String>,
+    val metaLines: List<String>,
+    val messages: List<RenderMessage>,
+    val height: Int
+  )
 
   private data class MarkdownPaints(
     val body: Paint,
