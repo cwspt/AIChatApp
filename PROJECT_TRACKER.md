@@ -2,6 +2,9 @@
 
 ## 2026-07-16 Local Update Summary
 
+- Done: exported chat images now use the same block-level Markdown parser as in-app chat bubbles, keeping paragraph, heading, ordered/unordered list, fenced code block, table, and divider recognition aligned instead of maintaining a second parser that can drift.
+- Done: image exports now draw Markdown horizontal rules for `---`, `***`, and `___` across the bubble content width. Unordered-list bullets and table recognition also match the in-app renderer.
+- Validation: focused `MarkdownRendererTest` and `ConversationShareRendererTest` suites passed, including a native-Canvas pixel test for the exported divider; the full `:app:testDebugUnitTest` suite and `:app:assembleDebug` also passed.
 - Done: long-image sharing now measures the real Canvas/Markdown layout before deciding whether to paginate. Exports that fit within 12,000px stay as one image; longer exports ask whether to share the predicted page count or, when the measured height is at most 24,000px, combine into one RGB_565 image with the same approximate bitmap-memory budget.
 - Done: the export-mode choice covers single messages, full/selected single chats, full/selected group chats, and favorites. Very long exports only offer safe pagination, cancellation creates no files, and rendering now fails instead of silently clipping content beyond the selected mode's height limit.
 - Validation: the full `:app:testDebugUnitTest` suite, focused Robolectric renderer tests, `:app:compileDebugKotlin`, and `:app:assembleDebug` passed. No Android test device was connected for the final dialog/share-sheet interaction check.
@@ -427,6 +430,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-015 | 分享目标页搜索 | Done | 分享目标较多时可搜索单聊、群聊和 Provider；搜索覆盖新建单聊 Provider、已有单聊和已有群聊 |
 | NEXT-P1-016 | 背景预设真机回归 | Planned | 验证设置页增改删排序、新建/编辑群聊插入预设、删除预设后已保存群聊主题不变 |
 | NEXT-P1-017 | 长图导出方式选择 | Done | 所有长图入口先按真实布局判断；超过 12000px 时询问分图或安全单图，单图上限 24000px，超限只允许分图且不截断内容 |
+| NEXT-P1-018 | 长图 Markdown 样式对齐 | Done | 长图导出与聊天气泡共用块级 Markdown 解析器，支持三种分割线语法并对齐标题、列表、代码块和表格识别；像素测试确认横线实际写入导出 Bitmap |
 
 ### 6.2 P2 / P3
 

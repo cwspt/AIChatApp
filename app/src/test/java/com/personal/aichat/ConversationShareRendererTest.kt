@@ -1,6 +1,7 @@
 package com.personal.aichat
 
 import android.graphics.Bitmap
+import android.graphics.Color
 import com.personal.aichat.data.ConversationExport
 import com.personal.aichat.data.ConversationExportMessage
 import com.personal.aichat.domain.MessageRole
@@ -13,6 +14,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
@@ -130,6 +132,28 @@ class ConversationShareRendererTest {
     assertTrue(spans.any { it.text == "code" && it.style == ImageInlineStyle.INLINE_CODE })
     assertTrue(spans.any { it.text == "OpenAI" && it.style == ImageInlineStyle.LINK })
     assertTrue(spans.any { it.text == "help.openai.com" && it.style == ImageInlineStyle.LINK })
+  }
+
+  @Test
+  @GraphicsMode(GraphicsMode.Mode.NATIVE)
+  fun imageExportDrawsMarkdownDividerAcrossBubbleContentWidth() {
+    val bitmap = ConversationShareRenderer.renderSingleImageExportBitmap(
+      export = ConversationExport(
+        "Divider",
+        null,
+        null,
+        listOf(message("Before\n\n---\n\nAfter"))
+      ),
+      mode = ConversationShareRenderer.ImageExportMode.PAGED
+    )
+    val dividerColor = Color.rgb(202, 197, 207)
+
+    val dividerRowFound = (0 until bitmap.height).any { y ->
+      (0 until bitmap.width).count { x -> bitmap.getPixel(x, y) == dividerColor } > 700
+    }
+
+    assertTrue(dividerRowFound)
+    bitmap.recycle()
   }
 
   private fun message(content: String) = ConversationExportMessage(

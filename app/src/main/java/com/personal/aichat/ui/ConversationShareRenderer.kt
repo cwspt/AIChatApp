@@ -85,6 +85,19 @@ object ConversationShareRenderer {
     }
   }
 
+  internal fun renderSingleImageExportBitmap(
+    export: ConversationExport,
+    mode: ImageExportMode
+  ): Bitmap {
+    val pages = imageExportsForMode(export, mode)
+    require(pages.size == 1) { "Expected a single image export, but found ${pages.size} pages" }
+    return renderBitmap(
+      export = pages.single(),
+      maxHeight = imageMaxHeight(mode),
+      config = imageBitmapConfig(mode)
+    )
+  }
+
   internal fun saveImageExports(
     context: Context,
     export: ConversationExport,
@@ -299,6 +312,7 @@ object ConversationShareRenderer {
           36
         }
         inCodeBlock -> 58 + line.length * 3
+        isMarkdownDivider(trimmed) -> 34
         looksLikeMarkdownTableRow(trimmed) -> 104 + line.length * 3
         trimmed.startsWith("#") -> 42 + line.length * 4
         else -> 24 + line.length * 3
@@ -472,158 +486,70 @@ object ConversationShareRenderer {
     maxWidth: Float,
     failed: Boolean = false
   ): List<RenderBlock> {
-    val blocks = mutableListOf<RenderBlock>()
-    val paragraph = StringBuilder()
-    val code = StringBuilder()
-    val tableRows = mutableListOf<List<String>>()
-    var inCode = false
-
-    fun flushParagraph() {
-      val text = paragraph.toString().trim()
-      if (text.isNotBlank()) {
-        val style = if (failed) ImageInlineStyle.ERROR else ImageInlineStyle.BODY
-        blocks += richTextBlock(
-          text = text,
-          defaultStyle = style,
+    val blocks = parseMarkdownBlocks(markdown).map { block ->
+      when (block) {
+        is MarkdownBlock.Paragraph -> richTextBlock(
+          text = block.text,
+          defaultStyle = if (failed) ImageInlineStyle.ERROR else ImageInlineStyle.BODY,
           paints = paints,
           maxWidth = maxWidth,
           lineHeight = BodyLineHeight,
           bottomPadding = 12f
         )
-      }
-      paragraph.clear()
-    }
-
-    fun flushCode() {
-      val text = code.toString().trimEnd()
-      if (text.isNotBlank()) {
-        val lines = wrapText(text, paints.code, maxWidth - 24f)
-        blocks += RenderBlock.Code(lines, lines.size * CodeLineHeight + 32f)
-      }
-      code.clear()
-    }
-
-    fun flushTable() {
-      if (tableRows.isNotEmpty()) {
-        val columns = tableRows.maxOf { it.size }.coerceAtLeast(1)
-        val columnWidth = (maxWidth - 24f) / columns
-        var tableHeight = 18f
-        tableRows.forEachIndexed { rowIndex, row ->
-          val cellStyle = if (rowIndex == 0) ImageInlineStyle.TABLE_HEADER else ImageInlineStyle.BODY
-          val rowLines = (0 until columns).maxOf { column ->
-            layoutInlineText(
-              imageInlineMarkdownSpans(row.getOrNull(column).orEmpty()),
-              cellStyle,
-              paints,
-              columnWidth - 12f
-            ).size
+        is MarkdownBlock.Heading -> {
+          val style = when (block.level) {
+            1 -> ImageInlineStyle.HEADING_ONE
+            2 -> ImageInlineStyle.HEADING_TWO
+            else -> ImageInlineStyle.HEADING_THREE
           }
-          tableHeight += rowLines * TableLineHeight + 22f
+          val lineHeight = when (block.level) {
+            1 -> HeadingOneLineHeight
+            2 -> HeadingTwoLineHeight
+            else -> HeadingThreeLineHeight
+          }
+          richTextBlock(
+            text = block.text,
+            defaultStyle = style,
+            paints = paints,
+            maxWidth = maxWidth,
+            lineHeight = lineHeight,
+            bottomPadding = 18f
+          )
         }
-        blocks += RenderBlock.Table(tableRows.toList(), columns, tableHeight)
-        tableRows.clear()
-      }
-    }
-
-    markdown.lines().forEach { rawLine ->
-      val line = rawLine.trimEnd()
-      if (line.trimStart().startsWith("```")) {
-        if (inCode) {
-          flushCode()
-          inCode = false
-        } else {
-          flushParagraph()
-          flushTable()
-          inCode = true
-        }
-        return@forEach
-      }
-
-      if (inCode) {
-        code.append(rawLine).append('\n')
-        return@forEach
-      }
-
-      val trimmed = line.trim()
-      if (trimmed.isBlank()) {
-        flushParagraph()
-        flushTable()
-        return@forEach
-      }
-
-      if (isMarkdownTableSeparator(trimmed)) {
-        flushParagraph()
-        return@forEach
-      }
-      if (looksLikeMarkdownTableRow(trimmed)) {
-        flushParagraph()
-        tableRows += parseMarkdownTableRow(trimmed)
-        return@forEach
-      } else {
-        flushTable()
-      }
-
-      val headingLevel = trimmed.takeWhile { it == '#' }.length
-      if (headingLevel in 1..4 && trimmed.getOrNull(headingLevel) == ' ') {
-        flushParagraph()
-        val style = when (headingLevel) {
-          1 -> ImageInlineStyle.HEADING_ONE
-          2 -> ImageInlineStyle.HEADING_TWO
-          else -> ImageInlineStyle.HEADING_THREE
-        }
-        val lineHeight = when (headingLevel) {
-          1 -> HeadingOneLineHeight
-          2 -> HeadingTwoLineHeight
-          else -> HeadingThreeLineHeight
-        }
-        blocks += richTextBlock(
-          text = trimmed.drop(headingLevel).trim(),
-          defaultStyle = style,
+        is MarkdownBlock.ListItem -> richTextBlock(
+          text = block.text,
+          defaultStyle = if (failed) ImageInlineStyle.ERROR else ImageInlineStyle.BODY,
           paints = paints,
           maxWidth = maxWidth,
-          lineHeight = lineHeight,
-          bottomPadding = 18f
+          lineHeight = BodyLineHeight,
+          bottomPadding = 8f,
+          marker = block.marker
         )
-        return@forEach
-      }
-
-      val unordered = listOf("- ", "* ", "+ ").firstOrNull { trimmed.startsWith(it) }
-      val orderedMatch = Regex("^(\\d+)[.)]\\s+(.*)$").matchEntire(trimmed)
-      when {
-        unordered != null -> {
-          flushParagraph()
-          blocks += richTextBlock(
-            text = trimmed.drop(unordered.length).trim(),
-            defaultStyle = if (failed) ImageInlineStyle.ERROR else ImageInlineStyle.BODY,
-            paints = paints,
-            maxWidth = maxWidth,
-            lineHeight = BodyLineHeight,
-            bottomPadding = 8f,
-            marker = "-"
-          )
+        is MarkdownBlock.Code -> {
+          val lines = wrapText(block.text, paints.code, maxWidth - 24f)
+          RenderBlock.Code(lines, lines.size * CodeLineHeight + 32f)
         }
-        orderedMatch != null -> {
-          flushParagraph()
-          blocks += richTextBlock(
-            text = orderedMatch.groupValues[2],
-            defaultStyle = if (failed) ImageInlineStyle.ERROR else ImageInlineStyle.BODY,
-            paints = paints,
-            maxWidth = maxWidth,
-            lineHeight = BodyLineHeight,
-            bottomPadding = 8f,
-            marker = "${orderedMatch.groupValues[1]}."
-          )
+        is MarkdownBlock.Table -> {
+          val columns = block.rows.maxOfOrNull { it.size }?.coerceAtLeast(1) ?: 1
+          val columnWidth = (maxWidth - 24f) / columns
+          var tableHeight = 18f
+          block.rows.forEachIndexed { rowIndex, row ->
+            val cellStyle = if (rowIndex == 0) ImageInlineStyle.TABLE_HEADER else ImageInlineStyle.BODY
+            val rowLines = (0 until columns).maxOf { column ->
+              layoutInlineText(
+                imageInlineMarkdownSpans(row.getOrNull(column).orEmpty()),
+                cellStyle,
+                paints,
+                columnWidth - 12f
+              ).size
+            }
+            tableHeight += rowLines * TableLineHeight + 22f
+          }
+          RenderBlock.Table(block.rows, columns, tableHeight)
         }
-        else -> {
-          if (paragraph.isNotEmpty()) paragraph.append('\n')
-          paragraph.append(trimmed)
-        }
+        MarkdownBlock.Divider -> RenderBlock.Divider
       }
     }
-
-    if (inCode) flushCode()
-    flushParagraph()
-    flushTable()
     return blocks.ifEmpty {
       listOf(
         richTextBlock(
@@ -670,6 +596,15 @@ object ConversationShareRenderer {
           canvas.drawText(line, left + 12f, y, paint)
           y += CodeLineHeight
         }
+      }
+      RenderBlock.Divider -> {
+        val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = Color.rgb(202, 197, 207)
+          strokeWidth = 3f
+          strokeCap = Paint.Cap.ROUND
+        }
+        val dividerY = top + block.height / 2f
+        canvas.drawLine(left, dividerY, right, dividerY, dividerPaint)
       }
       is RenderBlock.Table -> {
         val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -1075,6 +1010,10 @@ object ConversationShareRenderer {
       val lines: List<String>,
       override val height: Float
     ) : RenderBlock
+
+    data object Divider : RenderBlock {
+      override val height: Float = 34f
+    }
 
     data class Table(
       val rows: List<List<String>>,

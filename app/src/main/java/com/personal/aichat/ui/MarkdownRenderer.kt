@@ -120,7 +120,7 @@ internal fun MarkdownPreview(
   }
 }
 
-private sealed interface MarkdownBlock {
+internal sealed interface MarkdownBlock {
   data class Paragraph(val text: String) : MarkdownBlock
   data class Heading(val level: Int, val text: String) : MarkdownBlock
   data class ListItem(val marker: String, val text: String) : MarkdownBlock
@@ -184,7 +184,7 @@ private fun MarkdownTable(
   }
 }
 
-private fun parseMarkdownBlocks(markdown: String): List<MarkdownBlock> {
+internal fun parseMarkdownBlocks(markdown: String): List<MarkdownBlock> {
   val blocks = mutableListOf<MarkdownBlock>()
   val paragraph = StringBuilder()
   val code = StringBuilder()
@@ -299,7 +299,7 @@ private fun parseMarkdownBlocks(markdown: String): List<MarkdownBlock> {
   return blocks
 }
 
-private fun isMarkdownDivider(line: String): Boolean {
+internal fun isMarkdownDivider(line: String): Boolean {
   val compact = line.filterNot { it.isWhitespace() }
   if (compact.length < 3) return false
   val marker = compact.first()
