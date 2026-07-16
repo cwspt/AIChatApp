@@ -120,15 +120,18 @@ class ConversationShareRendererTest {
 
   @Test
   fun imageInlineMarkdownSpansPreserveRichStylesAndVisibleTextOrder() {
-    val text = "Normal **bold** with `code` and [OpenAI](https://openai.com), plus help.openai.com."
+    val text = "Normal **bold**, *italic*, ***both***, ~~removed~~, `code`, [OpenAI](https://openai.com), help.openai.com."
 
     val spans = ConversationShareRenderer.imageInlineMarkdownSpans(text)
 
     assertEquals(
-      "Normal bold with code and OpenAI, plus help.openai.com.",
+      "Normal bold, italic, both, removed, code, OpenAI, help.openai.com.",
       spans.joinToString("") { it.text }
     )
     assertTrue(spans.any { it.text == "bold" && it.style == ImageInlineStyle.BOLD })
+    assertTrue(spans.any { it.text == "italic" && it.style == ImageInlineStyle.ITALIC })
+    assertTrue(spans.any { it.text == "both" && it.style == ImageInlineStyle.BOLD_ITALIC })
+    assertTrue(spans.any { it.text == "removed" && it.style == ImageInlineStyle.STRIKETHROUGH })
     assertTrue(spans.any { it.text == "code" && it.style == ImageInlineStyle.INLINE_CODE })
     assertTrue(spans.any { it.text == "OpenAI" && it.style == ImageInlineStyle.LINK })
     assertTrue(spans.any { it.text == "help.openai.com" && it.style == ImageInlineStyle.LINK })
@@ -153,6 +156,28 @@ class ConversationShareRendererTest {
     }
 
     assertTrue(dividerRowFound)
+    bitmap.recycle()
+  }
+
+  @Test
+  @GraphicsMode(GraphicsMode.Mode.NATIVE)
+  fun imageExportDrawsBlockQuoteAccent() {
+    val bitmap = ConversationShareRenderer.renderSingleImageExportBitmap(
+      export = ConversationExport(
+        "Quote",
+        null,
+        null,
+        listOf(message("> Quoted **content**\n> second line"))
+      ),
+      mode = ConversationShareRenderer.ImageExportMode.PAGED
+    )
+    val quoteColor = Color.rgb(124, 145, 134)
+
+    val quoteColumnFound = (0 until bitmap.width).any { x ->
+      (0 until bitmap.height).count { y -> bitmap.getPixel(x, y) == quoteColor } > 40
+    }
+
+    assertTrue(quoteColumnFound)
     bitmap.recycle()
   }
 

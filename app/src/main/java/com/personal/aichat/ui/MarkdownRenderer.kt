@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
@@ -41,6 +42,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.platform.LocalContext
@@ -103,6 +105,25 @@ internal fun MarkdownPreview(
             interactiveLinks = interactiveLinks
           )
         }
+        is MarkdownBlock.BlockQuote -> Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min),
+          horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+          Box(
+            modifier = Modifier
+              .width(3.dp)
+              .fillMaxHeight()
+              .background(colors?.divider ?: MaterialTheme.colorScheme.outlineVariant)
+          )
+          MarkdownInlineText(
+            text = renderInlineMarkdown(block.text, linkColor),
+            modifier = Modifier.weight(1f),
+            color = colors?.muted ?: MaterialTheme.colorScheme.onSurfaceVariant,
+            interactiveLinks = interactiveLinks
+          )
+        }
         is MarkdownBlock.Table -> MarkdownTable(block, colors, interactiveLinks)
         MarkdownBlock.Divider -> Box(
           modifier = Modifier
@@ -124,6 +145,7 @@ internal sealed interface MarkdownBlock {
   data class Paragraph(val text: String) : MarkdownBlock
   data class Heading(val level: Int, val text: String) : MarkdownBlock
   data class ListItem(val marker: String, val text: String) : MarkdownBlock
+  data class BlockQuote(val text: String) : MarkdownBlock
   data class Code(val text: String) : MarkdownBlock
   data class Table(val rows: List<List<String>>) : MarkdownBlock
   data object Divider : MarkdownBlock
@@ -188,6 +210,7 @@ internal fun parseMarkdownBlocks(markdown: String): List<MarkdownBlock> {
   val blocks = mutableListOf<MarkdownBlock>()
   val paragraph = StringBuilder()
   val code = StringBuilder()
+  val quote = StringBuilder()
   val tableRows = mutableListOf<List<String>>()
   var inCode = false
 
@@ -204,9 +227,16 @@ internal fun parseMarkdownBlocks(markdown: String): List<MarkdownBlock> {
     }
   }
 
+  fun flushQuote() {
+    val text = quote.toString().trimEnd()
+    if (text.isNotBlank()) blocks += MarkdownBlock.BlockQuote(text)
+    quote.clear()
+  }
+
   markdown.lines().forEach { rawLine ->
     val line = rawLine.trimEnd()
     if (line.trimStart().startsWith("```")) {
+      flushQuote()
       if (inCode) {
         blocks += MarkdownBlock.Code(code.toString().trimEnd())
         code.clear()
@@ -224,6 +254,15 @@ internal fun parseMarkdownBlocks(markdown: String): List<MarkdownBlock> {
     }
 
     val trimmed = line.trim()
+    if (trimmed.startsWith('>')) {
+      flushTable()
+      flushParagraph()
+      if (quote.isNotEmpty()) quote.append('\n')
+      quote.append(trimmed.drop(1).trimStart())
+      return@forEach
+    }
+    flushQuote()
+
     if (trimmed.isBlank()) {
       flushTable()
       flushParagraph()
@@ -269,7 +308,7 @@ internal fun parseMarkdownBlocks(markdown: String): List<MarkdownBlock> {
     flushTable()
 
     val headingLevel = trimmed.takeWhile { it == '#' }.length
-    if (headingLevel in 1..4 && trimmed.getOrNull(headingLevel) == ' ') {
+    if (headingLevel in 1..6 && trimmed.getOrNull(headingLevel) == ' ') {
       flushParagraph()
       blocks += MarkdownBlock.Heading(headingLevel, trimmed.drop(headingLevel).trim())
       return@forEach
@@ -278,7 +317,16 @@ internal fun parseMarkdownBlocks(markdown: String): List<MarkdownBlock> {
     val unordered = listOf("- ", "* ", "+ ").firstOrNull { trimmed.startsWith(it) }
     if (unordered != null) {
       flushParagraph()
-      blocks += MarkdownBlock.ListItem("•", trimmed.drop(unordered.length).trim())
+      val itemText = trimmed.drop(unordered.length).trim()
+      val task = Regex("^\\[([ xX])]\\s+(.*)$").matchEntire(itemText)
+      blocks += if (task != null) {
+        MarkdownBlock.ListItem(
+          marker = if (task.groupValues[1].equals("x", ignoreCase = true)) "☑" else "☐",
+          text = task.groupValues[2]
+        )
+      } else {
+        MarkdownBlock.ListItem("•", itemText)
+      }
       return@forEach
     }
 
@@ -294,6 +342,7 @@ internal fun parseMarkdownBlocks(markdown: String): List<MarkdownBlock> {
   }
 
   if (inCode) blocks += MarkdownBlock.Code(code.toString().trimEnd())
+  flushQuote()
   flushTable()
   flushParagraph()
   return blocks
@@ -431,44 +480,119 @@ private fun openUrl(context: Context, url: String) {
   }
 }
 
-internal fun renderInlineMarkdown(text: String, linkColor: Color = Color.Unspecified): AnnotatedString = buildAnnotatedString {
+internal enum class MarkdownInlineStyle {
+  BODY,
+  BOLD,
+  ITALIC,
+  BOLD_ITALIC,
+  STRIKETHROUGH,
+  INLINE_CODE,
+  LINK
+}
+
+internal data class MarkdownInlineToken(
+  val text: String,
+  val style: MarkdownInlineStyle,
+  val url: String? = null
+)
+
+private val InlineMarkdownPattern = Regex(
+  """(`[^`\n]+`)|(\[[^]\n]+\]\((?:https?://)?(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?:/[^\s)]*)?\))|(<https?://[^\s<>]+>)|(\*\*\*[^*\n]+\*\*\*)|(___[^_\n]+___)|(\*\*[^*\n]+\*\*)|(__[^_\n]+__)|(~~[^~\n]+~~)|((?<!\*)\*[^*\n]+\*(?!\*))|((?<![\w_])_[^_\n]+_(?![\w_]))|(https?://[^\s<>()\[\]{}"']+)|((?<![@\w.-])(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?:/[^\s<>()\[\]{}"']+)?)"""
+)
+
+internal fun parseInlineMarkdown(text: String): List<MarkdownInlineToken> {
+  val tokens = mutableListOf<MarkdownInlineToken>()
+
+  fun append(value: String, style: MarkdownInlineStyle, url: String? = null) {
+    if (value.isEmpty()) return
+    val previous = tokens.lastOrNull()
+    if (previous != null && previous.style == style && previous.url == url) {
+      tokens[tokens.lastIndex] = previous.copy(text = previous.text + value)
+    } else {
+      tokens += MarkdownInlineToken(value, style, url)
+    }
+  }
+
   var index = 0
-  val pattern = Regex(
-    """(\*\*[^*]+\*\*)|(`[^`]+`)|(\[[^]]+\]\((?:https?://)?(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?:/[^\s)]*)?\))|(https?://[^\s<>()\[\]{}"']+)|((?<![@\w.-])(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?:/[^\s<>()\[\]{}"']+)?)"""
-  )
-  pattern.findAll(text).forEach { match ->
-    append(text.substring(index, match.range.first))
+  InlineMarkdownPattern.findAll(text).forEach { match ->
+    append(text.substring(index, match.range.first), MarkdownInlineStyle.BODY)
     val value = match.value
     when {
-      value.startsWith("**") -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-        append(value.removePrefix("**").removeSuffix("**"))
+      value.startsWith("`") -> append(
+        value.removePrefix("`").removeSuffix("`"),
+        MarkdownInlineStyle.INLINE_CODE
+      )
+      value.startsWith("[") -> {
+        val label = value.substringAfter('[').substringBefore("](")
+        val url = value.substringAfter("](").removeSuffix(")")
+        append(label, MarkdownInlineStyle.LINK, normalizeHttpUrl(url))
       }
-      value.startsWith("`") -> withStyle(
+      value.startsWith("<") -> {
+        val url = value.drop(1).dropLast(1)
+        append(url, MarkdownInlineStyle.LINK, normalizeHttpUrl(url))
+      }
+      value.startsWith("***") || value.startsWith("___") -> append(
+        value.drop(3).dropLast(3),
+        MarkdownInlineStyle.BOLD_ITALIC
+      )
+      value.startsWith("**") || value.startsWith("__") -> append(
+        value.drop(2).dropLast(2),
+        MarkdownInlineStyle.BOLD
+      )
+      value.startsWith("~~") -> append(
+        value.drop(2).dropLast(2),
+        MarkdownInlineStyle.STRIKETHROUGH
+      )
+      value.startsWith("*") || value.startsWith("_") -> append(
+        value.drop(1).dropLast(1),
+        MarkdownInlineStyle.ITALIC
+      )
+      else -> {
+        val cleanUrl = value.trimEnd(
+          '.', ',', ';', ':', '!', '?', ')', ']', '}',
+          '\uFF0C', '\u3002', '\uFF1B', '\uFF1A', '\uFF01', '\uFF1F'
+        )
+        append(cleanUrl, MarkdownInlineStyle.LINK, normalizeHttpUrl(cleanUrl))
+        append(value.removePrefix(cleanUrl), MarkdownInlineStyle.BODY)
+      }
+    }
+    index = match.range.last + 1
+  }
+  append(text.substring(index), MarkdownInlineStyle.BODY)
+  return tokens.ifEmpty { listOf(MarkdownInlineToken("", MarkdownInlineStyle.BODY)) }
+}
+
+internal fun renderInlineMarkdown(text: String, linkColor: Color = Color.Unspecified): AnnotatedString = buildAnnotatedString {
+  parseInlineMarkdown(text).forEach { token ->
+    when (token.style) {
+      MarkdownInlineStyle.BODY -> append(token.text)
+      MarkdownInlineStyle.BOLD -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+        append(token.text)
+      }
+      MarkdownInlineStyle.ITALIC -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+        append(token.text)
+      }
+      MarkdownInlineStyle.BOLD_ITALIC -> withStyle(
+        SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic)
+      ) {
+        append(token.text)
+      }
+      MarkdownInlineStyle.STRIKETHROUGH -> withStyle(
+        SpanStyle(textDecoration = TextDecoration.LineThrough)
+      ) {
+        append(token.text)
+      }
+      MarkdownInlineStyle.INLINE_CODE -> withStyle(
         SpanStyle(
           background = Color(0x1A2F5E47),
           fontWeight = FontWeight.Medium
         )
       ) {
-        append(value.removePrefix("`").removeSuffix("`"))
+        append(token.text)
       }
-      value.startsWith("[") -> {
-        val label = value.substringAfter("[").substringBefore("]")
-        val url = value.substringAfter("](").removeSuffix(")")
-        appendUrlLink(label, url, linkColor)
-      }
-      else -> {
-        val url = value.trimEnd('.', ',', ';', ':', '!', '?', ')', ']', '}', '，', '。', '；', '：', '！', '？')
-        val cleanUrl = url.trimEnd(
-          '.', ',', ';', ':', '!', '?', ')', ']', '}',
-          '\uFF0C', '\u3002', '\uFF1B', '\uFF1A', '\uFF01', '\uFF1F'
-        )
-        appendUrlLink(cleanUrl, cleanUrl, linkColor)
-        append(value.removePrefix(cleanUrl))
-      }
+      MarkdownInlineStyle.LINK -> appendUrlLink(token.text, checkNotNull(token.url), linkColor)
     }
-    index = match.range.last + 1
   }
-  append(text.substring(index))
 }
 
 private fun AnnotatedString.Builder.appendUrlLink(label: String, url: String, linkColor: Color) {

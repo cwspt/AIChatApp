@@ -21,6 +21,50 @@ private data class AppChangelogEntry(
 
 private val AppChangelogEntries = listOf(
   AppChangelogEntry(
+    date = "2026-07-16",
+    changes = listOf(
+      "长图导出会先测量真实高度，较长内容可选择安全分图或合成单张图片。",
+      "聊天气泡和导出图片补齐 Markdown 分割线、引用、H1-H6、任务列表、斜体、粗斜体、删除线和自动链接，并共用语法解析。",
+      "AI 生成在息屏后继续保持 CPU 和网络活动，静默断连可在未输出正文时安全重试。"
+    )
+  ),
+  AppChangelogEntry(
+    date = "2026-07-14",
+    changes = listOf(
+      "AI 回复中的 Markdown 链接、原始网址和常见裸域名可直接打开或复制。",
+      "长图导出保留标题、粗体、行内代码、链接、列表、代码块和表格等 Markdown 层次。"
+    )
+  ),
+  AppChangelogEntry(
+    date = "2026-07-13",
+    changes = listOf(
+      "超长聊天图片按安全高度连续分页，不再因 Bitmap 上限截断内容。",
+      "分享长图增大正文和 Markdown 字号，并隐藏工具调用记录，提高手机端可读性。",
+      "无可用机器人时，群聊创建页可直接进入机器人管理。"
+    )
+  ),
+  AppChangelogEntry(
+    date = "2026-07-11",
+    changes = listOf(
+      "Provider 能力矩阵支持折叠，展开后与配置列表分别滚动。",
+      "删除默认 Provider 配置后不再自动恢复，最后一个配置会受到删除保护。",
+      "修正本地签名发布脚本的 JDK、Android SDK 和 Gradle 路径。"
+    )
+  ),
+  AppChangelogEntry(
+    date = "2026-07-05",
+    changes = listOf(
+      "减少聊天列表滚动期间的状态读取和浮动按钮计算，改善长对话滑动流畅度。",
+      "缩小选择、回到底部和上下文容量控件，限制顶部元信息宽度，减少窄屏遮挡。"
+    )
+  ),
+  AppChangelogEntry(
+    date = "2026-06-03",
+    changes = listOf(
+      "将长气泡导航、回到底部和滚动条计算移出滚动热路径。"
+    )
+  ),
+  AppChangelogEntry(
     date = "2026-06-02",
     changes = listOf(
       "设置页新增更新日志，按日期汇总最近新增能力、修正和维护改进。",

@@ -312,6 +312,7 @@ object ConversationShareRenderer {
           36
         }
         inCodeBlock -> 58 + line.length * 3
+        trimmed.startsWith('>') -> 34 + line.length * 3
         isMarkdownDivider(trimmed) -> 34
         looksLikeMarkdownTableRow(trimmed) -> 104 + line.length * 3
         trimmed.startsWith("#") -> 42 + line.length * 4
@@ -331,6 +332,11 @@ object ConversationShareRenderer {
     val rolePaint = textPaint(28f, Color.rgb(91, 108, 99), Typeface.BOLD)
     val bodyPaint = textPaint(40f, Color.rgb(26, 32, 29))
     val boldPaint = textPaint(40f, Color.rgb(26, 32, 29), Typeface.BOLD)
+    val italicPaint = textPaint(40f, Color.rgb(26, 32, 29), Typeface.ITALIC)
+    val boldItalicPaint = textPaint(40f, Color.rgb(26, 32, 29), Typeface.BOLD_ITALIC)
+    val strikethroughPaint = textPaint(40f, Color.rgb(91, 108, 99)).apply {
+      isStrikeThruText = true
+    }
     val codePaint = textPaint(34f, Color.rgb(35, 45, 40), Typeface.NORMAL, Typeface.MONOSPACE)
     val linkPaint = textPaint(40f, Color.rgb(25, 103, 83), Typeface.BOLD)
     val headingOnePaint = textPaint(52f, Color.rgb(27, 43, 35), Typeface.BOLD)
@@ -342,6 +348,9 @@ object ConversationShareRenderer {
     val paints = MarkdownPaints(
       body = bodyPaint,
       bold = boldPaint,
+      italic = italicPaint,
+      boldItalic = boldItalicPaint,
+      strikethrough = strikethroughPaint,
       code = codePaint,
       link = linkPaint,
       headingOne = headingOnePaint,
@@ -525,6 +534,19 @@ object ConversationShareRenderer {
           bottomPadding = 8f,
           marker = block.marker
         )
+        is MarkdownBlock.BlockQuote -> {
+          val lines = layoutInlineText(
+            imageInlineMarkdownSpans(block.text),
+            if (failed) ImageInlineStyle.ERROR else ImageInlineStyle.BODY,
+            paints,
+            maxWidth - 34f
+          )
+          RenderBlock.BlockQuote(
+            lines = lines,
+            lineHeight = BodyLineHeight,
+            height = lines.size * BodyLineHeight + 16f
+          )
+        }
         is MarkdownBlock.Code -> {
           val lines = wrapText(block.text, paints.code, maxWidth - 24f)
           RenderBlock.Code(lines, lines.size * CodeLineHeight + 32f)
@@ -595,6 +617,31 @@ object ConversationShareRenderer {
         block.lines.forEach { line ->
           canvas.drawText(line, left + 12f, y, paint)
           y += CodeLineHeight
+        }
+      }
+      is RenderBlock.BlockQuote -> {
+        val quotePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = Color.rgb(124, 145, 134)
+          strokeWidth = 5f
+          strokeCap = Paint.Cap.ROUND
+        }
+        canvas.drawLine(
+          left + 3f,
+          top + 4f,
+          left + 3f,
+          top + block.height - 8f,
+          quotePaint
+        )
+        var lineTop = top
+        block.lines.forEach { line ->
+          drawRichTextLine(
+            canvas = canvas,
+            line = line,
+            left = left + 28f,
+            baseline = lineTop + lineMaxTextSize(line, paints),
+            paints = paints
+          )
+          lineTop += block.lineHeight
         }
       }
       RenderBlock.Divider -> {
@@ -710,38 +757,22 @@ object ConversationShareRenderer {
   }
 
   internal fun imageInlineMarkdownSpans(text: String): List<ImageInlineSpan> {
-    val spans = mutableListOf<ImageInlineSpan>()
-    fun append(text: String, style: ImageInlineStyle) {
-      if (text.isEmpty()) return
-      val previous = spans.lastOrNull()
-      if (previous != null && previous.style == style) {
-        spans[spans.lastIndex] = previous.copy(text = previous.text + text)
-      } else {
-        spans += ImageInlineSpan(text, style)
-      }
-    }
-
-    val pattern = Regex(
-      """(\*\*[^*]+\*\*)|(`[^`]+`)|(\[[^]]+\]\((?:https?://)?(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?:/[^\s)]*)?\))|(https?://[^\s<>()\[\]{}"']+)|((?<![@\w.-])(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?:/[^\s<>()\[\]{}"']+)?)"""
-    )
-    var start = 0
-    pattern.findAll(text).forEach { match ->
-      append(text.substring(start, match.range.first), ImageInlineStyle.BODY)
-      val value = match.value
-      when {
-        value.startsWith("**") -> append(value.removePrefix("**").removeSuffix("**"), ImageInlineStyle.BOLD)
-        value.startsWith("`") -> append(value.removePrefix("`").removeSuffix("`"), ImageInlineStyle.INLINE_CODE)
-        value.startsWith("[") -> append(value.substringAfter('[').substringBefore("]("), ImageInlineStyle.LINK)
-        else -> {
-          val link = value.trimEnd('.', ',', ';', ':', '!', '?', ')', ']', '}', '\uFF0C', '\u3002', '\uFF1B', '\uFF1A', '\uFF01', '\uFF1F')
-          append(link, ImageInlineStyle.LINK)
-          append(value.removePrefix(link), ImageInlineStyle.BODY)
+    return parseInlineMarkdown(text).map { token ->
+      ImageInlineSpan(
+        text = token.text,
+        style = when (token.style) {
+          MarkdownInlineStyle.BODY -> ImageInlineStyle.BODY
+          MarkdownInlineStyle.BOLD -> ImageInlineStyle.BOLD
+          MarkdownInlineStyle.ITALIC -> ImageInlineStyle.ITALIC
+          MarkdownInlineStyle.BOLD_ITALIC -> ImageInlineStyle.BOLD_ITALIC
+          MarkdownInlineStyle.STRIKETHROUGH -> ImageInlineStyle.STRIKETHROUGH
+          MarkdownInlineStyle.INLINE_CODE -> ImageInlineStyle.INLINE_CODE
+          MarkdownInlineStyle.LINK -> ImageInlineStyle.LINK
         }
-      }
-      start = match.range.last + 1
+      )
+    }.ifEmpty {
+      listOf(ImageInlineSpan("", ImageInlineStyle.BODY))
     }
-    append(text.substring(start), ImageInlineStyle.BODY)
-    return spans.ifEmpty { listOf(ImageInlineSpan("", ImageInlineStyle.BODY)) }
   }
 
   private fun layoutInlineText(
@@ -823,6 +854,9 @@ object ConversationShareRenderer {
         ImageInlineStyle.TABLE_HEADER -> ImageInlineStyle.TABLE_HEADER
         else -> ImageInlineStyle.BOLD
       }
+      ImageInlineStyle.ITALIC -> ImageInlineStyle.ITALIC
+      ImageInlineStyle.BOLD_ITALIC -> ImageInlineStyle.BOLD_ITALIC
+      ImageInlineStyle.STRIKETHROUGH -> ImageInlineStyle.STRIKETHROUGH
       else -> style
     }
   }
@@ -831,6 +865,9 @@ object ConversationShareRenderer {
     return when (style) {
       ImageInlineStyle.BODY -> paints.body
       ImageInlineStyle.BOLD -> paints.bold
+      ImageInlineStyle.ITALIC -> paints.italic
+      ImageInlineStyle.BOLD_ITALIC -> paints.boldItalic
+      ImageInlineStyle.STRIKETHROUGH -> paints.strikethrough
       ImageInlineStyle.INLINE_CODE -> paints.code
       ImageInlineStyle.LINK -> paints.link
       ImageInlineStyle.HEADING_ONE -> paints.headingOne
@@ -958,6 +995,9 @@ object ConversationShareRenderer {
   private data class MarkdownPaints(
     val body: Paint,
     val bold: Paint,
+    val italic: Paint,
+    val boldItalic: Paint,
+    val strikethrough: Paint,
     val code: Paint,
     val link: Paint,
     val headingOne: Paint,
@@ -971,6 +1011,9 @@ object ConversationShareRenderer {
   internal enum class ImageInlineStyle {
     BODY,
     BOLD,
+    ITALIC,
+    BOLD_ITALIC,
+    STRIKETHROUGH,
     INLINE_CODE,
     LINK,
     HEADING_ONE,
@@ -1008,6 +1051,12 @@ object ConversationShareRenderer {
 
     data class Code(
       val lines: List<String>,
+      override val height: Float
+    ) : RenderBlock
+
+    data class BlockQuote(
+      val lines: List<RenderTextLine>,
+      val lineHeight: Float,
       override val height: Float
     ) : RenderBlock
 

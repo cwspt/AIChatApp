@@ -2,6 +2,10 @@
 
 ## 2026-07-16 Local Update Summary
 
+- Done: in-app bubbles and exported chat images now parse Markdown block quotes instead of showing the leading `>` literally. Consecutive quote lines share one indented quote block; image exports draw the matching vertical quote accent and include it in measured layout height.
+- Done: the shared Markdown parser now also covers H5/H6 headings, task-list markers, a shared inline token model, `*`/`_` italics, triple-marker bold italics, `~~` strikethrough, `__` bold, and `<https://...>` autolinks in both bubbles and exported images.
+- Remaining boundary: Setext headings, backslash escapes, email autolinks, remote Markdown images, and recursively nested quote/list structures still need dedicated parsing, resource loading, or recursive layout support; tracked separately as `NEXT-P2-016` instead of partially rendering them differently between the app and exported images.
+- Validation: focused Markdown/renderer tests, native-Canvas divider and block-quote pixel tests, the full `:app:testDebugUnitTest` suite, `:app:compileDebugKotlin`, and `:app:assembleDebug` passed.
 - Done: exported chat images now use the same block-level Markdown parser as in-app chat bubbles, keeping paragraph, heading, ordered/unordered list, fenced code block, table, and divider recognition aligned instead of maintaining a second parser that can drift.
 - Done: image exports now draw Markdown horizontal rules for `---`, `***`, and `___` across the bubble content width. Unordered-list bullets and table recognition also match the in-app renderer.
 - Validation: focused `MarkdownRendererTest` and `ConversationShareRendererTest` suites passed, including a native-Canvas pixel test for the exported divider; the full `:app:testDebugUnitTest` suite and `:app:assembleDebug` also passed.
@@ -431,6 +435,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-016 | 背景预设真机回归 | Planned | 验证设置页增改删排序、新建/编辑群聊插入预设、删除预设后已保存群聊主题不变 |
 | NEXT-P1-017 | 长图导出方式选择 | Done | 所有长图入口先按真实布局判断；超过 12000px 时询问分图或安全单图，单图上限 24000px，超限只允许分图且不截断内容 |
 | NEXT-P1-018 | 长图 Markdown 样式对齐 | Done | 长图导出与聊天气泡共用块级 Markdown 解析器，支持三种分割线语法并对齐标题、列表、代码块和表格识别；像素测试确认横线实际写入导出 Bitmap |
+| NEXT-P1-019 | Markdown 引用与常见样式补齐 | Done | 气泡和长图共同支持 `>` 引用、H1-H6、任务列表、斜体、粗斜体、删除线、双下划线粗体和尖括号自动链接；共享行内 token parser，引用导出有像素测试 |
 
 ### 6.2 P2 / P3
 
@@ -451,6 +456,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P2-013 | 群摘要自动滚动更新 | Done | 群聊会在无摘要且消息较多、或上次摘要后积累较多新消息时提示生成/更新摘要，并复用总结机器人选择器执行半自动刷新 |
 | NEXT-P2-014 | 背景预设导入导出和分类搜索 | Done | 背景预设已支持设置页和群聊插入弹窗的关键词搜索、JSON 导出/分享与追加导入、分类编辑与分类筛选，并支持编辑群聊时按群聊保存和插入常用预设组合 |
 | NEXT-P2-015 | 设置页更新日志 | Done | 设置页展示根据 Git 提交整理的更新日志，按日期汇总新增能力、修正和维护改进 |
+| NEXT-P2-016 | Markdown 完整语法扩展 | Planned | 气泡和导出共同支持 Setext 标题、反斜杠转义、邮件自动链接、远程 Markdown 图片，以及引用/列表递归嵌套；资源失败时有一致的占位和降级行为 |
 | NEXT-P3-001 | Anthropic adapter | Planned | Claude Messages API 文本流式对话 |
 | NEXT-P3-002 | Gemini adapter | Planned | Gemini GenerateContent 文本和多模态对话 |
 | NEXT-P3-003 | 对话 PDF 导出 | Planned | 支持完整对话导出 PDF |
