@@ -3,9 +3,11 @@ package com.personal.aichat.ui
 import android.content.Context
 import android.content.ContentValues
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
@@ -16,6 +18,9 @@ import com.personal.aichat.data.ConversationExportMessage
 import com.personal.aichat.data.withoutToolMessages
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
+import com.personal.aichat.domain.MessageContentPart
+import com.personal.aichat.domain.MessageContentPartStatus
+import com.personal.aichat.domain.MessageContentPartType
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -42,6 +47,8 @@ object ConversationShareRenderer {
   private const val TableLineHeight = 42f
   private const val ImagePageMessageHeightBudget = 10_000
   private const val ImageMessageHeightBudget = 7_600
+  private const val InlineImageMaxRenderHeight = 8_800f
+  private const val InlineImageBottomPadding = 18f
   private const val MaxLineChunkLength = 1_200
 
   internal enum class ImageExportMode {
@@ -192,7 +199,7 @@ object ConversationShareRenderer {
     var currentHeight = 0
 
     splitExportMessagesForImagePages(shareableExport.messages).forEach { message ->
-      val messageHeight = estimateImageMessageHeight(message.content)
+      val messageHeight = estimateImageMessageHeight(message)
       if (currentPage.isNotEmpty() && currentHeight + messageHeight > ImagePageMessageHeightBudget) {
         pageMessages += currentPage
         currentPage = mutableListOf()
@@ -237,13 +244,64 @@ object ConversationShareRenderer {
         splitPageMessagesToExactHeight(export, messages.drop(splitIndex))
     }
     val message = messages.single()
+    val (first, second) = splitOversizedExportMessage(message)
+    return splitPageMessagesToExactHeight(export, listOf(first)) +
+      splitPageMessagesToExactHeight(export, listOf(second))
+  }
+
+  private fun splitOversizedExportMessage(
+    message: ConversationExportMessage
+  ): Pair<ConversationExportMessage, ConversationExportMessage> {
+    if (message.contentParts.isNotEmpty()) {
+      val parts = message.contentParts
+      if (parts.size > 1) {
+        val splitIndex = parts.size / 2
+        return splitStructuredMessage(message, parts.take(splitIndex), parts.drop(splitIndex))
+      }
+      val part = parts.single()
+      if (part.type == MessageContentPartType.TEXT && part.text.length > 1) {
+        val splitIndex = preferredContentSplitIndex(part.text)
+        return splitStructuredMessage(
+          message,
+          listOf(part.copy(id = "${part.id}-exact-0", text = part.text.substring(0, splitIndex))),
+          listOf(part.copy(id = "${part.id}-exact-1", text = part.text.substring(splitIndex)))
+        )
+      }
+      error("Image export block cannot fit within $MaxImageHeight px")
+    }
     val content = exportMessageContent(message)
     require(content.length > 1) { "Image export message cannot fit within $MaxImageHeight px" }
     val splitIndex = preferredContentSplitIndex(content)
-    val first = message.copy(id = "${message.id}-exact-0", content = content.substring(0, splitIndex))
-    val second = message.copy(id = "${message.id}-exact-1", content = content.substring(splitIndex))
-    return splitPageMessagesToExactHeight(export, listOf(first)) +
-      splitPageMessagesToExactHeight(export, listOf(second))
+    return message.copy(id = "${message.id}-exact-0", content = content.substring(0, splitIndex)) to
+      message.copy(id = "${message.id}-exact-1", content = content.substring(splitIndex))
+  }
+
+  private fun splitStructuredMessage(
+    message: ConversationExportMessage,
+    firstParts: List<MessageContentPart>,
+    secondParts: List<MessageContentPart>
+  ): Pair<ConversationExportMessage, ConversationExportMessage> {
+    val allInlineIds = message.contentParts.mapNotNull { it.attachmentId }.toSet()
+    val trailingAttachments = message.attachments.filterNot { it.id in allInlineIds }
+    fun partAttachments(parts: List<MessageContentPart>, includeTrailing: Boolean) = buildList {
+      val ids = parts.mapNotNull { it.attachmentId }.toSet()
+      addAll(message.attachments.filter { it.id in ids })
+      if (includeTrailing) addAll(trailingAttachments)
+    }
+    fun text(parts: List<MessageContentPart>) = parts
+      .filter { it.type == MessageContentPartType.TEXT }
+      .joinToString("\n") { it.text }
+    return message.copy(
+      id = "${message.id}-exact-0",
+      content = text(firstParts),
+      attachments = partAttachments(firstParts, includeTrailing = false),
+      contentParts = firstParts
+    ) to message.copy(
+      id = "${message.id}-exact-1",
+      content = text(secondParts),
+      attachments = partAttachments(secondParts, includeTrailing = true),
+      contentParts = secondParts
+    )
   }
 
   private fun preferredContentSplitIndex(content: String): Int {
@@ -266,6 +324,7 @@ object ConversationShareRenderer {
   private fun splitExportMessageForImagePages(
     message: ConversationExportMessage
   ): List<ConversationExportMessage> {
+    if (message.contentParts.isNotEmpty()) return listOf(message)
     val content = exportMessageContent(message)
     if (estimateImageContentHeight(content) <= ImageMessageHeightBudget) return listOf(message)
 
@@ -298,8 +357,19 @@ object ConversationShareRenderer {
     return line.chunked(MaxLineChunkLength)
   }
 
-  private fun estimateImageMessageHeight(content: String): Int {
-    return RoleRowHeight.toInt() + 64 + 22 + estimateImageContentHeight(content)
+  private fun estimateImageMessageHeight(message: ConversationExportMessage): Int {
+    if (message.contentParts.isEmpty()) {
+      return RoleRowHeight.toInt() + 64 + 22 + estimateImageContentHeight(message.content)
+    }
+    val imageHeight = message.contentParts
+      .filter { it.type == MessageContentPartType.IMAGE }
+      .sumOf { part ->
+        if (part.status == MessageContentPartStatus.FAILED) 120 else estimatedInlineImageHeight(part, 900f).toInt()
+      }
+    val textHeight = message.contentParts
+      .filter { it.type == MessageContentPartType.TEXT }
+      .sumOf { estimateImageContentHeight(it.text) }
+    return RoleRowHeight.toInt() + 64 + 22 + imageHeight + textHeight
   }
 
   private fun estimateImageContentHeight(content: String): Int {
@@ -366,17 +436,26 @@ object ConversationShareRenderer {
       shareableExport.modelLabel?.let { "模型：$it" }
     )
     val messageLayouts = shareableExport.messages.map { message ->
-      val content = exportMessageContent(message)
-      RenderMessage(
-        role = message.role,
-        failed = message.status == MessageStatus.FAILED,
-        time = formatImageTime(message.createdAt),
-        blocks = parseImageMarkdownBlocks(
-          markdown = content,
+      val blocks = if (message.contentParts.isEmpty()) {
+        parseImageMarkdownBlocks(
+          markdown = exportMessageContent(message),
           paints = paints,
           maxWidth = maxBubbleWidth - bubblePadding * 2,
           failed = message.status == MessageStatus.FAILED
         )
+      } else {
+        buildStructuredRenderBlocks(
+          message = message,
+          paints = paints,
+          maxWidth = maxBubbleWidth - bubblePadding * 2,
+          failed = message.status == MessageStatus.FAILED
+        )
+      }
+      RenderMessage(
+        role = message.role,
+        failed = message.status == MessageStatus.FAILED,
+        time = formatImageTime(message.createdAt),
+        blocks = blocks
       )
     }
 
@@ -467,7 +546,7 @@ object ConversationShareRenderer {
       )
       var textY = y + layout.bubblePadding
       item.blocks.forEach { block ->
-        drawMarkdownBlock(
+        drawRenderBlock(
           canvas = canvas,
           block = block,
           left = layout.padding + layout.bubblePadding,
@@ -487,6 +566,119 @@ object ConversationShareRenderer {
       return message.content.ifBlank { message.errorMessage ?: "请求失败，但没有返回错误详情。" }
     }
     return message.content.ifBlank { " " }
+  }
+
+  private fun buildStructuredRenderBlocks(
+    message: ConversationExportMessage,
+    paints: MarkdownPaints,
+    maxWidth: Float,
+    failed: Boolean
+  ): List<RenderBlock> {
+    val blocks = mutableListOf<RenderBlock>()
+    message.contentParts.forEach { part ->
+      when (part.type) {
+        MessageContentPartType.TEXT -> if (part.text.isNotBlank()) {
+          blocks += parseImageMarkdownBlocks(part.text, paints, maxWidth, failed)
+        }
+        MessageContentPartType.IMAGE -> {
+          val attachment = part.attachmentId?.let { id -> message.attachments.firstOrNull { it.id == id } }
+          blocks += inlineImageRenderBlock(part, attachment?.localPath, maxWidth)
+        }
+      }
+    }
+    val inlineAttachmentIds = message.contentParts.mapNotNull { it.attachmentId }.toSet()
+    val trailingAttachments = message.attachments.filterNot { it.id in inlineAttachmentIds }
+    if (trailingAttachments.isNotEmpty()) {
+      blocks += parseImageMarkdownBlocks(
+        markdown = attachmentSummary(trailingAttachments),
+        paints = paints,
+        maxWidth = maxWidth,
+        failed = false
+      )
+    }
+    return blocks.ifEmpty {
+      parseImageMarkdownBlocks(exportMessageContent(message), paints, maxWidth, failed)
+    }
+  }
+
+  private fun inlineImageRenderBlock(
+    part: MessageContentPart,
+    localPath: String?,
+    maxWidth: Float
+  ): RenderBlock.Image {
+    val fileAvailable = !localPath.isNullOrBlank() && File(localPath).isFile
+    val dimensions = imageDimensions(part, localPath)
+    val state = when {
+      part.status == MessageContentPartStatus.GENERATING -> InlineImageRenderState.GENERATING
+      part.status == MessageContentPartStatus.FAILED -> InlineImageRenderState.FAILED
+      !fileAvailable -> InlineImageRenderState.MISSING
+      else -> InlineImageRenderState.COMPLETE
+    }
+    val (targetWidth, imageHeight) = if (
+      state == InlineImageRenderState.FAILED || state == InlineImageRenderState.MISSING
+    ) {
+      maxWidth to 120f
+    } else {
+      inlineImageRenderSize(part, maxWidth, dimensions)
+    }
+    val label = part.errorMessage
+      ?: part.revisedPrompt?.takeIf { it.isNotBlank() }
+      ?: part.prompt?.takeIf { it.isNotBlank() }
+      ?: when (state) {
+        InlineImageRenderState.GENERATING -> "插图生成中"
+        InlineImageRenderState.FAILED -> "插图生成失败"
+        InlineImageRenderState.MISSING -> "图片文件不可用"
+        InlineImageRenderState.COMPLETE -> "AI 生成插图"
+      }
+    return RenderBlock.Image(
+      localPath = localPath,
+      targetWidth = targetWidth,
+      imageHeight = imageHeight,
+      state = state,
+      label = label,
+      height = imageHeight + InlineImageBottomPadding
+    )
+  }
+
+  private fun imageDimensions(part: MessageContentPart, localPath: String?): Pair<Int, Int>? {
+    if (part.width != null && part.height != null && part.width > 0 && part.height > 0) {
+      return part.width to part.height
+    }
+    if (localPath.isNullOrBlank()) return null
+    return runCatching {
+      val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+      BitmapFactory.decodeFile(localPath, options)
+      if (options.outWidth > 0 && options.outHeight > 0) options.outWidth to options.outHeight else null
+    }.getOrNull()
+  }
+
+  private fun estimatedInlineImageHeight(
+    part: MessageContentPart,
+    maxWidth: Float,
+    dimensions: Pair<Int, Int>? = imageDimensions(part, null)
+  ): Float {
+    return inlineImageRenderSize(part, maxWidth, dimensions).second
+  }
+
+  private fun inlineImageRenderSize(
+    part: MessageContentPart,
+    maxWidth: Float,
+    dimensions: Pair<Int, Int>? = imageDimensions(part, null)
+  ): Pair<Float, Float> {
+    val ratio = dimensions
+      ?.let { (width, height) -> height.toFloat() / width.toFloat() }
+      ?.takeIf { it.isFinite() && it > 0f }
+      ?: 1f
+    val desiredHeight = maxWidth * ratio
+    if (desiredHeight <= InlineImageMaxRenderHeight) return maxWidth to desiredHeight.coerceAtLeast(1f)
+    val scale = InlineImageMaxRenderHeight / desiredHeight
+    return (maxWidth * scale).coerceAtLeast(1f) to InlineImageMaxRenderHeight
+  }
+
+  private fun attachmentSummary(attachments: List<com.personal.aichat.domain.ChatAttachment>): String {
+    return attachments.joinToString(prefix = "附件：\n", separator = "\n") {
+      "- ${it.displayName} (${it.mimeType}, ${it.sizeBytes} bytes)"
+    }
   }
 
   private fun parseImageMarkdownBlocks(
@@ -586,7 +778,7 @@ object ConversationShareRenderer {
     }
   }
 
-  private fun drawMarkdownBlock(
+  private fun drawRenderBlock(
     canvas: Canvas,
     block: RenderBlock,
     left: Float,
@@ -713,7 +905,63 @@ object ConversationShareRenderer {
         }
         canvas.drawRoundRect(left, top, right, y, 8f, 8f, borderPaint)
       }
+      is RenderBlock.Image -> drawInlineImageBlock(canvas, block, left, top, right, paints)
     }
+  }
+
+  private fun drawInlineImageBlock(
+    canvas: Canvas,
+    block: RenderBlock.Image,
+    left: Float,
+    top: Float,
+    right: Float,
+    paints: MarkdownPaints
+  ) {
+    val imageBottom = top + block.imageHeight
+    val imageLeft = left + ((right - left - block.targetWidth) / 2f).coerceAtLeast(0f)
+    val imageRight = imageLeft + block.targetWidth
+    if (block.state == InlineImageRenderState.COMPLETE && !block.localPath.isNullOrBlank()) {
+      val targetWidth = block.targetWidth.toInt().coerceAtLeast(1)
+      val targetHeight = block.imageHeight.toInt().coerceAtLeast(1)
+      val bitmap = decodeSampledBitmap(block.localPath, targetWidth, targetHeight)
+      if (bitmap != null) {
+        try {
+          canvas.drawBitmap(bitmap, null, RectF(imageLeft, top, imageRight, imageBottom), null)
+          return
+        } finally {
+          bitmap.recycle()
+        }
+      }
+    }
+    val failed = block.state == InlineImageRenderState.FAILED || block.state == InlineImageRenderState.MISSING
+    val background = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = if (failed) Color.rgb(255, 239, 235) else Color.rgb(239, 243, 238)
+    }
+    canvas.drawRoundRect(imageLeft, top, imageRight, imageBottom, 12f, 12f, background)
+    val labelPaint = if (failed) paints.error else paints.body
+    val label = block.label.take(80)
+    val labelWidth = labelPaint.measureText(label)
+    canvas.drawText(
+      label,
+      imageLeft + ((imageRight - imageLeft - labelWidth) / 2f).coerceAtLeast(12f),
+      top + block.imageHeight / 2f + labelPaint.textSize / 3f,
+      labelPaint
+    )
+  }
+
+  private fun decodeSampledBitmap(path: String, targetWidth: Int, targetHeight: Int): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sampleSize = 1
+    while (bounds.outWidth / (sampleSize * 2) >= targetWidth &&
+      bounds.outHeight / (sampleSize * 2) >= targetHeight) {
+      sampleSize *= 2
+    }
+    return BitmapFactory.decodeFile(path, BitmapFactory.Options().apply {
+      inSampleSize = sampleSize
+      inPreferredConfig = Bitmap.Config.RGB_565
+    })
   }
 
   private fun richTextBlock(
@@ -1038,6 +1286,13 @@ object ConversationShareRenderer {
     val blocks: List<RenderBlock>
   )
 
+  private enum class InlineImageRenderState {
+    GENERATING,
+    COMPLETE,
+    FAILED,
+    MISSING
+  }
+
   private sealed interface RenderBlock {
     val height: Float
 
@@ -1067,6 +1322,15 @@ object ConversationShareRenderer {
     data class Table(
       val rows: List<List<String>>,
       val columns: Int,
+      override val height: Float
+    ) : RenderBlock
+
+    data class Image(
+      val localPath: String?,
+      val targetWidth: Float,
+      val imageHeight: Float,
+      val state: InlineImageRenderState,
+      val label: String,
       override val height: Float
     ) : RenderBlock
   }

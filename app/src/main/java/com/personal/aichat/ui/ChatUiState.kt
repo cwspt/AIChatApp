@@ -51,6 +51,7 @@ data class ChatUiState(
   val input: TextFieldValue = TextFieldValue(""),
   val groupInput: TextFieldValue = TextFieldValue(""),
   val imageGenerationOptions: ImageGenerationOptions = ImageGenerationOptions(),
+  val inlineImagesAllowedForNextSend: Boolean = false,
   val pendingAttachments: List<ChatAttachment> = emptyList(),
   val incomingShareDraft: IncomingShareDraft? = null,
   val appSettings: AppSettings = AppSettings(),

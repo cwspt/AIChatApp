@@ -8,9 +8,11 @@ import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import android.widget.Toast
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +22,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -30,6 +33,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +55,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import com.personal.aichat.domain.ChatAttachment
+import com.personal.aichat.domain.ChatMessage
+import com.personal.aichat.domain.MessageContentPart
+import com.personal.aichat.domain.MessageContentPartStatus
+import com.personal.aichat.domain.MessageContentPartType
 import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -265,6 +275,123 @@ internal fun GeneratedImageGrid(
             Text(attachment.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
           }
         }
+      }
+    }
+  }
+}
+
+@Composable
+internal fun MessageContentRenderer(
+  message: ChatMessage,
+  interactiveLinks: Boolean,
+  onOpenAttachment: (ChatAttachment) -> Unit,
+  onRetryImage: (String) -> Unit
+) {
+  OrderedMessageContentRenderer(
+    content = message.content,
+    parts = message.contentParts,
+    attachments = message.attachments,
+    interactiveLinks = interactiveLinks,
+    onOpenAttachment = onOpenAttachment,
+    onRetryImage = onRetryImage
+  )
+}
+
+@Composable
+internal fun OrderedMessageContentRenderer(
+  content: String,
+  parts: List<MessageContentPart>,
+  attachments: List<ChatAttachment>,
+  interactiveLinks: Boolean,
+  onOpenAttachment: (ChatAttachment) -> Unit,
+  onRetryImage: ((String) -> Unit)? = null
+) {
+  if (parts.none { it.type == MessageContentPartType.IMAGE }) {
+    MarkdownPreview(content, interactiveLinks = interactiveLinks)
+    return
+  }
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+    parts.forEach { part ->
+      when (part.type) {
+        MessageContentPartType.TEXT -> if (part.text.isNotBlank()) {
+          MarkdownPreview(part.text, interactiveLinks = interactiveLinks)
+        }
+        MessageContentPartType.IMAGE -> {
+          val attachment = part.attachmentId?.let { id -> attachments.firstOrNull { it.id == id } }
+          val ratio = if (part.width != null && part.height != null && part.width > 0 && part.height > 0) {
+            (part.width.toFloat() / part.height.toFloat()).coerceIn(0.25f, 4f)
+          } else {
+            1f
+          }
+          when (part.status) {
+            MessageContentPartStatus.GENERATING -> Box(
+              modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(ratio)
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp)),
+              contentAlignment = Alignment.Center
+            ) {
+              CircularProgressIndicator()
+            }
+            MessageContentPartStatus.COMPLETE -> {
+              val bitmap = remember(attachment?.localPath) {
+                attachment?.localPath?.let(BitmapFactory::decodeFile)?.asImageBitmap()
+              }
+              if (attachment != null && bitmap != null) {
+                Image(
+                  bitmap = bitmap,
+                  contentDescription = part.revisedPrompt ?: part.prompt ?: attachment.displayName,
+                  contentScale = ContentScale.Fit,
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(ratio)
+                    .heightIn(max = 420.dp)
+                    .clickable { onOpenAttachment(attachment) }
+                )
+              } else {
+                InlineImageFailure(
+                  message = "图片文件不可用",
+                  retryEnabled = onRetryImage != null && (!part.prompt.isNullOrBlank() || !part.revisedPrompt.isNullOrBlank()),
+                  onRetry = { onRetryImage?.invoke(part.id) }
+                )
+              }
+            }
+            MessageContentPartStatus.FAILED -> InlineImageFailure(
+              message = part.errorMessage ?: "插图生成失败",
+              retryEnabled = onRetryImage != null && (!part.prompt.isNullOrBlank() || !part.revisedPrompt.isNullOrBlank()),
+              onRetry = { onRetryImage?.invoke(part.id) }
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun InlineImageFailure(
+  message: String,
+  retryEnabled: Boolean,
+  onRetry: () -> Unit
+) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+      .padding(horizontal = 10.dp, vertical = 8.dp),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Icon(Icons.Outlined.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+    Spacer(Modifier.width(8.dp))
+    Text(
+      text = message,
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.onErrorContainer,
+      modifier = Modifier.weight(1f)
+    )
+    if (retryEnabled) {
+      IconButton(onClick = onRetry) {
+        Icon(Icons.Outlined.Refresh, contentDescription = "重试这张插图")
       }
     }
   }

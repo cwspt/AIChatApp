@@ -90,6 +90,8 @@ class ChatDatabaseMigrationRobolectricTest {
 
     assertEquals("hi", db.stringValue("SELECT content FROM messages WHERE id = 'message-1'"))
     assertEquals("", db.stringValue("SELECT attachmentsJson FROM messages WHERE id = 'message-1'"))
+    assertEquals("", db.stringValue("SELECT contentPartsJson FROM messages WHERE id = 'message-1'"))
+    assertTrue(db.hasColumn("group_messages", "contentPartsJson"))
     assertNull(db.stringValue("SELECT rawResponseLog FROM messages WHERE id = 'message-1'"))
     assertEquals(0L, db.longValue("SELECT COUNT(*) FROM favorite_snippets"))
     assertEquals(0L, db.longValue("SELECT COUNT(*) FROM ai_bots"))
@@ -125,6 +127,16 @@ class ChatDatabaseMigrationRobolectricTest {
       assertTrue(it.moveToFirst())
       return it.getLong(0)
     }
+  }
+
+  private fun SupportSQLiteDatabase.hasColumn(table: String, column: String): Boolean {
+    query("PRAGMA table_info($table)").use { cursor ->
+      val nameIndex = cursor.getColumnIndexOrThrow("name")
+      while (cursor.moveToNext()) {
+        if (cursor.getString(nameIndex) == column) return true
+      }
+    }
+    return false
   }
 
   private companion object {

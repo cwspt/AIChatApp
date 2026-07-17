@@ -1,5 +1,15 @@
 # AIChatApp Project Tracker
 
+## 2026-07-17 Local Update Summary
+
+- Done: `NEXT-P1-020` adds one-shot inline illustration generation to ordinary single chats using capable OpenAI Responses providers. The composer control defaults off, resets after send or conversation/provider changes, and leaves group chats, standalone image chats, Images API providers, DeepSeek, and TokenHub behavior unchanged.
+- Done: Room schema v16 stores a versioned ordered message-content document on single and group messages. Assistant replies can preserve interleaved Markdown text, image placeholders, completed local image attachments, and per-image failures while retaining the concatenated text field for search and legacy code; old or damaged documents fall back to one text part without a bulk migration.
+- Done: the Responses adapter merges `image_generation` with hosted web search, limits accepted images to three, preserves output/content indices, ignores partial image payloads, deduplicates call completion, and extracts missing final images from `response.completed`. Follow-up context contains only generated-image descriptions and never resends image Base64.
+- Done: chat bubbles and favorite details render ordered text/image blocks, preserve stable generation/failure locations, support image preview and per-image retry, and avoid duplicating inline images in the trailing attachment strip. Text/Markdown sharing writes `[插图：说明]` at the corresponding location.
+- Done: long-image exports measure and draw sampled local bitmaps in content order, preserve aspect ratio, include failure/missing-file placeholders, keep image blocks whole across page boundaries, and continue enforcing the existing 12,000/24,000px Bitmap limits.
+- Compatibility and cost boundary: inline illustrations are requested only after the user explicitly enables the current send and only for OpenAI Responses providers configured with `RESPONSES_TOOL`; default ordinary sends have no image tool or added image cost. Standalone image-conversation controls remain unchanged, and remote Markdown images remain tracked by `NEXT-P2-016`.
+- Validation: 115 `:app:testDebugUnitTest` tests passed, including mapper, Provider fixture, Repository persistence/favorite/export, migration, and native-Canvas image coverage for legacy fallback, interrupted generation, capability gating, mixed output ordering, completion fallback/deduplication, local image persistence, ordered placeholders, image pixels, and pagination. `:app:compileDebugAndroidTestKotlin` and `:app:assembleDebug` also passed; a live OpenAI Responses call still requires a configured user API key.
+
 ## 2026-07-16 Local Update Summary
 
 - Done: in-app bubbles and exported chat images now parse Markdown block quotes instead of showing the leading `>` literally. Consecutive quote lines share one indented quote block; image exports draw the matching vertical quote accent and include it in measured layout height.
@@ -436,6 +446,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-017 | 长图导出方式选择 | Done | 所有长图入口先按真实布局判断；超过 12000px 时询问分图或安全单图，单图上限 24000px，超限只允许分图且不截断内容 |
 | NEXT-P1-018 | 长图 Markdown 样式对齐 | Done | 长图导出与聊天气泡共用块级 Markdown 解析器，支持三种分割线语法并对齐标题、列表、代码块和表格识别；像素测试确认横线实际写入导出 Bitmap |
 | NEXT-P1-019 | Markdown 引用与常见样式补齐 | Done | 气泡和长图共同支持 `>` 引用、H1-H6、任务列表、斜体、粗斜体、删除线、双下划线粗体和尖括号自动链接；共享行内 token parser，引用导出有像素测试 |
+| NEXT-P1-020 | 普通对话图文混排 | Done | 普通单聊可按次允许 OpenAI Responses 生成 0-3 张插图；正文和本地图片按输出顺序持久化、渲染、收藏及导出，支持失败占位和单图重试，默认关闭且不影响群聊或独立生图会话 |
 
 ### 6.2 P2 / P3
 

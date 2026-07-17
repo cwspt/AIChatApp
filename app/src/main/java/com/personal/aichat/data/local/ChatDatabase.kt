@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-const val CHAT_DATABASE_VERSION = 15
+const val CHAT_DATABASE_VERSION = 16
 
 @Database(
   entities = [
@@ -231,6 +231,13 @@ abstract class ChatDatabase : RoomDatabase() {
       }
     }
 
+    private val Migration15To16 = object : Migration(15, 16) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE messages ADD COLUMN contentPartsJson TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE group_messages ADD COLUMN contentPartsJson TEXT NOT NULL DEFAULT ''")
+      }
+    }
+
     val ALL_MIGRATIONS: Array<Migration> = arrayOf(
       Migration1To2,
       Migration2To3,
@@ -245,7 +252,8 @@ abstract class ChatDatabase : RoomDatabase() {
       Migration11To12,
       Migration12To13,
       Migration13To14,
-      Migration14To15
+      Migration14To15,
+      Migration15To16
     )
   }
 }

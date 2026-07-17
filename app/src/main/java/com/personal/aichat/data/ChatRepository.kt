@@ -11,7 +11,10 @@ import com.personal.aichat.data.local.GroupMessageEntity
 import com.personal.aichat.data.local.MessageEntity
 import com.personal.aichat.data.local.ProviderEntity
 import com.personal.aichat.data.local.formatAttachments
+import com.personal.aichat.data.local.formatMessageContentDocument
 import com.personal.aichat.data.local.normalizeTags
+import com.personal.aichat.data.local.parseAttachments
+import com.personal.aichat.data.local.parseMessageContentDocument
 import com.personal.aichat.data.local.toEntity
 import com.personal.aichat.data.local.toDomain
 import com.personal.aichat.data.remote.OpenAiCompatibleChatAdapter
@@ -40,9 +43,14 @@ import com.personal.aichat.domain.ContextTokenEstimator
 import com.personal.aichat.domain.ConversationType
 import com.personal.aichat.domain.ImageGenerationApiMode
 import com.personal.aichat.domain.ImageGenerationOptions
+import com.personal.aichat.domain.InlineImageGenerationOptions
 import com.personal.aichat.domain.KnownContextWindows
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
+import com.personal.aichat.domain.MessageContentDocument
+import com.personal.aichat.domain.MessageContentPart
+import com.personal.aichat.domain.MessageContentPartStatus
+import com.personal.aichat.domain.MessageContentPartType
 import com.personal.aichat.domain.ProviderAdapter
 import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.ReasoningEffort
@@ -60,6 +68,7 @@ import java.util.Base64
 import java.util.UUID
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
+import android.graphics.BitmapFactory
 
 private const val MaxRawResponseLogChars = 64_000
 private const val GroupRecentMessageLimit = 20
@@ -1141,7 +1150,12 @@ class ChatRepository(
     )
   }
 
-  suspend fun sendMessage(conversationId: String, text: String, attachments: List<ChatAttachment> = emptyList()) {
+  suspend fun sendMessage(
+    conversationId: String,
+    text: String,
+    attachments: List<ChatAttachment> = emptyList(),
+    inlineImagesRequested: Boolean = false
+  ) {
     val cleanText = text.trim()
     if (cleanText.isEmpty() && attachments.isEmpty()) return
     val conversation = dao.conversationById(conversationId) ?: return
@@ -1174,7 +1188,10 @@ class ChatRepository(
       model = conversation.model,
       createdAt = now + 1_000,
       updatedAt = now + 1_000,
-      errorMessage = null
+      errorMessage = null,
+      contentPartsJson = formatMessageContentDocument(
+        MessageContentDocument(inlineImagesRequested = inlineImagesRequested)
+      )
     )
     dao.upsertMessage(userMessage)
     dao.upsertMessage(assistantMessage)
@@ -1184,7 +1201,13 @@ class ChatRepository(
     } else {
       dao.upsertConversation(conversation.copy(updatedAt = now))
     }
-    streamAssistant(conversationId, provider, conversation.model, assistantMessage.id)
+    streamAssistant(
+      conversationId,
+      provider,
+      conversation.model,
+      assistantMessage.id,
+      inlineImagesRequested = inlineImagesRequested
+    )
   }
 
   suspend fun sendImageMessage(
@@ -1388,11 +1411,12 @@ class ChatRepository(
           ConversationExportMessage(
             id = it.id,
             role = it.role,
-            content = formatExportMessageContent(it.content, it.attachments),
+            content = formatExportMessageContent(it.content, it.attachments, it.contentParts),
             status = it.status,
             errorMessage = it.errorMessage,
             createdAt = it.createdAt,
-            attachments = it.attachments
+            attachments = it.attachments,
+            contentParts = it.contentParts
           )
         }
       ),
@@ -1412,11 +1436,12 @@ class ChatRepository(
         ConversationExportMessage(
           id = it.id,
           role = it.role,
-          content = formatExportMessageContent(it.content, it.attachments),
+          content = formatExportMessageContent(it.content, it.attachments, it.contentParts),
           status = it.status,
           errorMessage = it.errorMessage,
           createdAt = it.createdAt,
-          attachments = it.attachments
+          attachments = it.attachments,
+          contentParts = it.contentParts
         )
       }
     )
@@ -1518,7 +1543,7 @@ class ChatRepository(
       } else {
         builder.appendLine("[$roleName]")
       }
-      builder.appendLine(message.content)
+      builder.appendLine(formatExportMessageForText(message))
       builder.appendLine()
     }
     return builder.toString().trim()
@@ -1629,7 +1654,11 @@ class ChatRepository(
   suspend fun retryLast(conversationId: String) {
     val conversation = dao.conversationById(conversationId) ?: return
     val provider = dao.providerById(conversation.providerId)?.toDomain() ?: return
-    dao.lastUserMessage(conversationId) ?: return
+    val lastUser = dao.lastUserMessage(conversationId) ?: return
+    val inlineImagesRequested = dao.messagesForConversation(conversationId)
+      .lastOrNull { it.role == MessageRole.ASSISTANT.name && it.createdAt > lastUser.createdAt }
+      ?.let { parseMessageContentDocument(it.contentPartsJson, it.content).inlineImagesRequested }
+      ?: false
     val now = System.currentTimeMillis()
     val assistantMessage = MessageEntity(
       id = newId("msg"),
@@ -1641,13 +1670,22 @@ class ChatRepository(
       model = conversation.model,
       createdAt = now + 1_000,
       updatedAt = now + 1_000,
-      errorMessage = null
+      errorMessage = null,
+      contentPartsJson = formatMessageContentDocument(
+        MessageContentDocument(inlineImagesRequested = inlineImagesRequested)
+      )
     )
     dao.upsertMessage(assistantMessage)
     if (conversation.type == ConversationType.IMAGE.name) {
       generateImagesForAssistant(conversation, provider, assistantMessage.id, ImageGenerationOptions(), now)
     } else {
-      streamAssistant(conversationId, provider, conversation.model, assistantMessage.id)
+      streamAssistant(
+        conversationId,
+        provider,
+        conversation.model,
+        assistantMessage.id,
+        inlineImagesRequested = inlineImagesRequested
+      )
     }
   }
 
@@ -2046,13 +2084,43 @@ class ChatRepository(
     }
   }
 
-  private fun formatExportMessageContent(content: String, attachments: List<ChatAttachment>): String {
-    if (attachments.isEmpty()) return content
+  private fun formatExportMessageContent(
+    content: String,
+    attachments: List<ChatAttachment>,
+    contentParts: List<MessageContentPart> = emptyList()
+  ): String {
+    val inlineAttachmentIds = contentParts.mapNotNull { it.attachmentId }.toSet()
+    val trailingAttachments = attachments.filterNot { it.id in inlineAttachmentIds }
+    if (trailingAttachments.isEmpty()) return content
     return buildString {
       if (content.isNotBlank()) {
         append(content)
       }
-      append(formatAttachmentSummary(attachments))
+      append(formatAttachmentSummary(trailingAttachments))
+    }.trim()
+  }
+
+  private fun formatExportMessageForText(message: ConversationExportMessage): String {
+    if (message.contentParts.isEmpty()) return message.content
+    val inlineAttachmentIds = message.contentParts.mapNotNull { it.attachmentId }.toSet()
+    val ordered = message.contentParts.mapNotNull { part ->
+      when (part.type) {
+        MessageContentPartType.TEXT -> part.text.takeIf { it.isNotBlank() }
+        MessageContentPartType.IMAGE -> {
+          val attachment = part.attachmentId?.let { id -> message.attachments.firstOrNull { it.id == id } }
+          val label = part.revisedPrompt
+            ?.takeIf { it.isNotBlank() }
+            ?: part.prompt?.takeIf { it.isNotBlank() }
+            ?: attachment?.displayName
+            ?: if (part.status == MessageContentPartStatus.FAILED) "生成失败" else "图片文件不可用"
+          "[插图：$label]"
+        }
+      }
+    }.joinToString("\n\n")
+    val trailingAttachments = message.attachments.filterNot { it.id in inlineAttachmentIds }
+    return buildString {
+      append(ordered)
+      append(formatAttachmentSummary(trailingAttachments))
     }.trim()
   }
 
@@ -2085,7 +2153,9 @@ class ChatRepository(
     conversationId: String,
     provider: ChatProviderConfig,
     model: String,
-    assistantMessageId: String
+    assistantMessageId: String,
+    inlineImagesRequested: Boolean = false,
+    inlineFallbackAttempted: Boolean = false
   ) {
     val adapter = adapters[provider.type]
     if (adapter == null) {
@@ -2114,6 +2184,22 @@ class ChatRepository(
       return
     }
     var output = ""
+    val inlineImagesEnabled = inlineImagesRequested && !inlineFallbackAttempted &&
+      provider.type == ProviderType.OPENAI_RESPONSES &&
+      provider.supportsImageGeneration &&
+      provider.imageGenerationApiMode == ImageGenerationApiMode.RESPONSES_TOOL
+    data class PartPosition(val outputIndex: Int, val contentIndex: Int, val sequence: Int)
+    val contentParts = mutableMapOf<String, MessageContentPart>()
+    val partPositions = mutableMapOf<String, PartPosition>()
+    val generatedAttachments = assistantMessage?.let { parseAttachments(it.attachmentsJson) }?.toMutableList()
+      ?: mutableListOf()
+    var partSequence = 0
+    assistantMessage?.let { entity ->
+      parseMessageContentDocument(entity.contentPartsJson, entity.content).parts.forEachIndexed { index, part ->
+        contentParts[part.id] = part
+        partPositions[part.id] = PartPosition(index, 0, partSequence++)
+      }
+    }
     val startedAt = System.currentTimeMillis()
     var firstTokenAt: Long? = null
     var promptTokens: Int? = null
@@ -2136,11 +2222,33 @@ class ChatRepository(
       }
     }
 
-    suspend fun updateFinalMessage(status: MessageStatus, errorMessage: String?) {
+    fun sortedContentParts(): List<MessageContentPart> {
+      return contentParts.values.sortedWith(
+        compareBy<MessageContentPart> { partPositions[it.id]?.outputIndex ?: Int.MAX_VALUE }
+          .thenBy { partPositions[it.id]?.contentIndex ?: Int.MAX_VALUE }
+          .thenBy { partPositions[it.id]?.sequence ?: Int.MAX_VALUE }
+      )
+    }
+
+    fun rebuildOutput() {
+      output = sortedContentParts()
+        .filter { it.type == MessageContentPartType.TEXT }
+        .joinToString("") { it.text }
+    }
+
+    suspend fun persistAssistant(status: MessageStatus, errorMessage: String?) {
       val now = System.currentTimeMillis()
-      dao.updateMessageWithMetadata(
+      rebuildOutput()
+      dao.updateMessageContentWithMetadata(
         id = assistantMessageId,
         content = output,
+        contentPartsJson = formatMessageContentDocument(
+          MessageContentDocument(
+            inlineImagesRequested = inlineImagesRequested,
+            parts = sortedContentParts()
+          )
+        ),
+        attachmentsJson = formatAttachments(generatedAttachments),
         status = status.name,
         updatedAt = now,
         errorMessage = errorMessage,
@@ -2151,6 +2259,30 @@ class ChatRepository(
         totalTokens = totalTokens,
         rawResponseLog = rawResponseLog.toString().takeIf { captureRawResponseLog && it.isNotBlank() }
       )
+    }
+
+    suspend fun updateFinalMessage(status: MessageStatus, errorMessage: String?) {
+      if (status != MessageStatus.STREAMING) {
+        contentParts.entries.forEach { (id, part) ->
+          if (part.type == MessageContentPartType.IMAGE && part.status == MessageContentPartStatus.GENERATING) {
+            contentParts[id] = part.copy(
+              status = MessageContentPartStatus.FAILED,
+              errorMessage = when (errorMessage) {
+                "已停止" -> "已停止，可重试"
+                null -> "未返回可保存的图片，可重试"
+                else -> errorMessage
+              }
+            )
+          }
+        }
+      }
+      persistAssistant(status, errorMessage)
+    }
+
+    fun ensurePartPosition(partId: String, outputIndex: Int, contentIndex: Int = 0) {
+      if (partId !in partPositions) {
+        partPositions[partId] = PartPosition(outputIndex, contentIndex, partSequence++)
+      }
     }
 
     suspend fun upsertToolMessage(event: ChatStreamEvent.ToolCall) {
@@ -2210,28 +2342,25 @@ class ChatRepository(
           model = model,
           stream = provider.supportsStreaming,
           captureRawResponseLog = captureRawResponseLog,
-          webSearchMode = appSettings.webSearchMode
+          webSearchMode = appSettings.webSearchMode,
+          inlineImageGeneration = InlineImageGenerationOptions(enabled = inlineImagesEnabled)
         )
-      ).retrySilentTransportFailures().collect { event ->
+      ).let { responseFlow ->
+        if (inlineImagesEnabled) responseFlow else responseFlow.retrySilentTransportFailures()
+      }.collect { event ->
         when (event) {
           ChatStreamEvent.Started -> Unit
           is ChatStreamEvent.TextDelta -> {
             if (firstTokenAt == null) firstTokenAt = System.currentTimeMillis()
-            output += event.text
-            val now = System.currentTimeMillis()
-            dao.updateMessageWithMetadata(
-              id = assistantMessageId,
-              content = output,
-              status = MessageStatus.STREAMING.name,
-              updatedAt = now,
-              errorMessage = null,
-              totalDurationMs = now - startedAt,
-              firstTokenDurationMs = firstTokenAt?.let { it - startedAt },
-              promptTokens = promptTokens,
-              completionTokens = completionTokens,
-              totalTokens = totalTokens,
-              rawResponseLog = rawResponseLog.toString().takeIf { captureRawResponseLog && it.isNotBlank() }
+            val partId = "text-${event.outputIndex}-${event.contentIndex}"
+            ensurePartPosition(partId, event.outputIndex, event.contentIndex)
+            val existing = contentParts[partId]
+            contentParts[partId] = MessageContentPart(
+              id = partId,
+              type = MessageContentPartType.TEXT,
+              text = existing?.text.orEmpty() + event.text
             )
+            persistAssistant(MessageStatus.STREAMING, null)
           }
           is ChatStreamEvent.Usage -> {
             promptTokens = event.promptTokens ?: promptTokens
@@ -2253,7 +2382,92 @@ class ChatRepository(
               }
             )
           }
-          is ChatStreamEvent.ImageGenerated -> Unit
+          is ChatStreamEvent.ImageGenerationStarted -> {
+            val partId = "image-${event.callId}"
+            if (
+              partId !in contentParts &&
+              contentParts.values.count { it.type == MessageContentPartType.IMAGE } >= 3
+            ) return@collect
+            ensurePartPosition(partId, event.outputIndex)
+            val existing = contentParts[partId]
+            contentParts[partId] = (existing ?: MessageContentPart(
+              id = partId,
+              type = MessageContentPartType.IMAGE,
+              status = MessageContentPartStatus.GENERATING
+            )).copy(
+              prompt = event.prompt ?: existing?.prompt,
+              status = MessageContentPartStatus.GENERATING,
+              errorMessage = null
+            )
+            persistAssistant(MessageStatus.STREAMING, null)
+          }
+          is ChatStreamEvent.ImageGenerated -> {
+            val callId = event.callId ?: "generated-${generatedAttachments.size + 1}"
+            val partId = "image-$callId"
+            val currentPart = contentParts[partId]
+            if (
+              currentPart?.status == MessageContentPartStatus.COMPLETE &&
+              currentPart.attachmentId?.let { id -> generatedAttachments.any { it.id == id } } == true
+            ) return@collect
+            if (
+              currentPart == null &&
+              contentParts.values.count { it.type == MessageContentPartType.IMAGE } >= 3
+            ) return@collect
+            ensurePartPosition(partId, event.outputIndex)
+            val existing = currentPart
+            try {
+              val attachment = saveGeneratedImage(
+                event.base64Data,
+                event.mimeType,
+                conversationId,
+                generatedAttachments.size + 1
+              )
+              generatedAttachments.removeAll { it.id == attachment.id }
+              generatedAttachments += attachment
+              val dimensions = readImageDimensions(attachment.localPath)
+              contentParts[partId] = (existing ?: MessageContentPart(
+                id = partId,
+                type = MessageContentPartType.IMAGE
+              )).copy(
+                attachmentId = attachment.id,
+                prompt = event.prompt ?: existing?.prompt,
+                revisedPrompt = event.revisedPrompt ?: existing?.revisedPrompt,
+                status = MessageContentPartStatus.COMPLETE,
+                errorMessage = null,
+                width = dimensions?.first,
+                height = dimensions?.second
+              )
+            } catch (error: Exception) {
+              contentParts[partId] = (existing ?: MessageContentPart(
+                id = partId,
+                type = MessageContentPartType.IMAGE
+              )).copy(
+                prompt = event.prompt ?: existing?.prompt,
+                revisedPrompt = event.revisedPrompt ?: existing?.revisedPrompt,
+                status = MessageContentPartStatus.FAILED,
+                errorMessage = "图片保存失败：${error.message ?: "未知错误"}，可重试"
+              )
+            }
+            persistAssistant(MessageStatus.STREAMING, null)
+          }
+          is ChatStreamEvent.ImageGenerationFailed -> {
+            val partId = "image-${event.callId}"
+            if (
+              partId !in contentParts &&
+              contentParts.values.count { it.type == MessageContentPartType.IMAGE } >= 3
+            ) return@collect
+            ensurePartPosition(partId, event.outputIndex)
+            val existing = contentParts[partId]
+            contentParts[partId] = (existing ?: MessageContentPart(
+              id = partId,
+              type = MessageContentPartType.IMAGE
+            )).copy(
+              prompt = event.prompt ?: existing?.prompt,
+              status = MessageContentPartStatus.FAILED,
+              errorMessage = event.message
+            )
+            persistAssistant(MessageStatus.STREAMING, null)
+          }
           ChatStreamEvent.Completed -> {
             updateFinalMessage(MessageStatus.COMPLETE, null)
             dao.touchConversation(conversationId, System.currentTimeMillis())
@@ -2269,8 +2483,143 @@ class ChatRepository(
       dao.touchConversation(conversationId, System.currentTimeMillis())
       throw error
     } catch (error: Exception) {
+      if (
+        inlineImagesEnabled &&
+        !inlineFallbackAttempted &&
+        output.isBlank() &&
+        generatedAttachments.isEmpty() &&
+        isInlineImageCapabilityError(error)
+      ) {
+        val partId = "image-inline-fallback"
+        ensurePartPosition(partId, Int.MAX_VALUE)
+        contentParts[partId] = MessageContentPart(
+          id = partId,
+          type = MessageContentPartType.IMAGE,
+          status = MessageContentPartStatus.FAILED,
+          errorMessage = "插图不可用，已改为纯文本"
+        )
+        persistAssistant(MessageStatus.STREAMING, null)
+        streamAssistant(
+          conversationId = conversationId,
+          provider = provider,
+          model = model,
+          assistantMessageId = assistantMessageId,
+          inlineImagesRequested = true,
+          inlineFallbackAttempted = true
+        )
+        return
+      }
       val friendlyMessage = friendlyNetworkErrorMessage(error)
       updateFinalMessage(MessageStatus.FAILED, friendlyMessage)
+    }
+  }
+
+  suspend fun retryInlineImage(conversationId: String, messageId: String, partId: String) {
+    val conversation = dao.conversationById(conversationId) ?: return
+    val provider = dao.providerById(conversation.providerId)?.toDomain() ?: return
+    if (
+      provider.type != ProviderType.OPENAI_RESPONSES ||
+      !provider.supportsImageGeneration ||
+      provider.imageGenerationApiMode != ImageGenerationApiMode.RESPONSES_TOOL
+    ) return
+    val entity = dao.messagesForConversation(conversationId).firstOrNull { it.id == messageId } ?: return
+    val document = parseMessageContentDocument(entity.contentPartsJson, entity.content)
+    val target = document.parts.firstOrNull { it.id == partId && it.type == MessageContentPartType.IMAGE } ?: return
+    val prompt = target.revisedPrompt?.takeIf { it.isNotBlank() }
+      ?: target.prompt?.takeIf { it.isNotBlank() }
+      ?: return
+    val attachments = parseAttachments(entity.attachmentsJson).toMutableList()
+
+    suspend fun persistTarget(part: MessageContentPart) {
+      val parts = document.parts.map { if (it.id == partId) part else it }
+      val now = System.currentTimeMillis()
+      dao.updateMessageContentWithMetadata(
+        id = entity.id,
+        content = entity.content,
+        contentPartsJson = formatMessageContentDocument(document.copy(parts = parts)),
+        attachmentsJson = formatAttachments(attachments),
+        status = if (entity.status == MessageStatus.STREAMING.name) MessageStatus.COMPLETE.name else entity.status,
+        updatedAt = now,
+        errorMessage = entity.errorMessage,
+        totalDurationMs = entity.totalDurationMs,
+        firstTokenDurationMs = entity.firstTokenDurationMs,
+        promptTokens = entity.promptTokens,
+        completionTokens = entity.completionTokens,
+        totalTokens = entity.totalTokens,
+        rawResponseLog = entity.rawResponseLog
+      )
+      dao.touchConversation(conversationId, now)
+    }
+
+    persistTarget(
+      target.copy(
+        status = MessageContentPartStatus.GENERATING,
+        errorMessage = null
+      )
+    )
+    val apiKey = apiKeyStore.read(provider.secretRef)
+    if (apiKey.isNullOrBlank()) {
+      persistTarget(target.copy(status = MessageContentPartStatus.FAILED, errorMessage = "当前 API 配置没有可用 Key"))
+      return
+    }
+    val retryMessage = ChatMessage(
+      id = newId("retry-image-prompt"),
+      conversationId = conversationId,
+      role = MessageRole.USER,
+      content = prompt,
+      status = MessageStatus.COMPLETE,
+      providerId = provider.id,
+      model = conversation.model,
+      createdAt = System.currentTimeMillis(),
+      updatedAt = System.currentTimeMillis(),
+      errorMessage = null
+    )
+    try {
+      var completed = false
+      adapters[provider.type]?.generateImages(
+        config = provider.copy(defaultModel = conversation.model),
+        apiKey = apiKey,
+        messages = listOf(retryMessage),
+        options = ImageGenerationOptions(
+          count = 1,
+          background = com.personal.aichat.domain.ImageGenerationBackground.OPAQUE
+        )
+      )?.collect { event ->
+        when (event) {
+          is ChatStreamEvent.ImageGenerated -> {
+            val attachment = saveGeneratedImage(
+              event.base64Data,
+              event.mimeType,
+              conversationId,
+              attachments.size + 1
+            )
+            target.attachmentId?.let { oldId -> attachments.removeAll { it.id == oldId } }
+            attachments += attachment
+            val dimensions = readImageDimensions(attachment.localPath)
+            persistTarget(
+              target.copy(
+                attachmentId = attachment.id,
+                revisedPrompt = event.revisedPrompt ?: target.revisedPrompt,
+                status = MessageContentPartStatus.COMPLETE,
+                errorMessage = null,
+                width = dimensions?.first,
+                height = dimensions?.second
+              )
+            )
+            completed = true
+          }
+          is ChatStreamEvent.Failed -> throw IllegalStateException(event.message)
+          else -> Unit
+        }
+      }
+      if (!completed) throw IllegalStateException("OpenAI 未返回可保存的图片")
+    } catch (error: Exception) {
+      persistTarget(
+        target.copy(
+          status = MessageContentPartStatus.FAILED,
+          errorMessage = friendlyNetworkErrorMessage(error)
+        )
+      )
     }
   }
 
@@ -2432,6 +2781,8 @@ class ChatRepository(
           is ChatStreamEvent.RawFrame -> Unit
           is ChatStreamEvent.ToolCall -> upsertGroupToolMessage(event)
           is ChatStreamEvent.ImageGenerated -> Unit
+          is ChatStreamEvent.ImageGenerationStarted -> Unit
+          is ChatStreamEvent.ImageGenerationFailed -> Unit
           ChatStreamEvent.Completed -> {
             updateBotMessage(MessageStatus.COMPLETE, null)
             finalStatus = MessageStatus.COMPLETE
@@ -2622,7 +2973,8 @@ class ChatRepository(
       status = status,
       errorMessage = errorMessage,
       createdAt = createdAt,
-      attachments = attachments
+      attachments = attachments,
+      contentParts = contentParts.takeIf { parts -> parts.any { it.type == MessageContentPartType.IMAGE } }.orEmpty()
     )
   }
 
@@ -2713,7 +3065,9 @@ class ChatRepository(
     promptTokens = promptTokens,
     completionTokens = completionTokens,
     totalTokens = totalTokens,
-    attachments = attachments
+    attachments = attachments,
+    contentParts = contentParts.takeIf { parts -> parts.any { it.type == MessageContentPartType.IMAGE } }.orEmpty(),
+    inlineImagesRequested = inlineImagesRequested
   )
 
   private fun GroupChatMessage.toFavoriteMessage(): FavoriteSnippetMessage = FavoriteSnippetMessage(
@@ -2736,7 +3090,9 @@ class ChatRepository(
     promptTokens = promptTokens,
     completionTokens = completionTokens,
     totalTokens = totalTokens,
-    attachments = attachments
+    attachments = attachments,
+    contentParts = contentParts.takeIf { parts -> parts.any { it.type == MessageContentPartType.IMAGE } }.orEmpty(),
+    inlineImagesRequested = inlineImagesRequested
   )
 
   private fun defaultFavoriteTitle(conversationTitle: String, messages: List<FavoriteSnippetMessage>): String {
@@ -2830,19 +3186,40 @@ class ChatRepository(
         content = formatFavoriteMessageContent(message),
         status = message.status,
         errorMessage = message.errorMessage,
-        createdAt = message.createdAt
+        createdAt = message.createdAt,
+        attachments = message.attachments,
+        contentParts = message.contentParts
       )
     }
   )
 
   private fun formatFavoriteMessageContent(message: FavoriteSnippetMessage): String {
-    if (message.attachments.isEmpty()) return message.content
-    val attachments = message.attachments.joinToString(separator = "\n") { attachment ->
+    val inlineAttachmentIds = message.contentParts.mapNotNull { it.attachmentId }.toSet()
+    val trailingAttachments = message.attachments.filterNot { it.id in inlineAttachmentIds }
+    val orderedContent = if (message.contentParts.any { it.type == MessageContentPartType.IMAGE }) {
+      message.contentParts.mapNotNull { part ->
+        when (part.type) {
+          MessageContentPartType.TEXT -> part.text.takeIf { it.isNotBlank() }
+          MessageContentPartType.IMAGE -> {
+            val attachment = part.attachmentId?.let { id -> message.attachments.firstOrNull { it.id == id } }
+            val label = part.revisedPrompt?.takeIf { it.isNotBlank() }
+              ?: part.prompt?.takeIf { it.isNotBlank() }
+              ?: attachment?.displayName
+              ?: if (part.status == MessageContentPartStatus.FAILED) "生成失败" else "图片文件不可用"
+            "[插图：$label]"
+          }
+        }
+      }.joinToString("\n\n")
+    } else {
+      message.content
+    }
+    if (trailingAttachments.isEmpty()) return orderedContent
+    val attachments = trailingAttachments.joinToString(separator = "\n") { attachment ->
       "- ${attachment.displayName} (${formatAttachmentSize(attachment.sizeBytes)})"
     }
     return buildString {
-      if (message.content.isNotBlank()) {
-        appendLine(message.content)
+      if (orderedContent.isNotBlank()) {
+        appendLine(orderedContent)
         appendLine()
       }
       appendLine("附件：")
@@ -2910,6 +3287,38 @@ class ChatRepository(
       timeZone = java.util.TimeZone.getDefault()
     }
     return sdf.format(java.util.Date(timestamp))
+  }
+
+  private fun readImageDimensions(path: String): Pair<Int, Int>? {
+    return runCatching {
+      val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+      BitmapFactory.decodeFile(path, bounds)
+      if (bounds.outWidth > 0 && bounds.outHeight > 0) bounds.outWidth to bounds.outHeight else null
+    }.getOrNull()
+  }
+
+  private fun isInlineImageCapabilityError(error: Exception): Boolean {
+    val raw = generateSequence(error as Throwable) { it.cause }
+      .mapNotNull { it.message }
+      .joinToString(" | ")
+      .lowercase()
+    val mentionsImageTool = listOf(
+      "image_generation",
+      "image generation",
+      "image tool",
+      "images are not supported",
+      "unsupported tool"
+    ).any(raw::contains)
+    val capabilityFailure = listOf(
+      "permission",
+      "forbidden",
+      "not supported",
+      "unsupported",
+      "invalid tool",
+      "unknown tool",
+      "model"
+    ).any(raw::contains)
+    return mentionsImageTool || capabilityFailure && raw.contains("image")
   }
 
   private fun friendlyNetworkErrorMessage(error: Exception): String {

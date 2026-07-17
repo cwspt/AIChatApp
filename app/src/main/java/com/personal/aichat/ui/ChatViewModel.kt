@@ -386,20 +386,41 @@ class ChatViewModel(
     val conversationId = state.selectedConversationId ?: return
     val text = state.input.text
     val isImageConversation = state.selectedConversation?.type == ConversationType.IMAGE
+    val selectedProvider = state.selectedProvider
+    val inlineImagesRequested = !isImageConversation &&
+      state.inlineImagesAllowedForNextSend &&
+      selectedProvider?.type == com.personal.aichat.domain.ProviderType.OPENAI_RESPONSES &&
+      selectedProvider.supportsImageGeneration &&
+      selectedProvider.imageGenerationApiMode == com.personal.aichat.domain.ImageGenerationApiMode.RESPONSES_TOOL
     val attachments = when {
       isImageConversation -> state.pendingAttachments.filter { it.isImage }
-      state.selectedProvider?.supportsAttachments == true -> state.pendingAttachments
+      selectedProvider?.supportsAttachments == true -> state.pendingAttachments
       else -> emptyList()
     }
     if ((text.isBlank() && attachments.isEmpty()) || sendJobsByConversationId[conversationId]?.isActive == true) return
-    localState.update { it.copy(input = TextFieldValue(""), pendingAttachments = emptyList()) }
+    localState.update {
+      it.copy(
+        input = TextFieldValue(""),
+        pendingAttachments = emptyList(),
+        inlineImagesAllowedForNextSend = false
+      )
+    }
     launchStreamingJob(conversationId) {
       if (isImageConversation) {
         repository.sendImageMessage(conversationId, text, attachments, state.imageGenerationOptions)
       } else {
-        repository.sendMessage(conversationId, text, attachments)
+        repository.sendMessage(
+          conversationId,
+          text,
+          attachments,
+          inlineImagesRequested = inlineImagesRequested
+        )
       }
     }
+  }
+
+  fun setInlineImagesAllowedForNextSend(enabled: Boolean) {
+    localState.update { it.copy(inlineImagesAllowedForNextSend = enabled) }
   }
 
   fun setImageGenerationSize(size: ImageGenerationSize) {
@@ -868,7 +889,8 @@ class ChatViewModel(
     localState.update {
       it.copy(
         groupChatPageOpen = false,
-        selectedGroupChatId = null
+        selectedGroupChatId = null,
+        inlineImagesAllowedForNextSend = false
       )
     }
     viewModelScope.launch {
@@ -974,6 +996,14 @@ class ChatViewModel(
     val conversationId = uiState.value.selectedConversationId ?: return
     requestImageExport(context, "分享长图") {
       repository.conversationExport(conversationId)
+    }
+  }
+
+  fun retryInlineImage(messageId: String, partId: String) {
+    val conversationId = uiState.value.selectedConversationId ?: return
+    if (sendJobsByConversationId[conversationId]?.isActive == true) return
+    launchStreamingJob(conversationId) {
+      repository.retryInlineImage(conversationId, messageId, partId)
     }
   }
 
@@ -1711,6 +1741,7 @@ class ChatViewModel(
   }
 
   fun selectProvider(id: String) {
+    localState.update { it.copy(inlineImagesAllowedForNextSend = false) }
     viewModelScope.launch {
       repository.switchConversationProvider(uiState.value.selectedConversationId, id)
     }

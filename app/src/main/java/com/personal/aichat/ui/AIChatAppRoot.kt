@@ -483,6 +483,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onFavoriteMessages = { favoriteDraftMessageIds = it },
         onForkMessage = viewModel::openForkProviderPicker,
         onOpenAttachment = openAttachmentInApp,
+        onRetryInlineImage = viewModel::retryInlineImage,
         modifier = Modifier
           .weight(1f)
           .fillMaxWidth()
@@ -497,6 +498,11 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         },
         imageMode = state.selectedConversation?.type == ConversationType.IMAGE,
         imageOptions = state.imageGenerationOptions,
+        inlineImagesAvailable = state.selectedConversation?.type == ConversationType.CHAT &&
+          state.selectedProvider?.type == ProviderType.OPENAI_RESPONSES &&
+          state.selectedProvider?.supportsImageGeneration == true &&
+          state.selectedProvider?.imageGenerationApiMode == ImageGenerationApiMode.RESPONSES_TOOL,
+        inlineImagesAllowed = state.inlineImagesAllowedForNextSend,
         onInput = viewModel::updateInput,
         onSend = viewModel::send,
         onRetry = viewModel::retryLast,
@@ -515,7 +521,8 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         onImageQuality = viewModel::setImageGenerationQuality,
         onImageCount = viewModel::setImageGenerationCount,
         onImageOutputFormat = viewModel::setImageGenerationOutputFormat,
-        onImageBackground = viewModel::setImageGenerationBackground
+        onImageBackground = viewModel::setImageGenerationBackground,
+        onInlineImagesAllowed = viewModel::setInlineImagesAllowedForNextSend
       )
     }
 
@@ -2000,15 +2007,29 @@ private fun FavoriteMessageBubble(
         } else {
           if (batchMode) {
             SelectionContainer {
-              MarkdownPreview(message.content, interactiveLinks = false)
+              OrderedMessageContentRenderer(
+                content = message.content,
+                parts = message.contentParts,
+                attachments = message.attachments,
+                interactiveLinks = false,
+                onOpenAttachment = onOpenAttachment
+              )
             }
           } else {
-            MarkdownPreview(message.content)
+            OrderedMessageContentRenderer(
+              content = message.content,
+              parts = message.contentParts,
+              attachments = message.attachments,
+              interactiveLinks = true,
+              onOpenAttachment = onOpenAttachment
+            )
           }
         }
-        if (message.attachments.isNotEmpty()) {
+        val inlineAttachmentIds = message.contentParts.mapNotNull { it.attachmentId }.toSet()
+        val trailingAttachments = message.attachments.filterNot { it.id in inlineAttachmentIds }
+        if (trailingAttachments.isNotEmpty()) {
           AttachmentStrip(
-            attachments = message.attachments,
+            attachments = trailingAttachments,
             onOpenAttachment = onOpenAttachment,
             onRemoveAttachment = null,
             compact = false
@@ -4650,6 +4671,7 @@ private fun MessageList(
   onFavoriteMessages: (Set<String>) -> Unit,
   onForkMessage: (String) -> Unit,
   onOpenAttachment: (ChatAttachment) -> Unit,
+  onRetryInlineImage: (String, String) -> Unit,
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
@@ -4784,6 +4806,7 @@ private fun MessageList(
               onFavorite = { onFavoriteMessage(message.id) },
               onEditResend = { onEditResend(message.content) },
               onOpenAttachment = onOpenAttachment,
+              onRetryInlineImage = { partId -> onRetryInlineImage(message.id, partId) },
               onFork = { onForkMessage(message.id) },
               imageMode = imageMode,
               streamingBubbleMotion = state.appSettings.streamingBubbleMotion
@@ -4996,6 +5019,7 @@ private fun MessageBubble(
   onFavorite: () -> Unit,
   onEditResend: () -> Unit,
   onOpenAttachment: (ChatAttachment) -> Unit,
+  onRetryInlineImage: (String) -> Unit,
   onFork: () -> Unit,
   imageMode: Boolean = false,
   streamingBubbleMotion: StreamingBubbleMotion
@@ -5038,7 +5062,11 @@ private fun MessageBubble(
         Spacer(Modifier.height(6.dp))
         if (isUser) {
           Text(message.content.ifBlank { if (message.status == MessageStatus.STREAMING) "..." else "" })
-        } else if (message.content.isBlank() && message.status == MessageStatus.STREAMING) {
+        } else if (
+          message.content.isBlank() &&
+          message.contentParts.isEmpty() &&
+          message.status == MessageStatus.STREAMING
+        ) {
           StreamingStatusIndicator(
             text = "正在输出",
             accent = assistantAccent,
@@ -5049,22 +5077,34 @@ private fun MessageBubble(
         } else {
           if (selectionMode) {
             SelectionContainer {
-              MarkdownPreview(message.content, interactiveLinks = false)
+              MessageContentRenderer(
+                message = message,
+                interactiveLinks = false,
+                onOpenAttachment = onOpenAttachment,
+                onRetryImage = onRetryInlineImage
+              )
             }
           } else {
-            MarkdownPreview(message.content)
+            MessageContentRenderer(
+              message = message,
+              interactiveLinks = true,
+              onOpenAttachment = onOpenAttachment,
+              onRetryImage = onRetryInlineImage
+            )
           }
         }
-        if (message.attachments.isNotEmpty()) {
+        val inlineAttachmentIds = message.contentParts.mapNotNull { it.attachmentId }.toSet()
+        val trailingAttachments = message.attachments.filterNot { it.id in inlineAttachmentIds }
+        if (trailingAttachments.isNotEmpty()) {
           Spacer(Modifier.height(8.dp))
-          if (imageMode && !isUser && message.attachments.any { it.isImage }) {
+          if (imageMode && !isUser && trailingAttachments.any { it.isImage }) {
             GeneratedImageGrid(
-              attachments = message.attachments.filter { it.isImage },
+              attachments = trailingAttachments.filter { it.isImage },
               onOpenAttachment = onOpenAttachment
             )
           } else {
             AttachmentStrip(
-              attachments = message.attachments,
+              attachments = trailingAttachments,
               onOpenAttachment = onOpenAttachment,
               onRemoveAttachment = null,
               compact = false

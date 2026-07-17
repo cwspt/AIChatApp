@@ -151,6 +151,40 @@ interface ChatDao {
     rawResponseLog: String?
   )
 
+  @Query(
+    """
+    UPDATE messages SET
+      content = :content,
+      contentPartsJson = :contentPartsJson,
+      attachmentsJson = :attachmentsJson,
+      status = :status,
+      updatedAt = :updatedAt,
+      errorMessage = :errorMessage,
+      totalDurationMs = :totalDurationMs,
+      firstTokenDurationMs = :firstTokenDurationMs,
+      promptTokens = :promptTokens,
+      completionTokens = :completionTokens,
+      totalTokens = :totalTokens,
+      rawResponseLog = :rawResponseLog
+    WHERE id = :id
+    """
+  )
+  suspend fun updateMessageContentWithMetadata(
+    id: String,
+    content: String,
+    contentPartsJson: String,
+    attachmentsJson: String,
+    status: String,
+    updatedAt: Long,
+    errorMessage: String?,
+    totalDurationMs: Long?,
+    firstTokenDurationMs: Long?,
+    promptTokens: Int?,
+    completionTokens: Int?,
+    totalTokens: Int?,
+    rawResponseLog: String?
+  )
+
   @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND role = 'USER' ORDER BY createdAt DESC LIMIT 1")
   suspend fun lastUserMessage(conversationId: String): MessageEntity?
 

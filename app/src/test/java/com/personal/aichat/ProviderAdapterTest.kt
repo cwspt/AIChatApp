@@ -24,6 +24,7 @@ import com.personal.aichat.domain.ImageGenerationOptions
 import com.personal.aichat.domain.ImageGenerationOutputFormat
 import com.personal.aichat.domain.ImageGenerationQuality
 import com.personal.aichat.domain.ImageGenerationSize
+import com.personal.aichat.domain.InlineImageGenerationOptions
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderType
@@ -192,6 +193,96 @@ class ProviderAdapterTest {
 
       val requestBody = server.takeRequest().body.readUtf8()
       assertEquals(true, requestBody.contains("\"tools\":[{\"type\":\"web_search\"}]"))
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun openAiResponsesAdapterAddsInlineImageToolOnlyWhenEnabledAndSupported() = runTest {
+    val server = MockWebServer()
+    repeat(2) {
+      server.enqueue(
+        MockResponse()
+          .setResponseCode(200)
+          .setHeader("Content-Type", "text/event-stream")
+          .setBody("event: response.completed\ndata: {\"response\":{\"output\":[]}}\n\n")
+      )
+    }
+    server.start()
+    try {
+      val config = providerConfig(
+        type = ProviderType.OPENAI_RESPONSES,
+        baseUrl = server.url("/v1").toString().trimEnd('/')
+      ).copy(
+        supportsImageGeneration = true,
+        imageGenerationApiMode = ImageGenerationApiMode.RESPONSES_TOOL
+      )
+      val adapter = OpenAiResponsesAdapter()
+      adapter.streamChat(
+        config,
+        "test-key",
+        listOf(userMessage("plan a trip")),
+        ChatCompletionOptions(
+          model = "gpt-test",
+          webSearchMode = WebSearchMode.AUTO,
+          inlineImageGeneration = InlineImageGenerationOptions(enabled = true)
+        )
+      ).toList()
+      adapter.streamChat(
+        config,
+        "test-key",
+        listOf(userMessage("plain answer")),
+        ChatCompletionOptions(model = "gpt-test")
+      ).toList()
+
+      val enabledBody = server.takeRequest().body.readUtf8()
+      val disabledBody = server.takeRequest().body.readUtf8()
+      assertTrue(enabledBody.contains("\"type\":\"web_search\""))
+      assertTrue(enabledBody.contains("\"type\":\"image_generation\""))
+      assertTrue(enabledBody.contains("\"output_format\":\"png\""))
+      assertTrue(enabledBody.contains("\"background\":\"opaque\""))
+      assertFalse(disabledBody.contains("image_generation"))
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun openAiResponsesAdapterEmitsOrderedImageEventsAndDeduplicatesCompletedFallback() = runTest {
+    val server = MockWebServer()
+    val imageData = java.util.Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3))
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+          "event: response.output_text.delta\ndata: {\"delta\":\"before\",\"output_index\":0,\"content_index\":0}\n\n" +
+            "event: response.output_item.added\ndata: {\"output_index\":1,\"item\":{\"id\":\"img-1\",\"type\":\"image_generation_call\",\"status\":\"in_progress\",\"prompt\":\"city map\"}}\n\n" +
+            "event: response.output_item.done\ndata: {\"output_index\":1,\"item\":{\"id\":\"img-1\",\"type\":\"image_generation_call\",\"status\":\"completed\",\"result\":\"$imageData\",\"revised_prompt\":\"clear city map\"}}\n\n" +
+            "event: response.output_text.delta\ndata: {\"delta\":\"after\",\"output_index\":2,\"content_index\":0}\n\n" +
+            "event: response.completed\ndata: {\"response\":{\"output\":[{\"id\":\"img-1\",\"type\":\"image_generation_call\",\"output_index\":1,\"result\":\"$imageData\"},{\"id\":\"img-2\",\"type\":\"image_generation_call\",\"output_index\":3,\"result\":\"$imageData\",\"prompt\":\"street view\"}]}}\n\n"
+        )
+    )
+    server.start()
+    try {
+      val events = OpenAiResponsesAdapter().streamChat(
+        providerConfig(ProviderType.OPENAI_RESPONSES, server.url("/v1").toString().trimEnd('/')).copy(
+          supportsImageGeneration = true,
+          imageGenerationApiMode = ImageGenerationApiMode.RESPONSES_TOOL
+        ),
+        "test-key",
+        listOf(userMessage("illustrated guide")),
+        ChatCompletionOptions(
+          model = "gpt-test",
+          inlineImageGeneration = InlineImageGenerationOptions(enabled = true)
+        )
+      ).toList()
+
+      assertEquals(listOf(0, 2), events.filterIsInstance<ChatStreamEvent.TextDelta>().map { it.outputIndex })
+      assertEquals(1, events.filterIsInstance<ChatStreamEvent.ImageGenerationStarted>().single().outputIndex)
+      assertEquals(listOf(1, 3), events.filterIsInstance<ChatStreamEvent.ImageGenerated>().map { it.outputIndex })
+      assertEquals("clear city map", events.filterIsInstance<ChatStreamEvent.ImageGenerated>().first().revisedPrompt)
     } finally {
       server.shutdown()
     }

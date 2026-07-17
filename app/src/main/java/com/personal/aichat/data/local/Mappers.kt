@@ -18,6 +18,10 @@ import com.personal.aichat.domain.ConversationType
 import com.personal.aichat.domain.ImageGenerationApiMode
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
+import com.personal.aichat.domain.MessageContentDocument
+import com.personal.aichat.domain.MessageContentPart
+import com.personal.aichat.domain.MessageContentPartStatus
+import com.personal.aichat.domain.MessageContentPartType
 import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.ReasoningEffort
 
@@ -101,25 +105,31 @@ fun ChatConversation.toEntity(): ConversationEntity = ConversationEntity(
   isPinned = isPinned
 )
 
-fun MessageEntity.toDomain(): ChatMessage = ChatMessage(
-  id = id,
-  conversationId = conversationId,
-  role = MessageRole.valueOf(role),
-  content = content,
-  attachments = parseAttachments(attachmentsJson),
-  status = MessageStatus.valueOf(status),
-  providerId = providerId,
-  model = model,
-  createdAt = createdAt,
-  updatedAt = updatedAt,
-  errorMessage = errorMessage,
-  totalDurationMs = totalDurationMs,
-  firstTokenDurationMs = firstTokenDurationMs,
-  promptTokens = promptTokens,
-  completionTokens = completionTokens,
-  totalTokens = totalTokens,
-  rawResponseLog = rawResponseLog
-)
+fun MessageEntity.toDomain(): ChatMessage {
+  val document = parseMessageContentDocument(contentPartsJson, content)
+  val recoveredParts = recoverInterruptedImageParts(document.parts, status)
+  return ChatMessage(
+    id = id,
+    conversationId = conversationId,
+    role = MessageRole.valueOf(role),
+    content = content,
+    attachments = parseAttachments(attachmentsJson),
+    status = MessageStatus.valueOf(status),
+    providerId = providerId,
+    model = model,
+    createdAt = createdAt,
+    updatedAt = updatedAt,
+    errorMessage = errorMessage,
+    totalDurationMs = totalDurationMs,
+    firstTokenDurationMs = firstTokenDurationMs,
+    promptTokens = promptTokens,
+    completionTokens = completionTokens,
+    totalTokens = totalTokens,
+    rawResponseLog = rawResponseLog,
+    contentParts = recoveredParts,
+    inlineImagesRequested = document.inlineImagesRequested
+  )
+}
 
 fun ChatMessage.toEntity(): MessageEntity = MessageEntity(
   id = id,
@@ -127,6 +137,12 @@ fun ChatMessage.toEntity(): MessageEntity = MessageEntity(
   role = role.name,
   content = content,
   attachmentsJson = formatAttachments(attachments),
+  contentPartsJson = formatMessageContentDocument(
+    MessageContentDocument(
+      inlineImagesRequested = inlineImagesRequested,
+      parts = normalizedMessageContentParts(contentParts, content)
+    )
+  ),
   status = status.name,
   providerId = providerId,
   model = model,
@@ -242,7 +258,9 @@ fun GroupChatMemberEntity.toDomain(): GroupChatMember = GroupChatMember(
   updatedAt = updatedAt
 )
 
-fun GroupMessageEntity.toDomain(): GroupChatMessage = GroupChatMessage(
+fun GroupMessageEntity.toDomain(): GroupChatMessage {
+  val document = parseMessageContentDocument(contentPartsJson, content)
+  return GroupChatMessage(
   id = id,
   groupId = groupId,
   senderType = GroupMessageSenderType.valueOf(senderType),
@@ -262,11 +280,14 @@ fun GroupMessageEntity.toDomain(): GroupChatMessage = GroupChatMessage(
   completionTokens = completionTokens,
   totalTokens = totalTokens,
   attachments = parseAttachments(attachmentsJson),
+  contentParts = recoverInterruptedImageParts(document.parts, status),
+  inlineImagesRequested = document.inlineImagesRequested,
   turnTrigger = runCatching { GroupTurnTrigger.valueOf(turnTrigger) }.getOrDefault(GroupTurnTrigger.UNKNOWN),
   turnRound = turnRound,
   turnIndex = turnIndex,
   turnMemberCount = turnMemberCount
-)
+  )
+}
 
 fun formatAttachments(attachments: List<ChatAttachment>): String {
   return if (attachments.isEmpty()) "" else mapperGson.toJson(attachments)
@@ -277,6 +298,76 @@ fun parseAttachments(json: String?): List<ChatAttachment> {
   return runCatching {
     mapperGson.fromJson<List<ChatAttachment>>(json, attachmentListType)
   }.getOrDefault(emptyList())
+}
+
+fun formatMessageContentDocument(document: MessageContentDocument): String {
+  return mapperGson.toJson(
+    document.copy(
+      version = 1,
+      parts = normalizedMessageContentParts(document.parts, "")
+    )
+  )
+}
+
+fun parseMessageContentDocument(json: String?, fallbackContent: String): MessageContentDocument {
+  val parsed = if (json.isNullOrBlank()) null else runCatching {
+    mapperGson.fromJson(json, MessageContentDocument::class.java)
+  }.getOrNull()
+  return MessageContentDocument(
+    version = 1,
+    inlineImagesRequested = parsed?.inlineImagesRequested == true,
+    parts = normalizedMessageContentParts(parsed?.parts.orEmpty(), fallbackContent)
+  )
+}
+
+fun normalizedMessageContentParts(
+  parts: List<MessageContentPart>,
+  fallbackContent: String
+): List<MessageContentPart> {
+  val normalized = parts.mapNotNull { part ->
+    val id = part.id.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+    when (part.type) {
+      MessageContentPartType.TEXT -> part.copy(
+        id = id,
+        attachmentId = null,
+        status = MessageContentPartStatus.COMPLETE,
+        errorMessage = null,
+        width = null,
+        height = null
+      )
+      MessageContentPartType.IMAGE -> part.copy(
+        id = id,
+        text = "",
+        width = part.width?.takeIf { it > 0 },
+        height = part.height?.takeIf { it > 0 }
+      )
+    }
+  }
+  if (normalized.isNotEmpty() || fallbackContent.isBlank()) return normalized
+  return listOf(
+    MessageContentPart(
+      id = "legacy-text",
+      type = MessageContentPartType.TEXT,
+      text = fallbackContent
+    )
+  )
+}
+
+private fun recoverInterruptedImageParts(
+  parts: List<MessageContentPart>,
+  messageStatus: String
+): List<MessageContentPart> {
+  if (messageStatus == MessageStatus.STREAMING.name) return parts
+  return parts.map { part ->
+    if (part.type == MessageContentPartType.IMAGE && part.status == MessageContentPartStatus.GENERATING) {
+      part.copy(
+        status = MessageContentPartStatus.FAILED,
+        errorMessage = "生成中断，可重试"
+      )
+    } else {
+      part
+    }
+  }
 }
 
 fun normalizeTags(input: String): List<String> {
@@ -300,12 +391,17 @@ fun parseTags(json: String?): List<String> {
 }
 
 fun formatFavoriteMessages(messages: List<FavoriteSnippetMessage>): String {
-  return if (messages.isEmpty()) "" else mapperGson.toJson(messages)
+  val normalized = messages.map { message ->
+    message.copy(contentParts = normalizedMessageContentParts(message.contentParts.orEmpty(), message.content))
+  }
+  return if (normalized.isEmpty()) "" else mapperGson.toJson(normalized)
 }
 
 fun parseFavoriteMessages(json: String?): List<FavoriteSnippetMessage> {
   if (json.isNullOrBlank()) return emptyList()
   return runCatching {
-    mapperGson.fromJson<List<FavoriteSnippetMessage>>(json, favoriteMessageListType)
+    mapperGson.fromJson<List<FavoriteSnippetMessage>>(json, favoriteMessageListType).orEmpty().map { message ->
+      message.copy(contentParts = normalizedMessageContentParts(message.contentParts.orEmpty(), message.content))
+    }
   }.getOrDefault(emptyList())
 }

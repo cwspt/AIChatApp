@@ -19,18 +19,26 @@ import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconToggleButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +55,7 @@ import com.personal.aichat.domain.ImageGenerationOutputFormat
 import com.personal.aichat.domain.ImageGenerationQuality
 import com.personal.aichat.domain.ImageGenerationSize
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun Composer(
   input: TextFieldValue,
@@ -54,6 +63,8 @@ internal fun Composer(
   attachmentsEnabled: Boolean,
   imageMode: Boolean = false,
   imageOptions: ImageGenerationOptions = ImageGenerationOptions(),
+  inlineImagesAvailable: Boolean = false,
+  inlineImagesAllowed: Boolean = false,
   onInput: (TextFieldValue) -> Unit,
   onSend: () -> Unit,
   onRetry: () -> Unit,
@@ -69,6 +80,7 @@ internal fun Composer(
   onImageCount: (Int) -> Unit = {},
   onImageOutputFormat: (ImageGenerationOutputFormat) -> Unit = {},
   onImageBackground: (ImageGenerationBackground) -> Unit = {},
+  onInlineImagesAllowed: (Boolean) -> Unit = {},
   showRetry: Boolean = true
 ) {
   Column(
@@ -129,6 +141,31 @@ internal fun Composer(
               onClick = {
                 attachMenuOpen = false
                 onPickFiles()
+              }
+            )
+          }
+        }
+      }
+      if (!imageMode && inlineImagesAvailable) {
+        TooltipBox(
+          positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+          tooltip = { PlainTooltip { Text("允许本次回复生成插图") } },
+          state = rememberTooltipState()
+        ) {
+          IconToggleButton(
+            checked = inlineImagesAllowed,
+            onCheckedChange = onInlineImagesAllowed,
+            colors = IconButtonDefaults.iconToggleButtonColors(
+              checkedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+              checkedContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+          ) {
+            Icon(
+              Icons.Outlined.AddPhotoAlternate,
+              contentDescription = if (inlineImagesAllowed) {
+                "本次回复允许生成插图，已开启"
+              } else {
+                "允许本次回复生成插图"
               }
             )
           }

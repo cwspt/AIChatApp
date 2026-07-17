@@ -34,6 +34,9 @@ import com.personal.aichat.domain.GroupAutoPlayPreference
 import com.personal.aichat.domain.GroupMessageSenderType
 import com.personal.aichat.domain.GroupTurnTrigger
 import com.personal.aichat.domain.ImageGenerationOptions
+import com.personal.aichat.domain.ImageGenerationApiMode
+import com.personal.aichat.domain.MessageContentPartStatus
+import com.personal.aichat.domain.MessageContentPartType
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderAdapter
@@ -1200,6 +1203,76 @@ class ChatRepositoryForkTest {
   }
 
   @Test
+  fun ordinaryResponsesChatPersistsOrderedTextAndInlineImageParts() = runTest {
+    val imageBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    val adapter = RecordingAdapter(
+      listOf(
+        ChatStreamEvent.Started,
+        ChatStreamEvent.TextDelta("Before", outputIndex = 0),
+        ChatStreamEvent.ImageGenerationStarted("call-1", outputIndex = 1, prompt = "city map"),
+        ChatStreamEvent.ImageGenerated(
+          base64Data = imageBase64,
+          callId = "call-1",
+          outputIndex = 1,
+          prompt = "city map",
+          revisedPrompt = "clear city map"
+        ),
+        ChatStreamEvent.TextDelta("After", outputIndex = 2),
+        ChatStreamEvent.Completed
+      )
+    )
+    val dao = FakeChatDao()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = FakeApiKeyStore(),
+      adapters = mapOf(ProviderType.OPENAI_RESPONSES to adapter),
+      generatedImageDir = File(System.getProperty("java.io.tmpdir"), "aichat_inline_test_${System.nanoTime()}")
+    )
+    dao.upsertProvider(
+      provider("provider", "gpt-test").copy(
+        type = ProviderType.OPENAI_RESPONSES.name,
+        supportsImageGeneration = true,
+        imageGenerationApiMode = ImageGenerationApiMode.RESPONSES_TOOL.name
+      )
+    )
+    val conversation = repository.createConversation("provider", "gpt-test")
+
+    repository.sendMessage(conversation.id, "illustrated guide", inlineImagesRequested = true)
+
+    val assistant = dao.messagesForConversation(conversation.id).map { it.toDomain() }.last()
+    assertTrue(adapter.lastOptions?.inlineImageGeneration?.enabled == true)
+    assertTrue(assistant.inlineImagesRequested)
+    assertEquals(
+      listOf(MessageContentPartType.TEXT, MessageContentPartType.IMAGE, MessageContentPartType.TEXT),
+      assistant.contentParts.map { it.type }
+    )
+    assertEquals("BeforeAfter", assistant.content)
+    assertEquals(
+      assistant.contentParts[1].errorMessage,
+      MessageContentPartStatus.COMPLETE,
+      assistant.contentParts[1].status
+    )
+    assertEquals(assistant.attachments.single().id, assistant.contentParts[1].attachmentId)
+    assertTrue(File(assistant.attachments.single().localPath).isFile)
+    val shareText = repository.conversationShareText(conversation.id)
+    assertTrue(shareText.indexOf("Before") < shareText.indexOf("[插图：clear city map]"))
+    assertTrue(shareText.indexOf("[插图：clear city map]") < shareText.indexOf("After"))
+
+    val favorite = repository.createFavoriteSnippet(
+      conversation.id,
+      setOf(assistant.id),
+      "Illustrated guide",
+      "",
+      ""
+    )
+    assertEquals(assistant.contentParts.map { it.id }, favorite.messages.single().contentParts.map { it.id })
+    val favoriteText = repository.favoriteSnippetShareText(favorite.id)
+    assertTrue(favoriteText.indexOf("Before") < favoriteText.indexOf("[插图：clear city map]"))
+    assertTrue(favoriteText.indexOf("[插图：clear city map]") < favoriteText.indexOf("After"))
+  }
+
+  @Test
   fun imageConversationCapturesRawResponseLogWhenDebugLoggingEnabled() = runTest {
     val dao = FakeChatDao()
     val adapter = RecordingAdapter()
@@ -1945,6 +2018,39 @@ private class FakeChatDao : ChatDao {
     messages[id]?.let {
       messages[id] = it.copy(
         content = content,
+        status = status,
+        updatedAt = updatedAt,
+        errorMessage = errorMessage,
+        totalDurationMs = totalDurationMs,
+        firstTokenDurationMs = firstTokenDurationMs,
+        promptTokens = promptTokens,
+        completionTokens = completionTokens,
+        totalTokens = totalTokens,
+        rawResponseLog = rawResponseLog
+      )
+    }
+  }
+
+  override suspend fun updateMessageContentWithMetadata(
+    id: String,
+    content: String,
+    contentPartsJson: String,
+    attachmentsJson: String,
+    status: String,
+    updatedAt: Long,
+    errorMessage: String?,
+    totalDurationMs: Long?,
+    firstTokenDurationMs: Long?,
+    promptTokens: Int?,
+    completionTokens: Int?,
+    totalTokens: Int?,
+    rawResponseLog: String?
+  ) {
+    messages[id]?.let {
+      messages[id] = it.copy(
+        content = content,
+        contentPartsJson = contentPartsJson,
+        attachmentsJson = attachmentsJson,
         status = status,
         updatedAt = updatedAt,
         errorMessage = errorMessage,

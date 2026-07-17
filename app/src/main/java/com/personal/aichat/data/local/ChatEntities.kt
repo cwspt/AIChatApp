@@ -61,7 +61,8 @@ data class MessageEntity(
   val completionTokens: Int? = null,
   val totalTokens: Int? = null,
   val rawResponseLog: String? = null,
-  val attachmentsJson: String = ""
+  val attachmentsJson: String = "",
+  val contentPartsJson: String = ""
 )
 
 @Entity(tableName = "favorite_snippets")
@@ -144,6 +145,7 @@ data class GroupMessageEntity(
   val completionTokens: Int? = null,
   val totalTokens: Int? = null,
   val attachmentsJson: String = "",
+  val contentPartsJson: String = "",
   val turnTrigger: String = "UNKNOWN",
   val turnRound: Int? = null,
   val turnIndex: Int? = null,

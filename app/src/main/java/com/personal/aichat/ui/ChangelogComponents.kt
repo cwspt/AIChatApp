@@ -21,6 +21,14 @@ private data class AppChangelogEntry(
 
 private val AppChangelogEntries = listOf(
   AppChangelogEntry(
+    date = "2026-07-17",
+    changes = listOf(
+      "普通 GPT 单聊可按次允许生成插图，由模型在回答中按内容需要混排 0-3 张图片。",
+      "图文回复支持图片生成状态、失败后单图重试、图片预览，并在收藏和分享导出中保留原始顺序。",
+      "长图分享可按真实比例绘制回复中的本地插图，分页时不会裁切图片。"
+    )
+  ),
+  AppChangelogEntry(
     date = "2026-07-16",
     changes = listOf(
       "长图导出会先测量真实高度，较长内容可选择安全分图或合成单张图片。",

@@ -2,6 +2,10 @@ package com.personal.aichat
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import com.personal.aichat.domain.ChatAttachment
+import com.personal.aichat.domain.MessageContentPart
+import com.personal.aichat.domain.MessageContentPartStatus
+import com.personal.aichat.domain.MessageContentPartType
 import com.personal.aichat.data.ConversationExport
 import com.personal.aichat.data.ConversationExportMessage
 import com.personal.aichat.domain.MessageRole
@@ -15,6 +19,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
@@ -179,6 +184,89 @@ class ConversationShareRendererTest {
 
     assertTrue(quoteColumnFound)
     bitmap.recycle()
+  }
+
+  @Test
+  @GraphicsMode(GraphicsMode.Mode.NATIVE)
+  fun imageExportDrawsInlineBitmapBetweenOrderedTextParts() {
+    val imageFile = File.createTempFile("inline-export", ".png").apply { deleteOnExit() }
+    Bitmap.createBitmap(80, 40, Bitmap.Config.ARGB_8888).also { source ->
+      source.eraseColor(Color.rgb(220, 20, 60))
+      imageFile.outputStream().use { source.compress(Bitmap.CompressFormat.PNG, 100, it) }
+      source.recycle()
+    }
+    val attachment = ChatAttachment("image-attachment", "map.png", "image/png", imageFile.length(), imageFile.path)
+    val exportMessage = ConversationExportMessage(
+      id = "mixed",
+      role = MessageRole.ASSISTANT,
+      content = "Before\nAfter",
+      status = MessageStatus.COMPLETE,
+      errorMessage = null,
+      createdAt = 1,
+      attachments = listOf(attachment),
+      contentParts = listOf(
+        MessageContentPart("text-1", MessageContentPartType.TEXT, text = "Before"),
+        MessageContentPart(
+          id = "image-1",
+          type = MessageContentPartType.IMAGE,
+          attachmentId = attachment.id,
+          status = MessageContentPartStatus.COMPLETE,
+          width = 80,
+          height = 40
+        ),
+        MessageContentPart("text-2", MessageContentPartType.TEXT, text = "After")
+      )
+    )
+
+    val bitmap = ConversationShareRenderer.renderSingleImageExportBitmap(
+      ConversationExport("Mixed", null, null, listOf(exportMessage)),
+      ConversationShareRenderer.ImageExportMode.PAGED
+    )
+    val redPixels = (0 until bitmap.height).sumOf { y ->
+      (0 until bitmap.width).count { x -> Color.red(bitmap.getPixel(x, y)) > 180 && Color.green(bitmap.getPixel(x, y)) < 80 }
+    }
+
+    assertTrue(redPixels > 10_000)
+    bitmap.recycle()
+  }
+
+  @Test
+  fun structuredMessagePaginationKeepsEveryContentPartInOrder() {
+    val parts = buildList {
+      repeat(16) { index ->
+        add(MessageContentPart("text-$index", MessageContentPartType.TEXT, text = "section-$index\n" + "details ".repeat(180)))
+        add(
+          MessageContentPart(
+            id = "image-$index",
+            type = MessageContentPartType.IMAGE,
+            prompt = "image-$index",
+            status = MessageContentPartStatus.GENERATING,
+            width = 900,
+            height = 900
+          )
+        )
+      }
+    }
+    val exportMessage = ConversationExportMessage(
+      id = "structured-long",
+      role = MessageRole.ASSISTANT,
+      content = parts.filter { it.type == MessageContentPartType.TEXT }.joinToString("\n") { it.text },
+      status = MessageStatus.COMPLETE,
+      errorMessage = null,
+      createdAt = 1,
+      contentParts = parts
+    )
+
+    val pages = ConversationShareRenderer.imageExportPages(
+      ConversationExport("Structured", null, null, listOf(exportMessage))
+    )
+
+    assertTrue(pages.size > 1)
+    assertEquals(parts.map { it.id }, pages.flatMap { it.messages }.flatMap { it.contentParts }.map { it.id })
+    pages.forEach { page ->
+      val plan = ConversationShareRenderer.imageExportPlan(page)
+      assertTrue(plan.standardHeightPx <= 12_000)
+    }
   }
 
   private fun message(content: String) = ConversationExportMessage(

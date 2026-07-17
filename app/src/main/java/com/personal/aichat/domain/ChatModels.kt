@@ -133,7 +133,39 @@ data class ChatMessage(
   val completionTokens: Int? = null,
   val totalTokens: Int? = null,
   val rawResponseLog: String? = null,
-  val attachments: List<ChatAttachment> = emptyList()
+  val attachments: List<ChatAttachment> = emptyList(),
+  val contentParts: List<MessageContentPart> = emptyList(),
+  val inlineImagesRequested: Boolean = false
+)
+
+enum class MessageContentPartType {
+  TEXT,
+  IMAGE
+}
+
+enum class MessageContentPartStatus {
+  GENERATING,
+  COMPLETE,
+  FAILED
+}
+
+data class MessageContentPart(
+  val id: String,
+  val type: MessageContentPartType,
+  val text: String = "",
+  val attachmentId: String? = null,
+  val prompt: String? = null,
+  val revisedPrompt: String? = null,
+  val status: MessageContentPartStatus = MessageContentPartStatus.COMPLETE,
+  val errorMessage: String? = null,
+  val width: Int? = null,
+  val height: Int? = null
+)
+
+data class MessageContentDocument(
+  val version: Int = 1,
+  val inlineImagesRequested: Boolean = false,
+  val parts: List<MessageContentPart> = emptyList()
 )
 
 data class ChatAttachment(
@@ -194,7 +226,9 @@ data class FavoriteSnippetMessage(
   val promptTokens: Int? = null,
   val completionTokens: Int? = null,
   val totalTokens: Int? = null,
-  val attachments: List<ChatAttachment> = emptyList()
+  val attachments: List<ChatAttachment> = emptyList(),
+  val contentParts: List<MessageContentPart> = emptyList(),
+  val inlineImagesRequested: Boolean = false
 )
 
 enum class GroupMessageSenderType {
@@ -266,6 +300,8 @@ data class GroupChatMessage(
   val completionTokens: Int? = null,
   val totalTokens: Int? = null,
   val attachments: List<ChatAttachment> = emptyList(),
+  val contentParts: List<MessageContentPart> = emptyList(),
+  val inlineImagesRequested: Boolean = false,
   val turnTrigger: GroupTurnTrigger = GroupTurnTrigger.UNKNOWN,
   val turnRound: Int? = null,
   val turnIndex: Int? = null,
@@ -276,12 +312,31 @@ data class ChatCompletionOptions(
   val model: String,
   val stream: Boolean = true,
   val captureRawResponseLog: Boolean = false,
-  val webSearchMode: WebSearchMode = WebSearchMode.OFF
+  val webSearchMode: WebSearchMode = WebSearchMode.OFF,
+  val inlineImageGeneration: InlineImageGenerationOptions = InlineImageGenerationOptions()
+)
+
+data class InlineImageGenerationOptions(
+  val enabled: Boolean = false,
+  val maxImages: Int = 3,
+  val size: ImageGenerationSize = ImageGenerationSize.AUTO,
+  val quality: ImageGenerationQuality = ImageGenerationQuality.AUTO,
+  val outputFormat: ImageGenerationOutputFormat = ImageGenerationOutputFormat.PNG,
+  val background: ImageGenerationBackground = ImageGenerationBackground.OPAQUE
 )
 
 sealed interface ChatStreamEvent {
   data object Started : ChatStreamEvent
-  data class TextDelta(val text: String) : ChatStreamEvent
+  data class TextDelta(
+    val text: String,
+    val outputIndex: Int = 0,
+    val contentIndex: Int = 0
+  ) : ChatStreamEvent
+  data class ImageGenerationStarted(
+    val callId: String,
+    val outputIndex: Int,
+    val prompt: String? = null
+  ) : ChatStreamEvent
   data class ToolCall(
     val id: String? = null,
     val name: String,
@@ -298,7 +353,16 @@ sealed interface ChatStreamEvent {
   data class ImageGenerated(
     val base64Data: String,
     val mimeType: String = "image/png",
-    val revisedPrompt: String? = null
+    val revisedPrompt: String? = null,
+    val callId: String? = null,
+    val outputIndex: Int = Int.MAX_VALUE,
+    val prompt: String? = null
+  ) : ChatStreamEvent
+  data class ImageGenerationFailed(
+    val callId: String,
+    val outputIndex: Int,
+    val message: String,
+    val prompt: String? = null
   ) : ChatStreamEvent
   data object Completed : ChatStreamEvent
   data class Failed(val message: String) : ChatStreamEvent

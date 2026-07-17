@@ -72,6 +72,18 @@ class OpenAiResponsesAdapter(
     val responseText = StringBuilder()
     var lastEmittedCitationOutput: String? = null
     var emittedWebSearchStart = false
+    val inlineImagesEnabled = options.inlineImageGeneration.enabled &&
+      config.supportsImageGeneration &&
+      config.imageGenerationApiMode == ImageGenerationApiMode.RESPONSES_TOOL
+    val acceptedImageCallIds = linkedSetOf<String>()
+    val completedImageCallIds = linkedSetOf<String>()
+
+    fun acceptsImageCall(callId: String): Boolean {
+      if (callId in acceptedImageCallIds) return true
+      if (acceptedImageCallIds.size >= options.inlineImageGeneration.maxImages.coerceIn(0, 3)) return false
+      acceptedImageCallIds += callId
+      return true
+    }
 
     suspend fun emitResponseCitations() {
       val output = formatWebSearchOutput(responseSearchQueries, responseCitations)
@@ -97,12 +109,29 @@ class OpenAiResponsesAdapter(
     config.reasoningEffort.apiValue?.let { effort ->
       requestBody["reasoning"] = mapOf("effort" to effort)
     }
+    val tools = mutableListOf<Map<String, Any>>()
     if (options.webSearchMode != WebSearchMode.OFF) {
-      requestBody["tools"] = listOf(mapOf("type" to "web_search"))
+      tools += mapOf("type" to "web_search")
       if (options.webSearchMode == WebSearchMode.REQUIRED) {
         requestBody["tool_choice"] = mapOf("type" to "web_search")
       }
     }
+    if (inlineImagesEnabled) {
+      val imageOptions = options.inlineImageGeneration
+      tools += mapOf(
+        "type" to "image_generation",
+        "size" to imageOptions.size.apiValue,
+        "quality" to imageOptions.quality.apiValue,
+        "output_format" to imageOptions.outputFormat.apiValue,
+        "background" to imageOptions.background.apiValue
+      )
+      requestBody["instructions"] = """
+        When images materially improve the answer, use image_generation near the relevant section.
+        Generate at most ${imageOptions.maxImages.coerceIn(0, 3)} images. Images must support the answer, not replace necessary text.
+        Do not generate decorative filler. A complete text-only answer is valid when images add little value.
+      """.trimIndent()
+    }
+    if (tools.isNotEmpty()) requestBody["tools"] = tools
     val body = gson.toJson(requestBody)
     val request = Request.Builder()
       .url(config.baseUrl.trimEnd('/') + "/responses")
@@ -114,8 +143,43 @@ class OpenAiResponsesAdapter(
     streamJsonLines(
       request = request,
       client = client,
-      onFrame = { frame ->
+      onFrame = frameHandler@{ frame ->
         if (options.captureRawResponseLog) emit(ChatStreamEvent.RawFrame(frame.event, frame.data))
+        if (inlineImagesEnabled) {
+          val update = extractOpenAiInlineImageUpdate(frame.event, frame.data)
+          if (update != null) {
+            if (acceptsImageCall(update.callId)) {
+              when {
+                update.base64Data != null && completedImageCallIds.add(update.callId) -> emit(
+                  ChatStreamEvent.ImageGenerated(
+                    base64Data = update.base64Data,
+                    mimeType = update.mimeType,
+                    revisedPrompt = update.revisedPrompt,
+                    callId = update.callId,
+                    outputIndex = update.outputIndex,
+                    prompt = update.prompt
+                  )
+                )
+                update.errorMessage != null -> emit(
+                  ChatStreamEvent.ImageGenerationFailed(
+                    callId = update.callId,
+                    outputIndex = update.outputIndex,
+                    message = update.errorMessage,
+                    prompt = update.prompt
+                  )
+                )
+                update.callId !in completedImageCallIds -> emit(
+                  ChatStreamEvent.ImageGenerationStarted(
+                    callId = update.callId,
+                    outputIndex = update.outputIndex,
+                    prompt = update.prompt
+                  )
+                )
+              }
+            }
+            return@frameHandler
+          }
+        }
         when (frame.event) {
           "response.output_text.delta" -> {
             extractString(frame.data, "delta")?.let { delta ->
@@ -126,10 +190,36 @@ class OpenAiResponsesAdapter(
                 }
                 emitResponseCitations()
               }
-              emit(ChatStreamEvent.TextDelta(delta))
+              emit(
+                ChatStreamEvent.TextDelta(
+                  text = delta,
+                  outputIndex = extractTopLevelInt(frame.data, "output_index") ?: 0,
+                  contentIndex = extractTopLevelInt(frame.data, "content_index") ?: 0
+                )
+              )
             }
           }
           "response.completed" -> {
+            if (inlineImagesEnabled) {
+              extractCompletedInlineImages(frame.data).forEach { update ->
+                if (
+                  acceptsImageCall(update.callId) &&
+                  update.base64Data != null &&
+                  completedImageCallIds.add(update.callId)
+                ) {
+                  emit(
+                    ChatStreamEvent.ImageGenerated(
+                      base64Data = update.base64Data,
+                      mimeType = update.mimeType,
+                      revisedPrompt = update.revisedPrompt,
+                      callId = update.callId,
+                      outputIndex = update.outputIndex,
+                      prompt = update.prompt
+                    )
+                  )
+                }
+              }
+            }
             extractOpenAiUrlCitations(frame.data).forEach { citation ->
               responseCitations[citation.url] = citation.title
             }
@@ -194,7 +284,13 @@ class OpenAiResponsesAdapter(
                 }
                 emitResponseCitations()
               }
-              emit(ChatStreamEvent.TextDelta(delta))
+              emit(
+                ChatStreamEvent.TextDelta(
+                  text = delta,
+                  outputIndex = extractTopLevelInt(frame.data, "output_index") ?: 0,
+                  contentIndex = extractTopLevelInt(frame.data, "content_index") ?: 0
+                )
+              )
             }
           }
         }
@@ -661,12 +757,36 @@ private data class GeneratedImagePayload(
   val revisedPrompt: String?
 )
 
+private data class InlineImageUpdate(
+  val callId: String,
+  val outputIndex: Int,
+  val prompt: String?,
+  val revisedPrompt: String?,
+  val base64Data: String?,
+  val mimeType: String,
+  val errorMessage: String?
+)
+
 private fun toOpenAiResponseInputMessage(message: ChatMessage): Map<String, Any> {
   val parts = mutableListOf<Map<String, Any>>()
-  if (message.content.isNotBlank()) {
+  val contextText = if (message.role == MessageRole.ASSISTANT) {
+    buildString {
+      append(message.content)
+      message.contentParts
+        .filter { it.type == com.personal.aichat.domain.MessageContentPartType.IMAGE }
+        .mapNotNull { it.revisedPrompt ?: it.prompt }
+        .forEach { description ->
+          if (isNotEmpty()) append('\n')
+          append("已生成插图：").append(description)
+        }
+    }
+  } else {
+    message.content
+  }
+  if (contextText.isNotBlank()) {
     parts += mapOf(
       "type" to if (message.role == MessageRole.ASSISTANT) "output_text" else "input_text",
-      "text" to message.content
+      "text" to contextText
     )
   }
   if (message.role == MessageRole.USER) {
@@ -691,6 +811,67 @@ private fun toOpenAiResponseInputMessage(message: ChatMessage): Map<String, Any>
     "role" to message.role.apiRole,
     "content" to content
   )
+}
+
+private fun extractOpenAiInlineImageUpdate(eventName: String?, json: String): InlineImageUpdate? {
+  if (eventName == "response.completed") return null
+  if (!eventName.orEmpty().contains("image_generation", ignoreCase = true) &&
+    !json.contains("image_generation_call", ignoreCase = true)
+  ) return null
+  return runCatching {
+    val root = JsonParser.parseString(json).asJsonObject
+    val item = root.getAsJsonObject("item") ?: root.getAsJsonObject("output_item") ?: root
+    val outputIndex = root.directInt("output_index") ?: item.directInt("output_index") ?: 0
+    val callId = item.directString("id")
+      ?: root.directString("item_id")
+      ?: root.directString("call_id")
+      ?: "image-$outputIndex"
+    val status = item.directString("status") ?: root.directString("status") ?: eventName.orEmpty().substringAfterLast('.')
+    InlineImageUpdate(
+      callId = callId,
+      outputIndex = outputIndex,
+      prompt = item.findString("prompt") ?: item.findString("input") ?: root.findString("prompt"),
+      revisedPrompt = item.findString("revised_prompt") ?: root.findString("revised_prompt"),
+      base64Data = item.directString("result")
+        ?: item.directString("b64_json")
+        ?: item.directString("image_base64")
+        ?: root.directString("result"),
+      mimeType = item.findString("mime_type") ?: root.findString("mime_type") ?: "image/png",
+      errorMessage = when {
+        status.equals("failed", ignoreCase = true) || status.equals("cancelled", ignoreCase = true) ->
+          item.findString("message") ?: root.findString("message") ?: "插图生成失败"
+        eventName.orEmpty().endsWith(".failed") -> root.findString("message") ?: "插图生成失败"
+        else -> null
+      }
+    )
+  }.getOrNull()
+}
+
+private fun extractCompletedInlineImages(json: String): List<InlineImageUpdate> {
+  return runCatching {
+    val root = JsonParser.parseString(json).asJsonObject
+    val response = root.getAsJsonObject("response") ?: root
+    val output = response.getAsJsonArray("output") ?: return@runCatching emptyList()
+    output.mapIndexedNotNull { index, element ->
+      val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapIndexedNotNull null
+      if (!item.directString("type").orEmpty().contains("image_generation", ignoreCase = true)) {
+        return@mapIndexedNotNull null
+      }
+      val result = item.directString("result")
+        ?: item.directString("b64_json")
+        ?: item.directString("image_base64")
+        ?: return@mapIndexedNotNull null
+      InlineImageUpdate(
+        callId = item.directString("id") ?: "image-$index",
+        outputIndex = item.directInt("output_index") ?: index,
+        prompt = item.findString("prompt") ?: item.findString("input"),
+        revisedPrompt = item.findString("revised_prompt"),
+        base64Data = result,
+        mimeType = item.findString("mime_type") ?: "image/png",
+        errorMessage = null
+      )
+    }
+  }.getOrDefault(emptyList())
 }
 
 private fun toOpenAiImageInputMessage(message: ChatMessage): Map<String, Any> {
@@ -923,6 +1104,17 @@ fun extractString(json: String, name: String): String? {
   return runCatching {
     JsonParser.parseString(json).asJsonObject.findString(name)
   }.getOrNull()
+}
+
+private fun extractTopLevelInt(json: String, name: String): Int? {
+  return runCatching {
+    JsonParser.parseString(json).asJsonObject.directInt(name)
+  }.getOrNull()
+}
+
+private fun JsonObject.directInt(name: String): Int? {
+  val value = get(name) ?: return null
+  return if (value.isJsonPrimitive && value.asJsonPrimitive.isNumber) value.asInt else null
 }
 
 fun extractChatDelta(json: String): String? {
