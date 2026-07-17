@@ -2,6 +2,10 @@
 
 ## 2026-07-17 Local Update Summary
 
+- Done: `NEXT-P1-021` reorganizes the chat composer around a wide text field and one context-sensitive action button. The button now switches between add, close-panel, send, and stop; text or pending attachments take priority over the tool panel so attachment-only messages remain directly sendable.
+- Done: gallery, camera, file, retry, one-shot reply illustrations, and standalone image-generation settings now share a capability-driven four-column inline tool panel. Opening the panel hides the keyboard, focusing the field or pressing Back closes it, and conversation/provider changes reset the local panel state.
+- Done: active reply-illustration state and the standalone image-generation option summary appear above the text field without consuming horizontal typing space. Single chats, image chats, and group chats expose only tools that apply to their mode.
+- Validation: all 121 `:app:testDebugUnitTest` tests passed, including six new composer action/tool capability cases. `:app:compileDebugKotlin`, `:app:compileDebugAndroidTestKotlin`, and `:app:assembleDebug` passed; two Compose interaction tests compile for add-panel, typing/send, automatic panel close, and image-setting panel behavior. No Android device or emulator was available for the final screenshot run, and `127.0.0.1:5555` refused the connection.
 - Done: `NEXT-P1-020` adds one-shot inline illustration generation to ordinary single chats using capable OpenAI Responses providers. The composer control defaults off, resets after send or conversation/provider changes, and leaves group chats, standalone image chats, Images API providers, DeepSeek, and TokenHub behavior unchanged.
 - Done: Room schema v16 stores a versioned ordered message-content document on single and group messages. Assistant replies can preserve interleaved Markdown text, image placeholders, completed local image attachments, and per-image failures while retaining the concatenated text field for search and legacy code; old or damaged documents fall back to one text part without a bulk migration.
 - Done: the Responses adapter merges `image_generation` with hosted web search, limits accepted images to three, preserves output/content indices, ignores partial image payloads, deduplicates call completion, and extracts missing final images from `response.completed`. Follow-up context contains only generated-image descriptions and never resends image Base64.
@@ -447,6 +451,7 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-018 | 长图 Markdown 样式对齐 | Done | 长图导出与聊天气泡共用块级 Markdown 解析器，支持三种分割线语法并对齐标题、列表、代码块和表格识别；像素测试确认横线实际写入导出 Bitmap |
 | NEXT-P1-019 | Markdown 引用与常见样式补齐 | Done | 气泡和长图共同支持 `>` 引用、H1-H6、任务列表、斜体、粗斜体、删除线、双下划线粗体和尖括号自动链接；共享行内 token parser，引用导出有像素测试 |
 | NEXT-P1-020 | 普通对话图文混排 | Done | 普通单聊可按次允许 OpenAI Responses 生成 0-3 张插图；正文和本地图片按输出顺序持久化、渲染、收藏及导出，支持失败占位和单图重试，默认关闭且不影响群聊或独立生图会话 |
+| NEXT-P1-021 | 输入区分层与工具面板 | Done | 输入区主行只保留宽文本框和动态加号/发送/停止按钮；附件、重试、回复插图及独立生图参数按会话能力进入四列内联工具面板，并正确协调键盘、返回键和会话切换 |
 
 ### 6.2 P2 / P3
 

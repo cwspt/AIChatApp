@@ -503,6 +503,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
           state.selectedProvider?.supportsImageGeneration == true &&
           state.selectedProvider?.imageGenerationApiMode == ImageGenerationApiMode.RESPONSES_TOOL,
         inlineImagesAllowed = state.inlineImagesAllowedForNextSend,
+        panelStateKey = state.selectedConversationId to state.selectedProvider?.id,
         onInput = viewModel::updateInput,
         onSend = viewModel::send,
         onRetry = viewModel::retryLast,
@@ -2467,6 +2468,7 @@ private fun GroupChatPage(
           input = state.groupInput,
           attachments = state.pendingAttachments,
           attachmentsEnabled = true,
+          panelStateKey = state.selectedGroupChatId,
           onInput = onInput,
           onSend = onSendUser,
           onRetry = {},
