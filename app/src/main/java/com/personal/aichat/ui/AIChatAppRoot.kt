@@ -3400,16 +3400,26 @@ private fun GroupMessageBubble(
         }
         if (isUser) {
           Text(message.content)
-        } else if (isBot && !expanded) {
-          Text(
-            text = collapsedGroupMessageSummary(message),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.bodyMedium,
-            color = contentColor
-          )
         } else {
-          if (message.content.isBlank() && message.status == MessageStatus.STREAMING) {
+          if (isBot) {
+            ReasoningSection(
+              messageId = message.id,
+              content = message.reasoningContent,
+              status = message.status,
+              accent = botColors.accent,
+              contentColor = contentColor
+            )
+            if (message.reasoningContent.isNotBlank()) Spacer(Modifier.height(2.dp))
+          }
+          if (isBot && !expanded) {
+            Text(
+              text = collapsedGroupMessageSummary(message),
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              style = MaterialTheme.typography.bodyMedium,
+              color = contentColor
+            )
+          } else if (message.content.isBlank() && message.status == MessageStatus.STREAMING) {
             StreamingStatusIndicator(
               text = "正在输出",
               accent = botColors.accent,
@@ -3417,8 +3427,7 @@ private fun GroupMessageBubble(
               motion = streamingBubbleMotion,
               animatedDots = true
             )
-        } else {
-          if (selectionMode) {
+          } else if (selectionMode) {
             SelectionContainer {
               MarkdownPreview(
                 content = message.content,
@@ -3431,7 +3440,6 @@ private fun GroupMessageBubble(
               content = message.content,
               colors = markdownColors
             )
-          }
           }
         }
         if (message.attachments.isNotEmpty()) {
@@ -3552,7 +3560,10 @@ private fun GroupChatMessage.toChatMessage(): ChatMessage {
     promptTokens = promptTokens,
     completionTokens = completionTokens,
     totalTokens = totalTokens,
-    attachments = attachments
+    attachments = attachments,
+    contentParts = contentParts,
+    inlineImagesRequested = inlineImagesRequested,
+    reasoningContent = reasoningContent
   )
 }
 
@@ -5065,20 +5076,27 @@ private fun MessageBubble(
         Spacer(Modifier.height(6.dp))
         if (isUser) {
           Text(message.content.ifBlank { if (message.status == MessageStatus.STREAMING) "..." else "" })
-        } else if (
-          message.content.isBlank() &&
-          message.contentParts.isEmpty() &&
-          message.status == MessageStatus.STREAMING
-        ) {
-          StreamingStatusIndicator(
-            text = "正在输出",
-            accent = assistantAccent,
-            textColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            motion = streamingBubbleMotion,
-            animatedDots = true
+          } else {
+          ReasoningSection(
+            messageId = message.id,
+            content = message.reasoningContent,
+            status = message.status,
+            accent = assistantAccent
           )
-        } else {
-          if (selectionMode) {
+          if (message.reasoningContent.isNotBlank()) Spacer(Modifier.height(8.dp))
+          if (
+            message.content.isBlank() &&
+            message.contentParts.isEmpty() &&
+            message.status == MessageStatus.STREAMING
+          ) {
+            StreamingStatusIndicator(
+              text = "正在输出",
+              accent = assistantAccent,
+              textColor = MaterialTheme.colorScheme.onSurfaceVariant,
+              motion = streamingBubbleMotion,
+              animatedDots = true
+            )
+          } else if (selectionMode) {
             SelectionContainer {
               MessageContentRenderer(
                 message = message,

@@ -72,6 +72,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -1273,6 +1274,37 @@ class ChatRepositoryForkTest {
   }
 
   @Test
+  fun ordinaryChatPersistsReasoningApartFromAssistantAnswer() = runTest {
+    val adapter = RecordingAdapter(
+      listOf(
+        ChatStreamEvent.Started,
+        ChatStreamEvent.ReasoningDelta("Inspect the details. "),
+        ChatStreamEvent.ReasoningDelta("Choose a concise answer."),
+        ChatStreamEvent.TextDelta("最终回答"),
+        ChatStreamEvent.Completed
+      )
+    )
+    val dao = FakeChatDao()
+    val keyStore = FakeApiKeyStore()
+    val repository = ChatRepository(
+      dao = dao,
+      preferencesRepository = FakeSelectionStore(),
+      apiKeyStore = keyStore,
+      adapters = mapOf(ProviderType.OPENAI_RESPONSES to adapter)
+    )
+    dao.upsertProvider(provider("provider", "gpt-test").copy(type = ProviderType.OPENAI_RESPONSES.name))
+    keyStore.write("provider_provider", "key")
+    val conversation = repository.createConversation("provider", "gpt-test")
+
+    repository.sendMessage(conversation.id, "hello")
+
+    val assistant = dao.messagesForConversation(conversation.id).map { it.toDomain() }.last()
+    assertEquals("最终回答", assistant.content)
+    assertEquals("Inspect the details. Choose a concise answer.", assistant.reasoningContent)
+    assertFalse(repository.conversationShareText(conversation.id).contains("Inspect the details."))
+  }
+
+  @Test
   fun imageConversationCapturesRawResponseLogWhenDebugLoggingEnabled() = runTest {
     val dao = FakeChatDao()
     val adapter = RecordingAdapter()
@@ -2044,7 +2076,8 @@ private class FakeChatDao : ChatDao {
     promptTokens: Int?,
     completionTokens: Int?,
     totalTokens: Int?,
-    rawResponseLog: String?
+    rawResponseLog: String?,
+    reasoningContent: String
   ) {
     messages[id]?.let {
       messages[id] = it.copy(
@@ -2059,7 +2092,8 @@ private class FakeChatDao : ChatDao {
         promptTokens = promptTokens,
         completionTokens = completionTokens,
         totalTokens = totalTokens,
-        rawResponseLog = rawResponseLog
+        rawResponseLog = rawResponseLog,
+        reasoningContent = reasoningContent
       )
     }
   }
@@ -2189,7 +2223,8 @@ private class FakeChatDao : ChatDao {
     firstTokenDurationMs: Long?,
     promptTokens: Int?,
     completionTokens: Int?,
-    totalTokens: Int?
+    totalTokens: Int?,
+    reasoningContent: String
   ) {
     groupMessages[id]?.let {
       groupMessages[id] = it.copy(
@@ -2201,7 +2236,8 @@ private class FakeChatDao : ChatDao {
         firstTokenDurationMs = firstTokenDurationMs,
         promptTokens = promptTokens,
         completionTokens = completionTokens,
-        totalTokens = totalTokens
+        totalTokens = totalTokens,
+        reasoningContent = reasoningContent
       )
     }
   }

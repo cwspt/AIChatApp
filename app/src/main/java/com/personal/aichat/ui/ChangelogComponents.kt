@@ -25,6 +25,7 @@ private val AppChangelogEntries = listOf(
     changes = listOf(
       "DeepSeek 配置选择 deepseek-v4-flash 时自动使用官方 Responses API，旧模型继续使用 Chat Completions。",
       "适配 Responses 语义化流式结束、未完成和失败事件，并按 DeepSeek v4 的推理档位发送参数。",
+      "DeepSeek Responses 的思考过程会单独折叠展示，不再混入回答正文；展开后可查看完整推理文本。",
       "DeepSeek v4-flash 保留联网搜索能力，同时隐藏不受支持的图片/文件输入和生图工具，避免请求被服务端替换或忽略。"
     )
   ),

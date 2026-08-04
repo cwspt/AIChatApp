@@ -126,6 +126,7 @@ fun MessageEntity.toDomain(): ChatMessage {
     completionTokens = completionTokens,
     totalTokens = totalTokens,
     rawResponseLog = rawResponseLog,
+    reasoningContent = reasoningContent,
     contentParts = recoveredParts,
     inlineImagesRequested = document.inlineImagesRequested
   )
@@ -154,7 +155,8 @@ fun ChatMessage.toEntity(): MessageEntity = MessageEntity(
   promptTokens = promptTokens,
   completionTokens = completionTokens,
   totalTokens = totalTokens,
-  rawResponseLog = rawResponseLog
+  rawResponseLog = rawResponseLog,
+  reasoningContent = reasoningContent
 )
 
 fun FavoriteSnippetEntity.toDomain(): FavoriteSnippet = FavoriteSnippet(
@@ -279,6 +281,7 @@ fun GroupMessageEntity.toDomain(): GroupChatMessage {
   promptTokens = promptTokens,
   completionTokens = completionTokens,
   totalTokens = totalTokens,
+  reasoningContent = reasoningContent,
   attachments = parseAttachments(attachmentsJson),
   contentParts = recoverInterruptedImageParts(document.parts, status),
   inlineImagesRequested = document.inlineImagesRequested,

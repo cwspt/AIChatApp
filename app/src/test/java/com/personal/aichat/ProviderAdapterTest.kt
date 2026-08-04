@@ -270,6 +270,43 @@ class ProviderAdapterTest {
   }
 
   @Test
+  fun deepSeekResponsesSeparatesReasoningDeltasFromAnswerText() = runTest {
+    val server = MockWebServer()
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+          "event: response.reasoning_text.delta\ndata: {\"delta\":\"First inspect the question.\",\"output_index\":0,\"content_index\":0}\n\n" +
+            "event: response.reasoning_text.delta\ndata: {\"delta\":\" Then prepare the answer.\",\"output_index\":0,\"content_index\":0}\n\n" +
+            "event: response.reasoning_text.done\ndata: {\"text\":\"First inspect the question. Then prepare the answer.\"}\n\n" +
+            "event: response.output_text.delta\ndata: {\"delta\":\"\u6b63\u6587\",\"output_index\":1,\"content_index\":0}\n\n" +
+            "event: response.completed\ndata: {}\n\n"
+        )
+    )
+    server.start()
+    try {
+      val events = OpenAiResponsesAdapter().streamChat(
+        config = providerConfig(
+          type = ProviderType.OPENAI_COMPATIBLE_CHAT,
+          baseUrl = server.url("/v1").toString().trimEnd('/')
+        ),
+        apiKey = "test-key",
+        messages = listOf(userMessage("hello")),
+        options = ChatCompletionOptions(model = "deepseek-v4-flash")
+      ).toList()
+
+      assertEquals(
+        listOf("First inspect the question.", " Then prepare the answer."),
+        events.filterIsInstance<ChatStreamEvent.ReasoningDelta>().map { it.text }
+      )
+      assertEquals(listOf("正文"), events.filterIsInstance<ChatStreamEvent.TextDelta>().map { it.text })
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
   fun deepSeekResponsesFailureEventDoesNotCompleteSuccessfully() = runTest {
     val server = MockWebServer()
     server.enqueue(

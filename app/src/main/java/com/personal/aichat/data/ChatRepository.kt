@@ -2196,6 +2196,7 @@ class ChatRepository(
       return
     }
     var output = ""
+    var reasoningContent = assistantMessage?.reasoningContent.orEmpty()
     val inlineImagesEnabled = inlineImagesRequested && !inlineFallbackAttempted &&
       provider.type == ProviderType.OPENAI_RESPONSES &&
       provider.supportsImageGeneration &&
@@ -2269,7 +2270,8 @@ class ChatRepository(
         promptTokens = promptTokens,
         completionTokens = completionTokens,
         totalTokens = totalTokens,
-        rawResponseLog = rawResponseLog.toString().takeIf { captureRawResponseLog && it.isNotBlank() }
+        rawResponseLog = rawResponseLog.toString().takeIf { captureRawResponseLog && it.isNotBlank() },
+        reasoningContent = reasoningContent
       )
     }
 
@@ -2362,6 +2364,10 @@ class ChatRepository(
       }.collect { event ->
         when (event) {
           ChatStreamEvent.Started -> Unit
+          is ChatStreamEvent.ReasoningDelta -> {
+            reasoningContent += event.text
+            persistAssistant(MessageStatus.STREAMING, null)
+          }
           is ChatStreamEvent.TextDelta -> {
             if (firstTokenAt == null) firstTokenAt = System.currentTimeMillis()
             val partId = "text-${event.outputIndex}-${event.contentIndex}"
@@ -2558,7 +2564,8 @@ class ChatRepository(
         promptTokens = entity.promptTokens,
         completionTokens = entity.completionTokens,
         totalTokens = entity.totalTokens,
-        rawResponseLog = entity.rawResponseLog
+        rawResponseLog = entity.rawResponseLog,
+        reasoningContent = entity.reasoningContent
       )
       dao.touchConversation(conversationId, now)
     }
@@ -2655,7 +2662,8 @@ class ChatRepository(
         firstTokenDurationMs = null,
         promptTokens = null,
         completionTokens = null,
-        totalTokens = null
+        totalTokens = null,
+        reasoningContent = ""
       )
       return MessageStatus.FAILED
     }
@@ -2671,12 +2679,14 @@ class ChatRepository(
         firstTokenDurationMs = null,
         promptTokens = null,
         completionTokens = null,
-        totalTokens = null
+        totalTokens = null,
+        reasoningContent = ""
       )
       return MessageStatus.FAILED
     }
     val appSettings = preferencesRepository.appSettings.first()
     var output = ""
+    var reasoningContent = dao.groupMessages(room.id).firstOrNull { it.id == botMessageId }?.reasoningContent.orEmpty()
     val startedAt = System.currentTimeMillis()
     var firstTokenAt: Long? = null
     var promptTokens: Int? = null
@@ -2697,7 +2707,8 @@ class ChatRepository(
         firstTokenDurationMs = firstTokenAt?.let { it - startedAt },
         promptTokens = promptTokens,
         completionTokens = completionTokens,
-        totalTokens = totalTokens
+        totalTokens = totalTokens,
+        reasoningContent = reasoningContent
       )
       dao.touchGroupChatRoom(room.id, now)
     }
@@ -2742,7 +2753,8 @@ class ChatRepository(
           firstTokenDurationMs = null,
           promptTokens = null,
           completionTokens = null,
-          totalTokens = null
+          totalTokens = null,
+          reasoningContent = ""
         )
       }
     }
@@ -2780,6 +2792,10 @@ class ChatRepository(
       ).retrySilentTransportFailures().collect { event ->
         when (event) {
           ChatStreamEvent.Started -> Unit
+          is ChatStreamEvent.ReasoningDelta -> {
+            reasoningContent += event.text
+            updateBotMessage(MessageStatus.STREAMING, null)
+          }
           is ChatStreamEvent.TextDelta -> {
             if (firstTokenAt == null) firstTokenAt = System.currentTimeMillis()
             output += event.text

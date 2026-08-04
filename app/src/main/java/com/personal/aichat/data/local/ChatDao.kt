@@ -165,7 +165,8 @@ interface ChatDao {
       promptTokens = :promptTokens,
       completionTokens = :completionTokens,
       totalTokens = :totalTokens,
-      rawResponseLog = :rawResponseLog
+      rawResponseLog = :rawResponseLog,
+      reasoningContent = :reasoningContent
     WHERE id = :id
     """
   )
@@ -182,7 +183,8 @@ interface ChatDao {
     promptTokens: Int?,
     completionTokens: Int?,
     totalTokens: Int?,
-    rawResponseLog: String?
+    rawResponseLog: String?,
+    reasoningContent: String
   )
 
   @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND role = 'USER' ORDER BY createdAt DESC LIMIT 1")
@@ -306,7 +308,8 @@ interface ChatDao {
       firstTokenDurationMs = :firstTokenDurationMs,
       promptTokens = :promptTokens,
       completionTokens = :completionTokens,
-      totalTokens = :totalTokens
+      totalTokens = :totalTokens,
+      reasoningContent = :reasoningContent
     WHERE id = :id
     """
   )
@@ -320,6 +323,7 @@ interface ChatDao {
     firstTokenDurationMs: Long?,
     promptTokens: Int?,
     completionTokens: Int?,
-    totalTokens: Int?
+    totalTokens: Int?,
+    reasoningContent: String
   )
 }

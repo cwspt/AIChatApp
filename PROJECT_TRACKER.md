@@ -4,6 +4,8 @@
 
 - Done: `NEXT-P1-022` now routes only the exact `deepseek-v4-flash` model from the existing DeepSeek Provider through the Responses adapter. Older DeepSeek/OpenAI-compatible models continue using `/chat/completions`, while context compression and group bot turns use the same model-aware route.
 - Done: DeepSeek Responses requests use `input` and semantic SSE completion handling without requiring `data: [DONE]`; `response.incomplete` and `response.failed` now become visible failed generations instead of being silently marked complete. DeepSeek reasoning `xhigh` is mapped to the documented `max` effort value.
+- Done: `NEXT-P1-023` separates `response.reasoning_text.delta` from `response.output_text.delta`. Reasoning is persisted independently in Room v17 for single and group bot messages, appears in a default-collapsed `思考过程` disclosure above the answer, and never enters normal message text, context, copy, favorites, Markdown export, or long-image export.
+- Validation: provider fixture verifies reasoning and answer delta separation without `reasoning_text.done` duplication; repository coverage verifies persisted reasoning stays out of conversation text sharing; v1-to-v17 and exported-schema migration tests confirm empty defaults. Full `:app:testDebugUnitTest`, `:app:compileDebugAndroidTestKotlin`, `:app:assembleDebug`, and signed `:app:assembleRelease` passed. A live DeepSeek v4 Flash request still requires the user's configured API key.
 - Compatibility boundary: DeepSeek v4 Flash keeps web search available, but image generation and image/file input remain disabled because the official Responses compatibility table does not support those capabilities. The provider settings, capability matrix, composer, incoming-share validation, and send path now apply this model-level restriction consistently. `deepseek-v4-pro` remains excluded.
 - Validation: MockWebServer coverage was added for the `/responses` URL, v4 model, no-binary-input request, `max` reasoning mapping, no-`[DONE]` text stream, terminal failure handling, and legacy model capability behavior. Full Gradle/Android test execution is pending because this machine has no Android SDK (`ANDROID_HOME`/`sdk.dir` unavailable); no production API call was made.
 
@@ -459,6 +461,8 @@ AIChatApp 是一个本地 Android 多 Provider AI 聊天客户端，目标是在
 | NEXT-P1-019 | Markdown 引用与常见样式补齐 | Done | 气泡和长图共同支持 `>` 引用、H1-H6、任务列表、斜体、粗斜体、删除线、双下划线粗体和尖括号自动链接；共享行内 token parser，引用导出有像素测试 |
 | NEXT-P1-020 | 普通对话图文混排 | Done | 普通单聊可按次允许 OpenAI Responses 生成 0-3 张插图；正文和本地图片按输出顺序持久化、渲染、收藏及导出，支持失败占位和单图重试，默认关闭且不影响群聊或独立生图会话 |
 | NEXT-P1-021 | 输入区分层与工具面板 | Done | 输入区主行只保留宽文本框和动态加号/发送/停止按钮；附件、重试、回复插图及独立生图参数按会话能力进入四列内联工具面板，并正确协调键盘、返回键和会话切换 |
+| NEXT-P1-022 | DeepSeek v4 Flash Responses API 适配 | Done | 精确路由 v4 Flash 至 Responses，按官方事件完成/失败语义处理并保持模型级能力边界 |
+| NEXT-P1-023 | DeepSeek 思考过程折叠展示 | Done | v17 独立保存 reasoning；Responses reasoning delta 不进入正文，单聊和群机器人消息默认折叠展示，复制/分享/上下文不携带 |
 
 ### 6.2 P2 / P3
 

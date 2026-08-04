@@ -190,6 +190,17 @@ class OpenAiResponsesAdapter(
           }
         }
         when (frame.event) {
+          "response.reasoning_text.delta" -> {
+            extractString(frame.data, "delta")?.let { delta ->
+              emit(
+                ChatStreamEvent.ReasoningDelta(
+                  text = delta,
+                  outputIndex = extractTopLevelInt(frame.data, "output_index") ?: 0,
+                  contentIndex = extractTopLevelInt(frame.data, "content_index") ?: 0
+                )
+              )
+            }
+          }
           "response.output_text.delta" -> {
             extractString(frame.data, "delta")?.let { delta ->
               responseText.append(delta)
@@ -297,7 +308,11 @@ class OpenAiResponsesAdapter(
               responseCitations[citation.url] = citation.title
             }
             emitResponseCitations()
-            extractString(frame.data, "delta")?.let { delta ->
+            // Some compatible Responses providers omit the standard output-text event.
+            // Reasoning deltas and done frames must never become visible answer text.
+            extractString(frame.data, "delta")?.takeIf {
+              !frame.event.orEmpty().contains("reasoning_text", ignoreCase = true)
+            }?.let { delta ->
               responseText.append(delta)
               if (webSearchEnabled && emittedWebSearchStart) {
                 extractUrlCitationsFromText(responseText.toString()).forEach { citation ->
@@ -719,6 +734,7 @@ class OpenAiCompatibleChatAdapter(
         if (frame.data != "[DONE]") {
           extractChatReasoningDelta(frame.data)?.let { reasoning ->
             bufferedReasoning.append(reasoning)
+            emitEvent(ChatStreamEvent.ReasoningDelta(reasoning))
           }
           extractChatDelta(frame.data)?.let { delta ->
             bufferedText.append(delta)

@@ -153,6 +153,7 @@ data class ChatMessage(
   val completionTokens: Int? = null,
   val totalTokens: Int? = null,
   val rawResponseLog: String? = null,
+  val reasoningContent: String = "",
   val attachments: List<ChatAttachment> = emptyList(),
   val contentParts: List<MessageContentPart> = emptyList(),
   val inlineImagesRequested: Boolean = false
@@ -319,6 +320,7 @@ data class GroupChatMessage(
   val promptTokens: Int? = null,
   val completionTokens: Int? = null,
   val totalTokens: Int? = null,
+  val reasoningContent: String = "",
   val attachments: List<ChatAttachment> = emptyList(),
   val contentParts: List<MessageContentPart> = emptyList(),
   val inlineImagesRequested: Boolean = false,
@@ -348,6 +350,11 @@ data class InlineImageGenerationOptions(
 sealed interface ChatStreamEvent {
   data object Started : ChatStreamEvent
   data class TextDelta(
+    val text: String,
+    val outputIndex: Int = 0,
+    val contentIndex: Int = 0
+  ) : ChatStreamEvent
+  data class ReasoningDelta(
     val text: String,
     val outputIndex: Int = 0,
     val contentIndex: Int = 0
