@@ -1819,7 +1819,7 @@ class ChatRepository(
       bot = bot,
       members = members,
       messages = messages,
-      providerSupportsAttachments = provider.supportsAttachmentsForModel(conversation.model),
+      providerSupportsAttachments = provider.supportsAttachmentsForModel(bot.model),
       summarize = false,
       applyBudget = true,
       provider = provider
