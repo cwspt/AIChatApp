@@ -1,5 +1,12 @@
 # AIChatApp Project Tracker
 
+## 2026-08-04 DeepSeek v4 Flash Responses API Assessment
+
+- Planned: `NEXT-P1-022` adapts the existing DeepSeek Provider to the official Responses API only when the conversation model is exactly `deepseek-v4-flash`. The current `OPENAI_COMPATIBLE_CHAT` route still posts to `/chat/completions`, so v4 Flash is not supported by the app yet.
+- Official compatibility checked: DeepSeek's Responses endpoint uses base URL `https://api.deepseek.com`, currently supports `deepseek-v4-flash` only, accepts `input`/`instructions`, semantic SSE events without `data: [DONE]`, `web_search`, and function tools, and is stateless. `deepseek-v4-pro` remains excluded until the official support is available.
+- Required implementation boundary: reuse the existing Responses request and SSE adapter through model-aware routing; handle `response.completed`, `response.incomplete`, and `response.failed`; align reasoning effort values with the DeepSeek v4 catalog; keep `image_generation` disabled because DeepSeek's supported tools do not include it; and force image/file input controls off because input images/files are unsupported.
+- Validation pending: MockWebServer coverage for the DeepSeek URL/model request, output-text streaming without `[DONE]`, web search tool choice, terminal failure events, reasoning mapping, attachment gating, legacy DeepSeek Chat Completions routing, and full Android build. No production API call will be made without a configured user key.
+
 ## 2026-07-17 Local Update Summary
 
 - Done: `NEXT-P1-021` reorganizes the chat composer around a wide text field and one context-sensitive action button. The button now switches between add, close-panel, send, and stop; text or pending attachments take priority over the tool panel so attachment-only messages remain directly sendable.
