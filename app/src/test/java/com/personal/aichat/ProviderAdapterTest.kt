@@ -30,6 +30,8 @@ import com.personal.aichat.domain.MessageStatus
 import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.ReasoningEffort
 import com.personal.aichat.domain.WebSearchMode
+import com.personal.aichat.domain.supportsAttachmentsForModel
+import com.personal.aichat.domain.usesResponsesApi
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
@@ -193,6 +195,135 @@ class ProviderAdapterTest {
 
       val requestBody = server.takeRequest().body.readUtf8()
       assertEquals(true, requestBody.contains("\"tools\":[{\"type\":\"web_search\"}]"))
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun deepSeekV4FlashUsesResponsesEndpointAndBlocksUnsupportedInput() = runTest {
+    val imageFile = Files.createTempFile("deepseek-v4-input", ".png").toFile().apply {
+      writeBytes(byteArrayOf(1, 2, 3))
+      deleteOnExit()
+    }
+    val server = MockWebServer()
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+          "event: response.output_text.delta\ndata: {\"delta\":\"hello\",\"output_index\":0,\"content_index\":0}\n\n" +
+            "event: response.completed\ndata: {\"usage\":{\"input_tokens\":2,\"output_tokens\":1,\"total_tokens\":3}}\n\n"
+        )
+    )
+    server.start()
+    try {
+      val config = providerConfig(
+        type = ProviderType.OPENAI_COMPATIBLE_CHAT,
+        baseUrl = server.url("/v1").toString().trimEnd('/')
+      ).copy(
+        defaultModel = "deepseek-v4-flash",
+        supportsAttachments = true,
+        supportsImageGeneration = true,
+        imageGenerationApiMode = ImageGenerationApiMode.RESPONSES_TOOL,
+        reasoningEffort = ReasoningEffort.XHIGH
+      )
+      val message = userMessage("hello").copy(
+        attachments = listOf(
+          ChatAttachment(
+            id = "attachment-1",
+            displayName = "photo.png",
+            mimeType = "image/png",
+            sizeBytes = imageFile.length(),
+            localPath = imageFile.absolutePath
+          )
+        )
+      )
+      val events = OpenAiResponsesAdapter().streamChat(
+        config = config,
+        apiKey = "test-key",
+        messages = listOf(message),
+        options = ChatCompletionOptions(
+          model = "deepseek-v4-flash",
+          inlineImageGeneration = InlineImageGenerationOptions(enabled = true)
+        )
+      ).toList()
+
+      assertEquals(listOf("hello"), events.filterIsInstance<ChatStreamEvent.TextDelta>().map { it.text })
+      assertEquals(ChatStreamEvent.Completed, events.last())
+      assertTrue(config.usesResponsesApi("deepseek-v4-flash"))
+      assertFalse(config.usesResponsesApi("deepseek-chat"))
+      assertFalse(config.supportsAttachmentsForModel("deepseek-v4-flash"))
+      assertTrue(config.supportsAttachmentsForModel("deepseek-chat"))
+      val request = server.takeRequest()
+      assertEquals("/v1/responses", request.path)
+      val requestBody = request.body.readUtf8()
+      assertTrue(requestBody.contains("\"model\":\"deepseek-v4-flash\""))
+      assertTrue(requestBody.contains("\"reasoning\":{\"effort\":\"max\"}"))
+      assertFalse(requestBody.contains("input_image"))
+      assertFalse(requestBody.contains("input_file"))
+      assertFalse(requestBody.contains("file_data"))
+      assertFalse(requestBody.contains("image_generation"))
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun deepSeekResponsesFailureEventDoesNotCompleteSuccessfully() = runTest {
+    val server = MockWebServer()
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+          "event: response.failed\ndata: {\"response\":{\"error\":{\"message\":\"model unavailable\"}}}\n\n"
+        )
+    )
+    server.start()
+    try {
+      val events = OpenAiResponsesAdapter().streamChat(
+        config = providerConfig(
+          type = ProviderType.OPENAI_COMPATIBLE_CHAT,
+          baseUrl = server.url("/v1").toString().trimEnd('/')
+        ),
+        apiKey = "test-key",
+        messages = listOf(userMessage("hello")),
+        options = ChatCompletionOptions(model = "deepseek-v4-flash")
+      ).toList()
+
+      assertEquals("model unavailable", events.filterIsInstance<ChatStreamEvent.Failed>().single().message)
+      assertFalse(events.contains(ChatStreamEvent.Completed))
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun deepSeekResponsesIncompleteEventPreservesTerminalReason() = runTest {
+    val server = MockWebServer()
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+          "event: response.incomplete\ndata: {\"response\":{\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n"
+        )
+    )
+    server.start()
+    try {
+      val events = OpenAiResponsesAdapter().streamChat(
+        config = providerConfig(
+          type = ProviderType.OPENAI_COMPATIBLE_CHAT,
+          baseUrl = server.url("/v1").toString().trimEnd('/')
+        ),
+        apiKey = "test-key",
+        messages = listOf(userMessage("hello")),
+        options = ChatCompletionOptions(model = "deepseek-v4-flash")
+      ).toList()
+
+      assertEquals("max_output_tokens", events.filterIsInstance<ChatStreamEvent.Failed>().single().message)
+      assertFalse(events.contains(ChatStreamEvent.Completed))
     } finally {
       server.shutdown()
     }

@@ -21,6 +21,14 @@ private data class AppChangelogEntry(
 
 private val AppChangelogEntries = listOf(
   AppChangelogEntry(
+    date = "2026-08-04",
+    changes = listOf(
+      "DeepSeek 配置选择 deepseek-v4-flash 时自动使用官方 Responses API，旧模型继续使用 Chat Completions。",
+      "适配 Responses 语义化流式结束、未完成和失败事件，并按 DeepSeek v4 的推理档位发送参数。",
+      "DeepSeek v4-flash 保留联网搜索能力，同时隐藏不受支持的图片/文件输入和生图工具，避免请求被服务端替换或忽略。"
+    )
+  ),
+  AppChangelogEntry(
     date = "2026-07-17",
     changes = listOf(
       "聊天输入区改为宽文本框和动态加号、发送、停止按钮，低频功能统一收纳到内联工具面板。",

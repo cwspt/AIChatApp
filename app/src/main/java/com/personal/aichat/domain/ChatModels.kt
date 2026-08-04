@@ -8,6 +8,11 @@ enum class ProviderType {
   GEMINI_GENERATE_CONTENT
 }
 
+const val DEEPSEEK_V4_FLASH_MODEL = "deepseek-v4-flash"
+
+fun isDeepSeekV4FlashModel(model: String): Boolean =
+  model.trim().equals(DEEPSEEK_V4_FLASH_MODEL, ignoreCase = true)
+
 enum class ReasoningEffort(val apiValue: String?) {
   AUTO(null),
   LOW("low"),
@@ -91,6 +96,21 @@ data class ChatProviderConfig(
   val secretRef: String?,
   val reasoningEffort: ReasoningEffort = ReasoningEffort.AUTO
 )
+
+fun ChatProviderConfig.usesResponsesApi(model: String): Boolean =
+  type == ProviderType.OPENAI_RESPONSES ||
+    (type == ProviderType.OPENAI_COMPATIBLE_CHAT && isDeepSeekV4FlashModel(model))
+
+fun ChatProviderConfig.supportsAttachmentsForModel(model: String): Boolean =
+  supportsAttachments && !(type == ProviderType.OPENAI_COMPATIBLE_CHAT && isDeepSeekV4FlashModel(model))
+
+fun ChatProviderConfig.responsesReasoningEffort(model: String): String? {
+  val value = reasoningEffort.apiValue ?: return null
+  if (type == ProviderType.OPENAI_COMPATIBLE_CHAT && isDeepSeekV4FlashModel(model)) {
+    return if (reasoningEffort == ReasoningEffort.XHIGH) "max" else value
+  }
+  return value
+}
 
 data class ChatConversation(
   val id: String,

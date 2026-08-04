@@ -44,6 +44,7 @@ import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ImageGenerationApiMode
 import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.ReasoningEffort
+import com.personal.aichat.domain.isDeepSeekV4FlashModel
 import com.personal.aichat.domain.parseContextWindowTokensInput
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -64,6 +65,7 @@ internal fun ProviderSettingsDialog(
   var imageGenerationApiMode by remember(provider.id) { mutableStateOf(provider.imageGenerationApiMode) }
   var imageGenerationModel by remember(provider.id) { mutableStateOf(provider.imageGenerationModel) }
   var apiKey by remember(provider.id) { mutableStateOf("") }
+  val deepSeekV4Flash = provider.type == ProviderType.OPENAI_COMPATIBLE_CHAT && isDeepSeekV4FlashModel(model)
   val parsedContextWindowTokens = remember(contextWindowTokens) {
     parseContextWindowTokensInput(contextWindowTokens)
   }
@@ -120,6 +122,15 @@ internal fun ProviderSettingsDialog(
             value = model,
             onValueChange = { model = it },
             label = { Text("默认模型") },
+            supportingText = {
+              Text(
+                if (deepSeekV4Flash) {
+                  "将自动使用 DeepSeek Responses API（/responses）；该模型不支持图片/文件输入。"
+                } else {
+                  "DeepSeek 只有 deepseek-v4-flash 会使用 Responses API，其他模型继续使用 Chat Completions。"
+                }
+              )
+            },
             modifier = Modifier.fillMaxWidth()
           )
           OutlinedTextField(
@@ -143,7 +154,7 @@ internal fun ProviderSettingsDialog(
             isError = contextWindowInputInvalid,
             modifier = Modifier.fillMaxWidth()
           )
-          if (provider.type == ProviderType.OPENAI_RESPONSES) {
+          if (provider.type == ProviderType.OPENAI_RESPONSES || deepSeekV4Flash) {
             ReasoningEffortSelector(
               value = reasoningEffort,
               onValueChange = { reasoningEffort = it }
@@ -163,7 +174,8 @@ internal fun ProviderSettingsDialog(
               )
             }
             Switch(
-              checked = supportsAttachments,
+              checked = supportsAttachments && !deepSeekV4Flash,
+              enabled = !deepSeekV4Flash,
               onCheckedChange = { supportsAttachments = it }
             )
           }
@@ -251,7 +263,7 @@ internal fun ProviderSettingsDialog(
                   defaultModel = model.trim(),
                   contextWindowTokensOverride = parsedContextWindowTokens,
                   enabled = true,
-                  supportsAttachments = supportsAttachments,
+                  supportsAttachments = supportsAttachments && !deepSeekV4Flash,
                   supportsImageGeneration = supportsImageGeneration && provider.type == ProviderType.OPENAI_RESPONSES,
                   imageGenerationApiMode = imageGenerationApiMode,
                   imageGenerationModel = imageGenerationModel.trim(),
@@ -389,7 +401,7 @@ private val ProviderType.description: String
     ProviderType.OPENAI_RESPONSES ->
       "用于 GPT / OpenAI 官方 Responses API。Base URL 示例：https://api.openai.com/v1"
     ProviderType.OPENAI_COMPATIBLE_CHAT ->
-      "用于 DeepSeek 以及其他 OpenAI-compatible Chat Completions 服务。DeepSeek 示例：https://api.deepseek.com"
+      "用于 DeepSeek 以及其他 OpenAI-compatible 服务。模型填写 deepseek-v4-flash 时自动请求 Responses API；其他模型使用 Chat Completions。DeepSeek Base URL：https://api.deepseek.com"
     ProviderType.TOKENHUB_PROXY ->
       "用于本机或局域网中暴露 Responses-compatible /v1 API 的代理。"
     ProviderType.ANTHROPIC_MESSAGES ->

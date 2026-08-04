@@ -14,6 +14,8 @@ import com.personal.aichat.domain.ImageGenerationOptions
 import com.personal.aichat.domain.MessageRole
 import com.personal.aichat.domain.ProviderAdapter
 import com.personal.aichat.domain.WebSearchMode
+import com.personal.aichat.domain.responsesReasoningEffort
+import com.personal.aichat.domain.isDeepSeekV4FlashModel
 import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -74,9 +76,11 @@ class OpenAiResponsesAdapter(
     var emittedWebSearchStart = false
     val inlineImagesEnabled = options.inlineImageGeneration.enabled &&
       config.supportsImageGeneration &&
-      config.imageGenerationApiMode == ImageGenerationApiMode.RESPONSES_TOOL
+      config.imageGenerationApiMode == ImageGenerationApiMode.RESPONSES_TOOL &&
+      !(config.type == com.personal.aichat.domain.ProviderType.OPENAI_COMPATIBLE_CHAT && isDeepSeekV4FlashModel(options.model))
     val acceptedImageCallIds = linkedSetOf<String>()
     val completedImageCallIds = linkedSetOf<String>()
+    var terminalFailure: String? = null
 
     fun acceptsImageCall(callId: String): Boolean {
       if (callId in acceptedImageCallIds) return true
@@ -104,9 +108,14 @@ class OpenAiResponsesAdapter(
     val requestBody = mutableMapOf<String, Any>(
         "model" to options.model,
         "stream" to options.stream,
-        "input" to messages.map(::toOpenAiResponseInputMessage)
+        "input" to messages.map { message ->
+          toOpenAiResponseInputMessage(
+            message = message,
+            allowBinaryAttachments = !isDeepSeekV4FlashModel(options.model)
+          )
+        }
       )
-    config.reasoningEffort.apiValue?.let { effort ->
+    config.responsesReasoningEffort(options.model)?.let { effort ->
       requestBody["reasoning"] = mapOf("effort" to effort)
     }
     val tools = mutableListOf<Map<String, Any>>()
@@ -250,6 +259,18 @@ class OpenAiResponsesAdapter(
               )
             }
           }
+          "response.incomplete" -> {
+            terminalFailure = extractResponsesTerminalError(
+              json = frame.data,
+              fallback = "Responses 输出未完整完成"
+            )
+          }
+          "response.failed" -> {
+            terminalFailure = extractResponsesTerminalError(
+              json = frame.data,
+              fallback = "Responses 请求失败"
+            )
+          }
           "error" -> throw IOException(extractString(frame.data, "message") ?: "Provider returned an error")
           else -> {
             extractOpenAiWebSearchUpdate(frame.event, frame.data)?.let { update ->
@@ -296,7 +317,7 @@ class OpenAiResponsesAdapter(
         }
       }
     )
-    emit(ChatStreamEvent.Completed)
+    terminalFailure?.let { emit(ChatStreamEvent.Failed(it)) } ?: emit(ChatStreamEvent.Completed)
   }.flowOn(Dispatchers.IO)
 
   override fun generateImages(
@@ -306,6 +327,12 @@ class OpenAiResponsesAdapter(
     options: ImageGenerationOptions
   ): Flow<ChatStreamEvent> = flow {
     emit(ChatStreamEvent.Started)
+    if (config.type == com.personal.aichat.domain.ProviderType.OPENAI_COMPATIBLE_CHAT &&
+      isDeepSeekV4FlashModel(config.defaultModel)
+    ) {
+      emit(ChatStreamEvent.Failed("DeepSeek v4 Flash 不支持图片生成"))
+      return@flow
+    }
     if (config.imageGenerationApiMode == ImageGenerationApiMode.IMAGES_API) {
       emitImagesApiGeneration(config, apiKey, messages, options) { event -> emit(event) }
       emit(ChatStreamEvent.Completed)
@@ -767,7 +794,10 @@ private data class InlineImageUpdate(
   val errorMessage: String?
 )
 
-private fun toOpenAiResponseInputMessage(message: ChatMessage): Map<String, Any> {
+private fun toOpenAiResponseInputMessage(
+  message: ChatMessage,
+  allowBinaryAttachments: Boolean = true
+): Map<String, Any> {
   val parts = mutableListOf<Map<String, Any>>()
   val contextText = if (message.role == MessageRole.ASSISTANT) {
     buildString {
@@ -789,7 +819,7 @@ private fun toOpenAiResponseInputMessage(message: ChatMessage): Map<String, Any>
       "text" to contextText
     )
   }
-  if (message.role == MessageRole.USER) {
+  if (message.role == MessageRole.USER && allowBinaryAttachments) {
     message.attachments.forEach { attachment ->
       val dataUrl = attachment.toDataUrl() ?: return@forEach
       parts += if (attachment.isImage) {
@@ -811,6 +841,18 @@ private fun toOpenAiResponseInputMessage(message: ChatMessage): Map<String, Any>
     "role" to message.role.apiRole,
     "content" to content
   )
+}
+
+private fun extractResponsesTerminalError(json: String, fallback: String): String {
+  return runCatching {
+    val root = JsonParser.parseString(json).asJsonObject
+    val response = root.getAsJsonObject("response")
+    val error = response?.getAsJsonObject("error") ?: root.getAsJsonObject("error")
+    error?.findString("message")
+      ?: response?.getAsJsonObject("incomplete_details")?.findString("reason")
+      ?: root.findString("message")
+      ?: fallback
+  }.getOrDefault(fallback)
 }
 
 private fun extractOpenAiInlineImageUpdate(eventName: String?, json: String): InlineImageUpdate? {

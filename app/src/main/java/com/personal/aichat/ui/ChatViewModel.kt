@@ -46,6 +46,7 @@ import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.StreamingBubbleMotion
 import com.personal.aichat.domain.WebSearchMode
 import com.personal.aichat.domain.groupAutoPlayPreference
+import com.personal.aichat.domain.supportsAttachmentsForModel
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -186,7 +187,10 @@ class ChatViewModel(
 
   fun addAttachments(uris: List<Uri>) {
     val context = appContext ?: return
-    if (!uiState.value.groupChatPageOpen && uiState.value.selectedProvider?.supportsAttachments != true) return
+    val state = uiState.value
+    if (!state.groupChatPageOpen &&
+      state.selectedProvider?.supportsAttachmentsForModel(state.selectedConversation?.model.orEmpty()) != true
+    ) return
     viewModelScope.launch {
       val settings = uiState.value.appSettings
       val attempts = uris.map { uri -> importAttachment(context, uri, settings) }
@@ -285,7 +289,7 @@ class ChatViewModel(
     val draft = state.incomingShareDraft?.takeIf { it.hasContent } ?: return
     val conversation = state.conversations.firstOrNull { it.id == conversationId } ?: return
     val provider = state.providers.firstOrNull { it.id == conversation.providerId }
-    if (draft.hasAttachments && provider?.supportsAttachments != true) {
+    if (draft.hasAttachments && provider?.supportsAttachmentsForModel(conversation.model) != true) {
       localState.update { it.copy(error = "该对话的模型不支持附件") }
       return
     }
@@ -320,7 +324,7 @@ class ChatViewModel(
   fun createConversationForIncomingShare(providerId: String) {
     val draft = uiState.value.incomingShareDraft?.takeIf { it.hasContent } ?: return
     val provider = uiState.value.providers.firstOrNull { it.id == providerId } ?: return
-    if (draft.hasAttachments && !provider.supportsAttachments) {
+    if (draft.hasAttachments && !provider.supportsAttachmentsForModel(provider.defaultModel)) {
       localState.update { it.copy(error = "该模型不支持附件") }
       return
     }
@@ -394,7 +398,7 @@ class ChatViewModel(
       selectedProvider.imageGenerationApiMode == com.personal.aichat.domain.ImageGenerationApiMode.RESPONSES_TOOL
     val attachments = when {
       isImageConversation -> state.pendingAttachments.filter { it.isImage }
-      selectedProvider?.supportsAttachments == true -> state.pendingAttachments
+      selectedProvider?.supportsAttachmentsForModel(state.selectedConversation?.model.orEmpty()) == true -> state.pendingAttachments
       else -> emptyList()
     }
     if ((text.isBlank() && attachments.isEmpty()) || sendJobsByConversationId[conversationId]?.isActive == true) return

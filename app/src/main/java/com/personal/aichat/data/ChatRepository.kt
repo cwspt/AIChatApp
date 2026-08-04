@@ -56,6 +56,8 @@ import com.personal.aichat.domain.ProviderType
 import com.personal.aichat.domain.ReasoningEffort
 import com.personal.aichat.domain.contextCapacity
 import com.personal.aichat.domain.responseReserveTokens
+import com.personal.aichat.domain.supportsAttachmentsForModel
+import com.personal.aichat.domain.usesResponsesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -204,6 +206,15 @@ class ChatRepository(
   private val generatedImageDir: File = File(System.getProperty("java.io.tmpdir"), "aichat_generated_images")
 ) {
   private val gson = Gson()
+
+  private fun adapterFor(provider: ChatProviderConfig, model: String): ProviderAdapter? {
+    val adapterType = if (provider.usesResponsesApi(model)) {
+      ProviderType.OPENAI_RESPONSES
+    } else {
+      provider.type
+    }
+    return adapters[adapterType]
+  }
 
   val providers: Flow<List<ChatProviderConfig>> = dao.observeProviders().map { items ->
     items.map { it.toDomain() }
@@ -1268,7 +1279,7 @@ class ChatRepository(
     startedAt: Long
   ) {
     val conversationId = conversation.id
-    val adapter = adapters[provider.type]
+    val adapter = adapterFor(provider, conversation.model)
     val captureRawResponseLog = preferencesRepository.appSettings.first().debugResponseLogging
     val requestOptions = options.copy(captureRawResponseLog = captureRawResponseLog)
     val rawResponseLog = StringBuilder()
@@ -1808,7 +1819,7 @@ class ChatRepository(
       bot = bot,
       members = members,
       messages = messages,
-      providerSupportsAttachments = provider.supportsAttachments,
+      providerSupportsAttachments = provider.supportsAttachmentsForModel(conversation.model),
       summarize = false,
       applyBudget = true,
       provider = provider
@@ -1894,7 +1905,7 @@ class ChatRepository(
     KnownContextWindows.resolve(provider, bot.model)
       ?: throw IllegalStateException("当前模型上下文上限未知，请先在 API 配置中填写上下文上限。")
     val members = dao.groupChatMembers(room.id).mapNotNull { dao.aiBotById(it.botId)?.toDomain() }
-    val beforeContext = buildGroupContextMessages(room.toDomain(), bot, members, messages, provider.supportsAttachments, summarize = false, applyBudget = true, provider = provider)
+    val beforeContext = buildGroupContextMessages(room.toDomain(), bot, members, messages, provider.supportsAttachmentsForModel(bot.model), summarize = false, applyBudget = true, provider = provider)
     val beforeTokens = ContextTokenEstimator.estimateMessages(beforeContext)
     val startIndex = room.contextSummaryCutoffMessageId
       ?.let { cutoff -> messages.indexOfFirst { it.id == cutoff } + 1 }
@@ -1921,7 +1932,7 @@ class ChatRepository(
       contextSummaryCutoffMessageId = cutoff,
       contextSummaryUpdatedAt = updatedAt
     )
-    val afterContext = buildGroupContextMessages(updatedRoom.toDomain(), bot, members, messages, provider.supportsAttachments, summarize = false, applyBudget = true, provider = provider)
+    val afterContext = buildGroupContextMessages(updatedRoom.toDomain(), bot, members, messages, provider.supportsAttachmentsForModel(bot.model), summarize = false, applyBudget = true, provider = provider)
     val afterTokens = ContextTokenEstimator.estimateMessages(afterContext)
     return ContextCompressionResult(true, summary, cutoff, beforeTokens, afterTokens)
   }
@@ -1933,7 +1944,8 @@ class ChatRepository(
     transcript: String,
     subject: String
   ): String {
-    val adapter = adapters[provider.type] ?: throw IllegalStateException("Provider ${provider.type} is not implemented yet")
+    val adapter = adapterFor(provider, model)
+      ?: throw IllegalStateException("Provider ${provider.type} is not implemented yet")
     val apiKey = apiKeyStore.read(provider.secretRef)
     if (apiKey.isNullOrBlank() && provider.type != ProviderType.TOKENHUB_PROXY) {
       throw IllegalStateException("当前 API 配置还没有保存 Key，请在 API 配置中填写后再压缩上下文。")
@@ -2157,7 +2169,7 @@ class ChatRepository(
     inlineImagesRequested: Boolean = false,
     inlineFallbackAttempted: Boolean = false
   ) {
-    val adapter = adapters[provider.type]
+    val adapter = adapterFor(provider, model)
     if (adapter == null) {
       dao.updateMessage(
         id = assistantMessageId,
@@ -2576,7 +2588,7 @@ class ChatRepository(
     )
     try {
       var completed = false
-      adapters[provider.type]?.generateImages(
+      adapterFor(provider, conversation.model)?.generateImages(
         config = provider.copy(defaultModel = conversation.model),
         apiKey = apiKey,
         messages = listOf(retryMessage),
@@ -2631,7 +2643,7 @@ class ChatRepository(
     summarize: Boolean,
     turnInfo: GroupTurnInfo
   ): MessageStatus {
-    val adapter = adapters[provider.type]
+    val adapter = adapterFor(provider, bot.model)
     if (adapter == null) {
       dao.updateGroupMessageWithMetadata(
         id = botMessageId,
@@ -2750,7 +2762,7 @@ class ChatRepository(
         bot = bot,
         members = members,
         messages = groupMessages,
-        providerSupportsAttachments = provider.supportsAttachments,
+        providerSupportsAttachments = provider.supportsAttachmentsForModel(bot.model),
         summarize = summarize,
         applyBudget = true,
         provider = provider

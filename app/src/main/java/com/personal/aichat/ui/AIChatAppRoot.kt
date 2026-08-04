@@ -195,6 +195,7 @@ import com.personal.aichat.domain.StreamingBubbleMotion
 import com.personal.aichat.domain.WebSearchMode
 import com.personal.aichat.domain.groupAutoPlayPreference
 import com.personal.aichat.domain.parseContextWindowTokensInput
+import com.personal.aichat.domain.supportsAttachmentsForModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.io.File
@@ -494,7 +495,7 @@ fun AIChatAppRoot(viewModel: ChatViewModel) {
         attachmentsEnabled = if (state.selectedConversation?.type == ConversationType.IMAGE) {
           state.selectedProvider?.supportsImageGeneration == true
         } else {
-          state.selectedProvider?.supportsAttachments == true
+          state.selectedProvider?.supportsAttachmentsForModel(state.selectedConversation?.model.orEmpty()) == true
         },
         imageMode = state.selectedConversation?.type == ConversationType.IMAGE,
         imageOptions = state.imageGenerationOptions,

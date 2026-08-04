@@ -2,10 +2,10 @@
 
 ## 2026-08-04 DeepSeek v4 Flash Responses API Assessment
 
-- Planned: `NEXT-P1-022` adapts the existing DeepSeek Provider to the official Responses API only when the conversation model is exactly `deepseek-v4-flash`. The current `OPENAI_COMPATIBLE_CHAT` route still posts to `/chat/completions`, so v4 Flash is not supported by the app yet.
-- Official compatibility checked: DeepSeek's Responses endpoint uses base URL `https://api.deepseek.com`, currently supports `deepseek-v4-flash` only, accepts `input`/`instructions`, semantic SSE events without `data: [DONE]`, `web_search`, and function tools, and is stateless. `deepseek-v4-pro` remains excluded until the official support is available.
-- Required implementation boundary: reuse the existing Responses request and SSE adapter through model-aware routing; handle `response.completed`, `response.incomplete`, and `response.failed`; align reasoning effort values with the DeepSeek v4 catalog; keep `image_generation` disabled because DeepSeek's supported tools do not include it; and force image/file input controls off because input images/files are unsupported.
-- Validation pending: MockWebServer coverage for the DeepSeek URL/model request, output-text streaming without `[DONE]`, web search tool choice, terminal failure events, reasoning mapping, attachment gating, legacy DeepSeek Chat Completions routing, and full Android build. No production API call will be made without a configured user key.
+- Done: `NEXT-P1-022` now routes only the exact `deepseek-v4-flash` model from the existing DeepSeek Provider through the Responses adapter. Older DeepSeek/OpenAI-compatible models continue using `/chat/completions`, while context compression and group bot turns use the same model-aware route.
+- Done: DeepSeek Responses requests use `input` and semantic SSE completion handling without requiring `data: [DONE]`; `response.incomplete` and `response.failed` now become visible failed generations instead of being silently marked complete. DeepSeek reasoning `xhigh` is mapped to the documented `max` effort value.
+- Compatibility boundary: DeepSeek v4 Flash keeps web search available, but image generation and image/file input remain disabled because the official Responses compatibility table does not support those capabilities. The provider settings, capability matrix, composer, incoming-share validation, and send path now apply this model-level restriction consistently. `deepseek-v4-pro` remains excluded.
+- Validation: MockWebServer coverage was added for the `/responses` URL, v4 model, no-binary-input request, `max` reasoning mapping, no-`[DONE]` text stream, terminal failure handling, and legacy model capability behavior. Full Gradle/Android test execution is pending because this machine has no Android SDK (`ANDROID_HOME`/`sdk.dir` unavailable); no production API call was made.
 
 ## 2026-07-17 Local Update Summary
 

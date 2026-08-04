@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.personal.aichat.domain.ChatProviderConfig
 import com.personal.aichat.domain.ProviderType
+import com.personal.aichat.domain.supportsAttachmentsForModel
 
 @Composable
 internal fun ProviderCapabilityMatrix(providers: List<ChatProviderConfig>) {
@@ -180,9 +181,9 @@ private fun ProviderCapabilityBadge(label: String, supported: Boolean) {
   }
 }
 
-private fun ChatProviderConfig.supportsImageInput(): Boolean = supportsAttachments
+private fun ChatProviderConfig.supportsImageInput(): Boolean = supportsAttachmentsForModel(defaultModel)
 
-private fun ChatProviderConfig.supportsFileInput(): Boolean = supportsAttachments
+private fun ChatProviderConfig.supportsFileInput(): Boolean = supportsAttachmentsForModel(defaultModel)
 
 private fun ChatProviderConfig.supportsWebSearchTools(): Boolean {
   return when (type) {
